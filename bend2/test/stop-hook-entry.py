@@ -1,7 +1,10 @@
-"""Claude hooks enforce completion and inject input during tool work (#1054).
+"""Claude and Codex hooks enforce completion and inject input during tool work
+(#1054, #1212).
 
 The fixture runs the installed hook commands against SQLite databases and fake
 Claude processes. BATON2_STOP_HOOK_FIXTURE names the queue-built native entry.
+The Codex tests read the hook tables from the launch arguments the way Codex 0.163.0
+parses its -c overrides, and run the configured commands with Codex's hook payloads.
 """
 import json
 import hashlib
@@ -10,6 +13,7 @@ import pathlib
 import sqlite3
 import subprocess
 import tempfile
+import tomllib
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -74,6 +78,10 @@ class StopHook(unittest.TestCase):
         if listed.returncode:
             raise AssertionError(listed.stdout + listed.stderr)
         cls.arguments = listed.stdout.splitlines()
+        codex = subprocess.run([cls.binary, 'codex-arguments'], capture_output=True, text=True)
+        if codex.returncode:
+            raise AssertionError(codex.stdout + codex.stderr)
+        cls.codex_arguments = codex.stdout.splitlines()
         schema = subprocess.run([cls.binary, 'schema'], capture_output=True, text=True)
         if schema.returncode:
             raise AssertionError(schema.stdout + schema.stderr)
@@ -90,6 +98,8 @@ class StopHook(unittest.TestCase):
         self.env = {key: value for key, value in os.environ.items()
                     if key not in ('BATON_ATTEMPT_DIRECTORY', 'BATON_MCP_INPUT', 'CODEX_THREAD_ID')}
         self.env.update(BATON_SESSION='worker', BATON_DATABASE=self.path)
+        if self._testMethodName.startswith('test_codex'):
+            self.db.execute("UPDATE sessions SET harness='codex' WHERE id='worker'")
 
     def owe(self, ident='message:coordinator:mid-turn', kind='guidance', body='New detail.'):
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker',?,?)",
@@ -112,7 +122,7 @@ class StopHook(unittest.TestCase):
         decision = self.hook()
         self.assertEqual(decision['decision'], 'block')
         self.assertIn('Baton holds 1 unread inputs for worker', decision['reason'])
-        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nThe complete input is available in this turn.', decision['reason'])
+        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nUse inbox or read to record a complete read.', decision['reason'])
 
     def decision_sql(self):
         result = subprocess.run([self.binary, 'decision-sql'], capture_output=True, text=True)
@@ -184,9 +194,12 @@ class StopHook(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k not in ('BATON_SESSION', 'BATON_DATABASE')}
         self.assertIsNone(self.hook(env=env))
 
-    def settings_command(self):
+    def arguments_command(self, event):
         settings = json.loads(self.arguments[self.arguments.index('--settings') + 1])
-        return settings['hooks']['Stop'][0]['hooks'][0]['command']
+        return settings['hooks'][event][0]['hooks'][0]['command']
+
+    def settings_command(self):
+        return self.arguments_command('Stop')
 
     def test_launch_arguments_name_the_stop_hook(self):
         self.assertEqual(self.arguments[0], 'claude')
@@ -241,10 +254,13 @@ class StopHook(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT body FROM messages WHERE id='message:coordinator:mid-turn'").fetchone()[0], body)
         self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
 
-    def test_admitted_tool_loop_records_a_read_only_after_supported_read(self):
+    def test_dsh_tool_hook_delivers_and_records_every_input_kind(self):
         directory = self.home / 'attempt'
+        self.db.execute("UPDATE sessions SET harness='dsh' WHERE id='worker'")
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        kinds = ('task', 'task-assignment', 'guidance', 'report', 'question',
+                 'completion-request', 'completion-confirmed', 'recovery')
         script = self.home / 'admitted.py'
         script.write_text(r'''import json, os, sqlite3, subprocess, sys
 config = json.loads(sys.argv[1])
@@ -254,17 +270,20 @@ results = []
 for tool in ('first', 'second', 'third'):
     if tool == 'second':
         with sqlite3.connect(config['db']) as db:
-            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','guidance','Admitted full body.')")
+            for kind in config['kinds']:
+                db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)",
+                           ('admitted-' + kind, 'coordinator', 'worker', kind, 'Complete body for ' + kind + '.'))
     result = subprocess.run(['/bin/sh','-c',command], input=json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}), env=env, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(result.stdout + result.stderr)
     results.append(json.loads(result.stdout) if result.stdout.strip() else None)
     if tool == 'second':
         with sqlite3.connect(config['db']) as db:
-            assert db.execute("SELECT count(*) FROM message_reads WHERE message='admitted-message'").fetchone()[0] == 1
+            assert db.execute("SELECT count(*) FROM message_reads WHERE attempt='attempt-1' AND recipient='worker'").fetchone()[0] == len(config['kinds'])
 print(json.dumps(results), flush=True)
 ''')
-        config = json.dumps({'db': self.path, 'directory': str(directory), 'command': self.settings_command()})
+        config = json.dumps({'db': self.path, 'directory': str(directory), 'command': self.settings_command(),
+                             'kinds': kinds})
         env = dict(self.env, BATON_STOP_HOOK=self.binary)
         try:
             result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
@@ -274,13 +293,123 @@ print(json.dumps(results), flush=True)
             self.assertEqual(outputs[-1], 'exit 0', result.stdout + result.stderr)
             first, second, third = json.loads(outputs[0])
             self.assertIsNone(first)
-            self.assertIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
+            context = second['hookSpecificOutput']['additionalContext']
+            for kind in kinds:
+                self.assertIn('Message (' + kind + ') from coordinator [id: admitted-' + kind + ']:\n'
+                              'Complete body for ' + kind + '.', context)
             self.assertIsNone(third)
-            rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE message='admitted-message'").fetchall()
-            self.assertEqual([row[:4] for row in rows], [('attempt-1','admitted-message','worker','native-1')])
-            self.assertTrue(rows[0][4])
-            self.assertIsNone(rows[0][5])
-            self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='admitted-message'").fetchone()[0])
+            rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE attempt='attempt-1' ORDER BY message").fetchall()
+            self.assertEqual([row[:4] for row in rows],
+                             [('attempt-1', 'admitted-' + kind, 'worker', 'native-1') for kind in sorted(kinds)])
+            self.assertTrue(all(row[4] and row[5] is None for row in rows))
+            self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE receipt IS NOT NULL AND id LIKE 'admitted-%'").fetchone()[0], 0)
+        finally:
+            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
+
+    REVIEW = ("Review the work against coordinator's assignment and the supplied evidence. "
+              "Confirm with completion-confirmed --to coordinator when the assignment is satisfied. "
+              "Otherwise use guide --to coordinator --text TEXT to state what is missing and direct the remaining work.")
+
+    def test_tool_hook_gives_a_completion_request_with_the_review_instruction(self):
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.\nλ🙂')
+        context = self.tool_hook()['hookSpecificOutput']['additionalContext']
+        self.assertEqual(context, 'Baton input for this turn. Handle the following complete messages:\n'
+            'Message (completion-request) from coordinator [id: message:coordinator:request]:\nEvidence: tests pass.\nλ🙂\n'
+            + self.REVIEW + '\nThe complete input is available in this turn.')
+
+    def test_stop_block_gives_a_completion_request_with_the_review_instruction(self):
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.')
+        reason = self.hook()['reason']
+        self.assertIn('[id: message:coordinator:request]:\nEvidence: tests pass.\n' + self.REVIEW + '\nUse inbox or read to record a complete read.', reason)
+
+    def test_other_input_kinds_carry_no_review_instruction(self):
+        for kind in ('guidance', 'report', 'question', 'task', 'completion-confirmed'):
+            self.owe(ident='message:coordinator:' + kind, kind=kind, body='Body of ' + kind + '.')
+        context = self.tool_hook()['hookSpecificOutput']['additionalContext']
+        self.assertNotIn('Review the work', context)
+        self.assertNotIn('Review the work', self.hook()['reason'])
+
+    def prompt(self, session='worker'):
+        cursor = self.db.execute('SELECT coalesce(max(seq),0) FROM messages').fetchone()[0]
+        result = subprocess.run([self.binary, 'prompt-selection-sql', session, str(cursor)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(self.db.execute(result.stdout).fetchone()[0])
+
+    def test_turn_start_prompt_carries_the_complete_request_and_review_instruction(self):
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.\nλ🙂')
+        self.owe(ident='message:coordinator:note', kind='report', body='Progress.')
+        selection = self.prompt()
+        self.assertEqual(selection['ids'], ['message:coordinator:request', 'message:coordinator:note'])
+        self.assertEqual(selection['text'].split('\n\n')[0],
+            'Message (completion-request) from coordinator [id: message:coordinator:request]:\nEvidence: tests pass.\nλ🙂\n' + self.REVIEW)
+        self.assertIn('Message (report) from coordinator [id: message:coordinator:note] retained 9 bytes; read the complete body with baton read message:coordinator:note.', selection['text'])
+
+    def test_turn_start_prompt_for_a_dsh_conductor_carries_the_review_instruction(self):
+        self.db.execute("UPDATE sessions SET harness='dsh' WHERE id='worker'")
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.')
+        self.owe(ident='message:coordinator:note', kind='report', body='Progress.')
+        text = self.prompt()['text']
+        self.assertIn('[id: message:coordinator:request]:\nEvidence: tests pass.\n' + self.REVIEW, text)
+        self.assertIn('[id: message:coordinator:note]:\nProgress.', text)
+
+    def test_turn_start_request_body_and_review_for_each_harness(self):
+        self.db.execute("UPDATE session_roles SET role='conductor' WHERE session='worker'")
+        body = 'Evidence with paragraphs.\n\n' + 'Complete λ🙂 evidence.\n' * 5000 + 'REQUEST-BODY-END'
+        self.owe(ident='message:coordinator:request', kind='completion-request', body=body)
+        for harness in ('claude-code', 'codex', 'omp', 'muse', 'dsh', 'antigravity'):
+            with self.subTest(harness=harness):
+                self.db.execute("UPDATE sessions SET harness=? WHERE id='worker'", (harness,))
+                text = self.prompt()['text']
+                self.assertIn('[id: message:coordinator:request]:\n' + body + '\n' + self.REVIEW, text)
+
+    def test_complete_prompt_with_the_review_instruction_still_records_the_read(self):
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained','/attempt','running')")
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.')
+        selection = self.prompt()
+        cursor = self.db.execute('SELECT max(seq) FROM messages').fetchone()[0]
+        prompt = {'session': 'worker', 'attempt': 'attempt-1', 'direct': False, 'cursor': cursor,
+                  'prompt': 'Instructions.\n' + selection['text'], 'inputMessages': selection['ids']}
+        result = subprocess.run([self.binary, 'prompt-record-sql', 'attempt-1', 'native-1', 'identity-1', json.dumps(prompt)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.db.executescript(result.stdout)
+        self.assertEqual(self.db.execute("SELECT attempt,native FROM message_reads WHERE message='message:coordinator:request'").fetchall(),
+                         [('attempt-1', 'native-1')])
+
+    def test_stop_preview_keeps_input_owed_until_a_complete_read(self):
+        directory = self.home / 'stop-attempt'
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        script = self.home / 'stopped.py'
+        script.write_text(r"""import json, os, sqlite3, subprocess, sys
+config = json.loads(sys.argv[1])
+env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+with sqlite3.connect(config['db']) as db:
+    db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('stop-delivered','coordinator','worker','guidance','Delivered at Stop.')")
+decisions = []
+for _ in range(2):
+    result = subprocess.run(['/bin/sh','-c',config['command']], input=json.dumps({'hook_event_name':'Stop','stop_hook_active':False}), env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout + result.stderr)
+    decisions.append(json.loads(result.stdout))
+print(json.dumps(decisions), flush=True)
+""")
+        config = json.dumps({'db': self.path, 'directory': str(directory),
+            'command': self.arguments_command('Stop')})
+        env = dict(self.env, BATON_STOP_HOOK=self.binary)
+        try:
+            result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
+                'python3', '-I', str(script), config], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            outputs = result.stdout.splitlines()
+            self.assertEqual(outputs[-1], 'exit 0', result.stdout + result.stderr)
+            first, second = json.loads(outputs[0])
+            self.assertIn('Delivered at Stop.', first['reason'])
+            self.assertIn('Delivered at Stop.', second['reason'])
+            self.assertIn('Baton holds', second['reason'])
+            rows = self.db.execute("SELECT attempt,recipient,native FROM message_reads WHERE message='stop-delivered'").fetchall()
+            self.assertEqual(rows, [])
         finally:
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
 
@@ -410,6 +539,167 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
 
     def test_large_body_injected_read_completion_stop_and_ended_attempt(self):
         self.combined_lifecycle('Large complete body λ🙂.\n' * 25000 + 'TAIL-READ-PROOF-large', 'large')
+
+    def codex_hooks(self):
+        """The hook tables Codex builds from the launch's -c key=value overrides."""
+        hooks = {}
+        for index, value in enumerate(self.codex_arguments[:-1]):
+            if value == '-c' and self.codex_arguments[index + 1].startswith('hooks.'):
+                key, _, text = self.codex_arguments[index + 1].partition('=')
+                hooks[key] = tomllib.loads('value = ' + text)['value']
+        return hooks
+
+    def codex_handler(self, event):
+        groups = self.codex_hooks()['hooks.' + event]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0]['hooks']), 1)
+        return groups[0], groups[0]['hooks'][0]
+
+    def codex_hook(self, event, extra=None, env=None):
+        """Run the configured command with the payload Codex sends the hook."""
+        _, handler = self.codex_handler(event)
+        payload = {'session_id': 'thread-1', 'turn_id': 'turn-1', 'transcript_path': None, 'cwd': str(self.home),
+                   'hook_event_name': event, 'model': 'gpt-6-luna', 'permission_mode': 'bypassPermissions'}
+        payload.update(extra or {})
+        result = subprocess.run(['/bin/sh', '-c', handler['command']], input=json.dumps(payload), capture_output=True,
+                                text=True, cwd=str(self.home), env=env or dict(self.env, BATON_STOP_HOOK=self.binary))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout) if result.stdout.strip() else None
+
+    def codex_stop(self, active=False, env=None):
+        return self.codex_hook('Stop', {'stop_hook_active': active, 'last_assistant_message': 'Done.'}, env)
+
+    def codex_tool(self, env=None):
+        return self.codex_hook('PostToolUse', {'tool_name': 'Bash', 'tool_use_id': 'call-1',
+                                               'tool_input': {'command': 'echo hello'}, 'tool_response': 'hello\n'}, env)
+
+    def test_codex_launch_installs_both_hooks_and_bypasses_the_trust_review(self):
+        arguments = self.codex_arguments
+        self.assertEqual(arguments[:3], ['--json', '--model', 'gpt-6-luna'])
+        self.assertEqual(arguments[-2:], ['--dangerously-bypass-approvals-and-sandbox', '-'])
+        self.assertIn('--dangerously-bypass-hook-trust', arguments)
+        self.assertEqual(sorted(self.codex_hooks()), ['hooks.PostToolUse', 'hooks.Stop'])
+        stop_group, stop = self.codex_handler('Stop')
+        tool_group, tool = self.codex_handler('PostToolUse')
+        self.assertEqual(stop, {'type': 'command', 'command': self.settings_command()})
+        self.assertEqual(tool, {'type': 'command', 'command': self.settings_command(), 'additionalContextLimit': 0})
+        self.assertNotIn('matcher', stop_group)
+        self.assertEqual(tool_group['matcher'], '*')
+
+    def test_codex_hooks_do_nothing_without_the_launch_environment(self):
+        self.owe()
+        env = {k: v for k, v in os.environ.items() if k not in ('BATON_SESSION', 'BATON_DATABASE', 'BATON_STOP_HOOK')}
+        self.assertIsNone(self.codex_stop(env=env))
+        self.assertIsNone(self.codex_tool(env=env))
+
+    def test_codex_stop_blocks_until_the_completion_request(self):
+        for active in (False, True, True):
+            decision = self.codex_stop(active)
+            self.assertEqual(decision['decision'], 'block')
+            self.assertIn('Assignment dispatch:assignment is still open', decision['reason'])
+            self.assertIn('completion-request --text SUMMARY', decision['reason'])
+        self.request()
+        self.assertIsNone(self.codex_stop(True))
+
+    def test_codex_stop_holds_owed_input_of_every_kind(self):
+        self.request()
+        kinds = ('guidance', 'report', 'question', 'task', 'completion-confirmed', 'recovery')
+        for kind in kinds:
+            self.owe(ident='owed:' + kind, kind=kind, body='Body of ' + kind + '.')
+        decision = self.codex_stop(True)
+        self.assertEqual(decision['decision'], 'block')
+        self.assertIn('Baton holds %d unread inputs for worker' % len(kinds), decision['reason'])
+        for kind in kinds:
+            self.assertIn('Message (%s) from coordinator [id: owed:%s]:\nBody of %s.' % (kind, kind, kind), decision['reason'])
+
+    def test_codex_tool_hook_injects_every_kind_whole_and_in_order(self):
+        kinds = ('guidance', 'report', 'question', 'task', 'completion-confirmed', 'recovery')
+        bodies = {kind: 'Body of %s λ🙂.\n' % kind + kind[0] * 40000 + '\nend of ' + kind for kind in kinds}
+        for kind in kinds:
+            self.owe(ident='owed:' + kind, kind=kind, body=bodies[kind])
+        output = self.codex_tool()
+        self.assertEqual(output['hookSpecificOutput']['hookEventName'], 'PostToolUse')
+        context = output['hookSpecificOutput']['additionalContext']
+        positions = []
+        for kind in kinds:
+            self.assertIn('Message (%s) from coordinator [id: owed:%s]:\n%s' % (kind, kind, bodies[kind]), context)
+            positions.append(context.index(bodies[kind]))
+        self.assertEqual(positions, sorted(positions))
+
+    def test_codex_tool_hook_stays_quiet_without_owed_input(self):
+        self.request()
+        self.assertIsNone(self.codex_tool())
+
+    def codex_admitted(self, body):
+        directory = self.home / 'codex-attempt'
+        self.db.execute("UPDATE sessions SET native='thread-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        script = self.home / 'codex-admitted.py'
+        script.write_text(r'''import json, os, pathlib, sqlite3, subprocess, sys
+config = json.loads(sys.argv[1])
+env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+def hook(event, **fields):
+    payload = dict(session_id='thread-1', turn_id='turn-1', cwd='/', hook_event_name=event, model='gpt-6-luna', **fields)
+    result = subprocess.run(['/bin/sh', '-c', config[event]], input=json.dumps(payload), env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout + result.stderr)
+    return json.loads(result.stdout) if result.stdout.strip() else None
+def reads():
+    with sqlite3.connect(config['db']) as db:
+        return db.execute("SELECT attempt,native FROM message_reads WHERE message='admitted-message'").fetchall()
+results = {}
+results['quiet'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
+with sqlite3.connect(config['db']) as db:
+    db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','question',?)", (pathlib.Path(config['bodyPath']).read_text(encoding='utf-8'),))
+results['unread_before'] = reads()
+results['stop_held'] = hook('Stop', stop_hook_active=False, last_assistant_message='Done.')
+results['read_after_stop'] = reads()
+results['injected'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
+results['read_after'] = reads()
+results['again'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
+print(json.dumps(results), flush=True)
+''')
+        (self.home / 'codex-body.txt').write_text(body, encoding='utf-8')
+        config = {'db': self.path, 'directory': str(directory), 'bodyPath': str(self.home / 'codex-body.txt'),
+                  'Stop': self.codex_handler('Stop')[1]['command'], 'PostToolUse': self.codex_handler('PostToolUse')[1]['command']}
+        self.request()
+        env = dict(self.env, BATON_STOP_HOOK=self.binary)
+        try:
+            result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
+                'python3', '-I', str(script), json.dumps(config)], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            lines = result.stdout.splitlines()
+            self.assertEqual(lines[-1], 'exit 0', result.stdout + result.stderr)
+            results = json.loads(lines[0])
+            self.assertIsNone(results['quiet'])
+            self.assertEqual(results['unread_before'], [])
+            self.assertEqual(results['stop_held']['decision'], 'block')
+            self.assertIn(body, results['stop_held']['reason'])
+            self.assertEqual(results['read_after_stop'], [])
+            self.assertIn(body, results['injected']['hookSpecificOutput']['additionalContext'])
+            self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
+            self.assertIsNone(results['again'])
+        finally:
+            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
+        self.assertIsNone(self.codex_stop(True))
+
+    def test_codex_admitted_tool_loop_records_the_read_and_then_allows_stop(self):
+        self.codex_admitted('Admitted full body.')
+
+    def test_codex_large_input_stays_owed_through_stop_until_a_tool_delivers_it_whole(self):
+        # Codex previews a Stop reason over its size limit and records no read for it.
+        self.codex_admitted('Large admitted body λ🙂.\n' + 'abcdef' * 40000 + '\nend of body')
+
+    def test_codex_conductor_receives_a_completion_request_whole(self):
+        self.db.executescript("""
+            INSERT INTO sessions(id,parent,harness) VALUES('lead',NULL,'codex');
+            INSERT INTO session_roles(session,role) VALUES('lead','conductor');""")
+        body = 'Completion summary λ🙂.\n' + 'xyz' * 40000 + '\nend of summary'
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('request:worker:1','worker','lead','completion-request',?)", (body,))
+        env = dict(self.env, BATON_SESSION='lead', BATON_STOP_HOOK=self.binary)
+        context = self.codex_tool(env=env)['hookSpecificOutput']['additionalContext']
+        self.assertIn('Message (completion-request) from worker [id: request:worker:1]:\n' + body, context)
+        self.assertEqual(self.codex_stop(True, env=env)['decision'], 'block')
 
 
 if __name__ == '__main__':
