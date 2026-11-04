@@ -107,12 +107,55 @@ class StopHook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout) if result.stdout.strip() else None
 
+    def agy_hook(self, payload, env=None):
+        result = subprocess.run([self.binary, '--stop-hook'], input=json.dumps(payload),
+                                capture_output=True, text=True, env=env if env is not None else self.env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout) if result.stdout.strip() else None
+
     def test_b1_input_arriving_mid_turn_is_handed_to_the_turn(self):
         self.owe()
         decision = self.hook()
         self.assertEqual(decision['decision'], 'block')
         self.assertIn('Baton holds 1 unread inputs for worker', decision['reason'])
         self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nUse inbox or read to record a complete read.', decision['reason'])
+
+    def test_agy_pre_invocation_injects_complete_messages_of_every_kind(self):
+        kinds = ('task', 'task-assignment', 'task-continuation', 'guidance',
+                 'recovery', 'report', 'question', 'completion-request',
+                 'completion-confirmed', 'other-kind')
+        for index, kind in enumerate(kinds):
+            self.owe(ident='agy-' + kind, kind=kind, body='Complete body for ' + kind)
+        reads_before = self.db.execute('SELECT count(*) FROM message_reads').fetchone()[0]
+        result = self.agy_hook({'invocationNum': 3, 'initialNumSteps': 7})
+        self.assertEqual(len(result['injectSteps']), 1)
+        text = result['injectSteps'][0]['userMessage']
+        for kind in kinds:
+            self.assertIn('[id: agy-' + kind + ']:\nComplete body for ' + kind, text)
+        self.assertIn("Review the work against coordinator's assignment and the supplied evidence.", text)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM message_reads').fetchone()[0], reads_before)
+
+    def test_agy_stop_continues_open_assignment_until_completion_request(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('assignment','coordinator','worker','task-assignment','Do the work.')")
+        self.read('assignment')
+        stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
+                'fullyIdle': True, 'conversationId': 'agy-session', 'workspacePaths': [],
+                'transcriptPath': '', 'artifactDirectoryPath': '', 'modelName': 'agy-test'}
+        blocked = self.agy_hook(stop)
+        self.assertEqual(blocked['decision'], 'continue')
+        self.assertIn('completion-request --text SUMMARY', blocked['reason'])
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('request','worker','coordinator','completion-request','Finished.')")
+        self.assertEqual(self.agy_hook(stop), {'decision': 'allow'})
+
+    def test_agy_stop_reports_database_errors_instead_of_allowing_completion(self):
+        database = self.home / 'uninitialized.db'
+        sqlite3.connect(database).close()
+        result = subprocess.run([self.binary, '--stop-hook'],
+            input=json.dumps({'executionNum': 1, 'terminationReason': 'model_stop', 'fullyIdle': True}),
+            capture_output=True, text=True, env=dict(self.env, BATON_DATABASE=str(database)))
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('no such table: messages', result.stderr)
+        self.assertNotIn('"decision":"allow"', result.stdout)
 
     def decision_sql(self):
         result = subprocess.run([self.binary, 'decision-sql'], capture_output=True, text=True)
@@ -278,6 +321,49 @@ print(json.dumps(results), flush=True)
             first, second, third = json.loads(outputs[0])
             self.assertIsNone(first)
             self.assertIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
+            self.assertIsNone(third)
+            rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE message='admitted-message'").fetchall()
+            self.assertEqual([row[:4] for row in rows], [('attempt-1','admitted-message','worker','native-1')])
+            self.assertTrue(rows[0][4])
+            self.assertIsNone(rows[0][5])
+            self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='admitted-message'").fetchone()[0])
+        finally:
+            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
+
+    def test_admitted_agy_invocation_records_a_read_after_injection(self):
+        directory = self.home / 'attempt'
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        script = self.home / 'admitted.py'
+        script.write_text(r'''import json, os, sqlite3, subprocess, sys
+config = json.loads(sys.argv[1])
+env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+command = config['command']
+results = []
+for invocation in ('first', 'second', 'third'):
+    if invocation == 'second':
+        with sqlite3.connect(config['db']) as db:
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','guidance','Admitted full body.')")
+    result = subprocess.run([config['binary'],'--stop-hook'], input=json.dumps({'invocationNum':2,'initialNumSteps':4}), env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout + result.stderr)
+    results.append(json.loads(result.stdout) if result.stdout.strip() else None)
+    if invocation == 'second':
+        with sqlite3.connect(config['db']) as db:
+            assert db.execute("SELECT count(*) FROM message_reads WHERE message='admitted-message'").fetchone()[0] == 1
+print(json.dumps(results), flush=True)
+''')
+        config = json.dumps({'db': self.path, 'directory': str(directory), 'binary': self.binary})
+        env = dict(self.env, BATON_STOP_HOOK=self.binary)
+        try:
+            result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
+                'python3', '-I', str(script), config], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            outputs = result.stdout.splitlines()
+            self.assertEqual(outputs[-1], 'exit 0', result.stdout + result.stderr)
+            first, second, third = json.loads(outputs[0])
+            self.assertIsNone(first)
+            self.assertIn('Admitted full body.', second['injectSteps'][0]['userMessage'])
             self.assertIsNone(third)
             rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE message='admitted-message'").fetchall()
             self.assertEqual([row[:4] for row in rows], [('attempt-1','admitted-message','worker','native-1')])
