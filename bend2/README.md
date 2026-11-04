@@ -66,7 +66,9 @@ Successful native turns record handling of their exact consumed input.
 receipt. A worker uses `completion-request --text SUMMARY` when its assignment is
 ready for its parent's review. A coordinator reviews a Player's request with
 `completion-confirmed --to PLAYER`, or sends further work with `guide --to PLAYER
---text TEXT`. Use `dispatch
+--text TEXT`. Confirmation ends the Player's assignment. `completion-confirmed --to
+PLAYER --next TEXT` (or `--next-file PATH`) confirms and dispatches the next
+assignment in one transaction, and the assignment continues. Use `dispatch
 --to PLAYER --text TEXT` for complete task input to an existing conversation.
 The [agent command guide](../docs/bend2/agent-commands.md) describes named actions,
 independent batches, explicit selected-message reads and context overrides.
@@ -101,12 +103,24 @@ identities. They remain available for integrations and exact replay:
 .scratch/bend2/baton2 state.db push /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db status
+.scratch/bend2/baton2 state.db stall
+.scratch/bend2/baton2 state.db stall-wake
 ```
 
 Commands return JSON. `report` saves the full
 body and pending parent delivery in one SQLite transaction. A matching retry
 returns the stored message with its current delivery receipt. Conflicting reuse of
 an ID fails. The explicit `ack` form records the supplied recipient handling receipt.
+`stall` reports every pending-input candidate with its recorded state. `stall-wake`
+drives the oldest owed message for each candidate whose attempt exited, whose
+endpoint is present, and which has no explicit stop or existing wake claim. Both
+commands use the vocabulary of the coordinator database. A live attempt with
+owed input is reported as `active`; the wake command selects `stalled`
+candidates.
+`stall-wake` also reports a native whose session holds a claimed wake with owed
+input and whose `stdout` file has not been written for 900 seconds to the
+session's coordinator; the observer runs the same check on commit notices.
+The conditions and limits are in `docs/pure-bend2/pending-stall-bend2.md`.
 
 `observe-file ID PLAYER PATH` consumes one
 native harness event. An initialization event (type `session`) updates the
@@ -463,8 +477,14 @@ provider resends while a message or a tool call is running, and holds the newest
 `message_end` arrives. The coordinator appends complete retained frames to a
 per-turn log and writes native stderr to a separate per-run file. `logs` reads
 and sets the concise level, `logs-storage` reports registered files, and
-`logs-clean` removes eligible completed attempt artifacts. [The log policy](../docs/bend2/logging.md)
-describes the levels and file ownership.
+`logs-clean` removes eligible completed attempt artifacts. `storage-policy`
+reports the configured root classes, `storage-preview SESSION` names one
+session's cleanup candidates, and `storage-apply SESSION` runs the locked
+apply for that session. `BATON_STORAGE_ROOTS` names each root and class;
+`BATON_STORAGE_EXCLUSIVE_ROOTS` names the roots dedicated to cleanup.
+[The log policy](../docs/bend2/logging.md) describes the levels and file ownership,
+and [the storage policy](../docs/bend2/storage-policy-core.md) describes the
+classes, preservation evidence and approved-root contract.
 New supervisors use
 the selected coordinator executable. Keep existing logs at their recorded paths
 when changing the installed coordinator between lanes.
@@ -611,6 +631,17 @@ Live native input and stop control require an available keeper socket. The earli
 [observer-loss measurement](../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)
 retains its recorded scope.
 
+`succeed SESSION PREDECESSOR` records SESSION as the successor of a conductor that
+is over (explicitly stopped, or its completion was confirmed). The predecessor's
+children keep their recorded parent, assignments and requests, and the successor
+holds the coordinator authority for them. Each unresolved input of the predecessor
+is forwarded to the successor as a `forwarded-input` message that carries the
+complete original text; original messages and read states stay as recorded. A stop
+or a completion confirmation of a session with live children, or with unresolved
+input from its children, reports them to its current coordinator. The
+[agent command guide](../docs/bend2/agent-commands.md#conductor-succession-and-ended-conductors-1257)
+describes the coordinator derivation.
+
 `recover-observer SESSION OBSERVER_PID` replaces a receive observer after
 its native process has a recorded exit status. The operator supplies the PID of
 that receive process. An available keeper transfers the completed attempt's
@@ -667,14 +698,16 @@ questions are pending, and `--file PATH` imports an existing JSON response.
 `stdin-written` records transport completion; subsequent native output records
 progress. See [native interaction semantics and limits](../docs/bend2/native-interactions.md).
 
-Use `baton stop --session PLAYER --reason TEXT` to end a retained OMP or Codex session. The
-command records a terminal stop, prevents further queued execution and submits
+Use `baton stop --session PLAYER --reason TEXT` to end a retained OMP, Codex,
+Muse, Claude Code, DSH or Antigravity session. The command records a terminal
+stop, prevents further queued execution and submits
 TERM to its current native process group. `baton force-stop --session PLAYER` explicitly
 submits KILL to the same still-owned attempt. Baton generates or selects the
 recorded stop identity. `session`, `inbox` and `pending`
 retain the work, messages, receipts and stop state. The stop answer distinguishes
 signal submission from actual exit; the observer reports completion to the
-parent. Active direct `turn` execution returns an unsupported-stop refusal.
+parent. Active direct `turn` execution without a retained keeper directory
+returns an unsupported-stop refusal.
 See [session stop behavior](../docs/bend2/native-interactions.md#terminal-session-stop).
 
 `codex-conductor.mjs` and `omp-conductor.mjs` provide the Node adapters.
@@ -732,6 +765,76 @@ It can inspect Git state with `worktree`, read a declared remote's advertised
 branch with `remote-tip`, and land and publish reviewed work with `land`,
 `land-checked` and `push`. Report receipts retain input handling; completion
 decisions retain the coordinator's task review.
+
+### Root on another host
+
+The conductor server runs on the host that holds the orchestra database. Its
+delivery socket is created beside that database, and report writers on that
+host connect to it. A Claude Code session on another machine reaches the
+server through an SSH stdio stream: the MCP server command is `ssh`, and the
+remote command starts `mcp-conductor.mjs` on the database host.
+
+`bend2/scripts/root-channel-config.mjs` prints the configuration. Run it on the
+database host. It resolves the database, the coordinator executable and
+`mcp-conductor.mjs` to absolute paths and refuses a path that does not exist:
+
+```sh
+node bend2/scripts/root-channel-config.mjs /data/orchestra.db /opt/baton/bin/baton --session operator --resume ROOT_SESSION --ssh homelab --name baton-homelab
+```
+
+It writes the server entry to stdout and the launch command to stderr:
+
+```json
+{"mcpServers":{"baton-homelab":{"command":"ssh","args":["-T","homelab","'exec' 'node' '/opt/baton/bend2/scripts/mcp-conductor.mjs' '/data/orchestra.db' '/opt/baton/bin/baton' '--session' 'operator'"]}}}
+```
+
+```sh
+claude --resume ROOT_SESSION --mcp-config FILE --dangerously-load-development-channels server:baton-homelab
+```
+
+Save the entry as `FILE` on the machine that runs Claude Code. `ssh homelab`
+must log in without a prompt. `--node PATH` selects the Node executable on the
+database host. Each orchestra database has its own server entry and its own
+server name. `--dangerously-load-development-channels` takes several values;
+pass one `server:NAME` value for each orchestra.
+
+The root attaches as the `operator` session. The operator keeps its operator
+role, so reports and questions from parentless Conductors select it as their
+recipient. The channel retains pending input for automatic delivery and read
+tracking. Attachment must preserve unread input and the native conversation.
+
+The JavaScript resident `impl/scripts/mcp-web.mjs` has been removed. A Claude
+Code configuration that still names it starts no server and receives no
+Baton notifications. Replace that entry with the conductor entry above.
+
+### Unattached root error
+
+A root is a parentless session with the operator role, or one whose endpoint
+runs `mcp-conductor.mjs`. A Claude Code root with owed input is unattached when
+its endpoint is not a conductor `--deliver` endpoint or when a connection to
+its delivery socket fails. Baton connects from the database directory and
+closes the connection after checking it. A Codex root with a native
+conversation and a recorded managed receiver is checked by connecting a Codex
+app-server proxy through the receiver's recorded environment. An empty
+endpoint cannot establish a route to a conversation on another host. Baton
+checks recognized root notification routes for other harnesses. A generic
+argv endpoint produces an unattached-root error.
+
+`status`, `session` and `orchestra` print one line on stderr for each
+unattached root:
+
+```text
+Baton error: root session operator has 7136 owed inputs and no attached channel: no channel endpoint is registered. Attach a Claude Code channel with bend2/scripts/mcp-conductor.mjs as described in bend2/README.md, section "Root on another host".
+```
+
+A message, report or question committed to an unattached root prints the same
+line on its sender's stderr and appends it to the database's `.root.log`.
+
+An input that Baton cannot route to a non-Codex session is reported to that
+session's coordinator. The report names the input, delivery cause, owed input
+count and endpoint repair command. Repeated delivery of the oldest unread
+input keeps the same report; reading that input lets a later failed delivery
+produce a new report.
 
 ## OMP Associate Conductors and Players
 

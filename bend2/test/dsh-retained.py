@@ -1,10 +1,13 @@
-"""Bounded retained-launch checks for the DSH adapter.
+"""Retained-launch and native admission checks for the DSH adapter.
 
 The fixture derives DSH_HOME from a temporary database, prepares the two patch
-overlays and calls the real retained launch composition. It spawns nothing.
+overlays and calls retained launch composition and custody with a local CLI stub.
 """
+import importlib.util
+import json
 import os
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -34,13 +37,93 @@ class DshRetained(unittest.TestCase):
         self.db = self.root / 'state.db'
         self.link = self.root / 'link.db'
         self.attempt = self.root / 'attempt'
-        self.attempt.mkdir()
+        self.patches = self.root / 'attempt.dsh'
+        self.receiver = self.root / 'receiver'
+        self.receiver_bin = self.receiver / 'bin' / 'baton2'
+        self.receiver_helpers = self.receiver / 'libexec' / 'baton2'
         with sqlite3.connect(self.db) as database:
             database.executescript(SCHEMA)
             database.execute(
                 "INSERT INTO sessions(id,harness,model,effort) VALUES"
                 "('dsh-fixture','dsh','deepseek-flash','max')")
+        self.owner = None
         self.link.symlink_to(self.db)
+        self.addCleanup(self.shutdown_owner)
+
+    def shutdown_owner(self):
+        if self.owner is None:
+            return
+        shutdown = None
+        if self.owner.poll() is None:
+            shutdown = subprocess.run(
+                [str(EXE), '--instance-shutdown', str(self.db)],
+                text=True, capture_output=True)
+        status = self.owner.wait()
+        if status != 0:
+            self.fail('instance owner exited with status ' + str(status)
+                      + ': ' + (self.owner.stderr.read() or ''))
+        if shutdown is not None and shutdown.returncode != 0:
+            self.fail('instance shutdown failed with status '
+                      + str(shutdown.returncode) + ': '
+                      + shutdown.stdout + shutdown.stderr)
+
+    def start_owner(self):
+        self.owner = subprocess.Popen(
+            [str(EXE), '--instance-owner', str(self.db)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        while True:
+            if self.owner.poll() is not None:
+                status = self.owner.wait()
+                self.fail('instance owner exited before readiness with status '
+                          + str(status) + ': ' + (self.owner.stderr.read() or ''))
+            witness = subprocess.run(
+                [str(EXE), '--instance-witness', str(self.db)],
+                capture_output=True, text=True)
+            if witness.returncode == 0 and witness.stdout.strip():
+                return
+
+    def stage_receiver(self, package=False):
+        self.receiver_bin.parent.mkdir(parents=True)
+        shutil.copyfile(EXE, self.receiver_bin)
+        self.receiver_bin.chmod(0o700)
+        if package:
+            helpers = self.root / 'package-helpers'
+            helpers.mkdir()
+            binaries = {}
+            for name in ('claude-credit-observe', 'api-key-exec', 'usage-read'):
+                path = helpers / name
+                path.write_text('#!/bin/sh\nexit 0\n')
+                path.chmod(0o755)
+                binaries[name] = path
+            spec = importlib.util.spec_from_file_location(
+                'dsh_package_native', ROOT / 'bend2/scripts/package-native.py')
+            package_native = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(package_native)
+            package_native.stage_adapters(self.receiver, helper_binaries=binaries)
+            return
+        self.receiver_helpers.mkdir(parents=True)
+        shutil.copyfile(ROOT / 'bend2/scripts/dsh-worker.mjs',
+                        self.receiver_helpers / 'dsh-worker.mjs')
+        shutil.copyfile(ROOT / 'bend2/scripts/dsh-baton-hooks.mjs',
+                        self.receiver_helpers / 'dsh-baton-hooks.mjs')
+
+    def assert_retained_prepare_bridge(self):
+        self.start_owner()
+        result = subprocess.run(
+            [str(self.receiver_bin), 'prepare', str(self.link), str(self.attempt), '/usr/bin/dsh',
+             'deepseek/deepseek-flash', 'max'],
+            text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        bridge = next((line.split('\t', 1)[1] for line in result.stdout.splitlines()
+                       if line.startswith('arg\tBATON_DSH_WORKER_BRIDGE=')), '')
+        expected_bridge = str(self.receiver_helpers / 'dsh-worker.mjs')
+        expected_hooks = str(self.receiver_helpers / 'dsh-baton-hooks.mjs')
+        self.assertEqual(bridge, expected_bridge, result.stdout)
+        self.assertTrue((self.receiver_helpers / 'dsh-worker.mjs').is_file())
+        self.assertTrue((self.receiver_helpers / 'dsh-baton-hooks.mjs').is_file())
+        tools = (self.patches / 'dsh-tools.patch.yml').read_text()
+        self.assertIn('name: ' + repr(expected_hooks), tools)
+        self.assertIn('input\tfixture task', result.stdout)
 
     def run_fixture(self):
         result = subprocess.run(
@@ -61,17 +144,26 @@ class DshRetained(unittest.TestCase):
         self.assertEqual(argv[4], '/usr/bin/dsh')
         self.assertEqual(argv[5:], [
             '--profile', 'headless',
-            '--patch', str(self.attempt / 'dsh-tools.patch.yml'),
-            '--patch', str(self.attempt / 'dsh-model.patch.yml'),
+            '--patch', str(self.patches / 'dsh-tools.patch.yml'),
+            '--patch', str(self.patches / 'dsh-model.patch.yml'),
             '--json', '--session-id', 'session-1'])
         self.assertIn('input\tfixture task', output)
         self.assertIn('keep\t0', output)
         self.assertIn('file\tfalse', output)
+        self.assertFalse(self.attempt.exists())
+
+    def test_retained_prepare_resolves_dsh_worker_bridge(self):
+        self.stage_receiver()
+        self.assert_retained_prepare_bridge()
+
+    def test_retained_prepare_resolves_dsh_assets_from_package_stage(self):
+        self.stage_receiver(package=True)
+        self.assert_retained_prepare_bridge()
 
     def test_patch_inputs_are_the_minimal_roster_and_max_effort(self):
         self.run_fixture()
-        tools = (self.attempt / 'dsh-tools.patch.yml').read_text()
-        model = (self.attempt / 'dsh-model.patch.yml').read_text()
+        tools = (self.patches / 'dsh-tools.patch.yml').read_text()
+        model = (self.patches / 'dsh-model.patch.yml').read_text()
         self.assertIn('    read: false', tools)
         self.assertIn('    readImage: true', tools)
         self.assertIn('    write: false', tools)
@@ -80,6 +172,71 @@ class DshRetained(unittest.TestCase):
         self.assertIn('provider: deepseek-official', model)
         self.assertIn("model: 'deepseek-flash'", model)
         self.assertIn("reasoningEffort: 'max'", model)
+
+    def admit(self, attempt, native=''):
+        command = self.root / 'dsh-stub'
+        command.write_text('''#!/usr/bin/env python3
+import json, os, pathlib, sys
+args = sys.argv[1:]
+patches = [pathlib.Path(args[i + 1]) for i, arg in enumerate(args) if arg == '--patch']
+assert len(patches) == 2 and all(p.is_file() for p in patches)
+assert "reasoningEffort: 'max'" in patches[1].read_text()
+assert "model: 'deepseek-flash'" in patches[1].read_text()
+assert 'readImage: true' in patches[0].read_text()
+prompt = sys.stdin.read()
+assert prompt == 'fixture task'
+print(json.dumps({'argv': args, 'prompt': prompt, 'home': os.environ['DSH_HOME']}), flush=True)
+''')
+        command.chmod(0o700)
+        result = subprocess.run(
+            [str(EXE), 'admit', str(self.link), str(attempt), str(command),
+             'deepseek/deepseek-flash', 'max', native],
+            text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('native-exit 0', result.stdout)
+        return json.loads(next(line for line in result.stdout.splitlines()
+                               if line.startswith('{')))
+
+    def test_first_admission_seals_prompt_and_finishes_custody(self):
+        observed = self.admit(self.attempt)
+        self.assertEqual(observed['prompt'], 'fixture task')
+        self.assertNotIn('--session-id', observed['argv'])
+        self.assertEqual((self.attempt / 'prompt.txt').read_text(), 'fixture task')
+        self.assertTrue((self.attempt / 'manifest').is_file())
+        self.assertTrue((self.attempt / 'acknowledged').is_file())
+        self.assertFalse((self.attempt / 'dsh-tools.patch.yml').exists())
+
+    def test_retained_retry_keeps_native_home_and_patch_identity(self):
+        first = self.admit(self.attempt)
+        tools = (self.patches / 'dsh-tools.patch.yml').read_bytes()
+        model = (self.patches / 'dsh-model.patch.yml').read_bytes()
+        retry = self.root / 'retry'
+        observed = self.admit(retry, 'session-1')
+        self.assertEqual(observed['home'], first['home'])
+        self.assertEqual(observed['argv'][-2:], ['--session-id', 'session-1'])
+        self.assertEqual((self.root / 'retry.dsh/dsh-tools.patch.yml').read_bytes(), tools)
+        self.assertEqual((self.root / 'retry.dsh/dsh-model.patch.yml').read_bytes(), model)
+        self.assertEqual((retry / 'prompt.txt').read_text(), 'fixture task')
+        self.assertTrue((retry / 'acknowledged').is_file())
+
+    def test_patch_storage_tracks_the_execution_owner_and_lease(self):
+        for path in [self.patches, self.patches / 'dsh-model.patch.yml']:
+            with self.subTest(path=path):
+                active = subprocess.run(
+                    [str(EXE), 'storage', str(self.attempt), str(path), 'running'],
+                    text=True, capture_output=True, check=True)
+                self.assertIn('owners\tdsh-fixture', active.stdout)
+                self.assertIn('active\texecution:turn', active.stdout)
+                ended = subprocess.run(
+                    [str(EXE), 'storage', str(self.attempt), str(path), 'exited'],
+                    text=True, capture_output=True, check=True)
+                self.assertIn('owners\tdsh-fixture', ended.stdout)
+                self.assertNotIn('execution:turn', ended.stdout)
+        unrelated = subprocess.run(
+            [str(EXE), 'storage', str(self.attempt), str(self.root / 'attempt.dsh-other'), 'running'],
+            text=True, capture_output=True, check=True)
+        self.assertNotIn('dsh-fixture', unrelated.stdout)
+        self.assertNotIn('execution:turn', unrelated.stdout)
 
 
 if __name__ == '__main__':

@@ -101,6 +101,29 @@ the ensemble. Verify actual session and native execution records before reportin
 it active. Existing body and clothing systems and ONE_SHOT_CURE's defects supply
 the starting implementation and render comparisons.
 
+## Durable storage
+
+[Issue #912](https://github.com/Flip-Engineering/baton/issues/912) defines the
+durable storage classes and ownership-safe cleanup for project work. The
+platform slice owns the OS service and timer wiring for the qualified
+`RELEASE/libexec/baton2/logs-clean-all DATABASE` helper. PR #926 merged at
+`ce6e0c18`; four remote daily units run the helper against their databases and
+exit 0. The NVMe scratch root
+`/mnt/nvme4tb/ci-runners/baton2-native-homelab/scratch/tmp` and the #915/#917
+cleanup are deployed. Completed relocation and cleanup recovered 232290603008
+bytes of physical root space. The Mac cleanup recovered 1.389 GB.
+
+The generic storage lifecycle (`storage-policy`, `storage-preview SESSION`,
+`storage-apply SESSION`) remains unqualified work in progress. Before merge it
+must prove leaf replacement and writer-race protection and protect every
+active coordinator database and its ancestors, including #920. The platform
+templates do not configure roots or schedule apply. `docs/bend2/storage-deployment.md`
+records the deployed layout, store ownership and Mac limits. Cleanup
+coordinates with [issue #644](https://github.com/Flip-Engineering/baton/issues/644)
+for retained worktrees and [issue #686](https://github.com/Flip-Engineering/baton/issues/686)
+for log volume. Heavy execution placement remains
+[issue #677](https://github.com/Flip-Engineering/baton/issues/677).
+
 ## Providers, knowledge and remaining integration
 
 - [#844](https://github.com/Flip-Engineering/baton/issues/844) and

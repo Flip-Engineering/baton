@@ -1,0 +1,12 @@
+# Uninstalled template. The deployment owner installs it with the service
+# after `logs-clean-all` is qualified and root approves deployment.
+[Unit]
+Description=Daily Baton log cleanup (issue #912)
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

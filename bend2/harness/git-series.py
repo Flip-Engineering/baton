@@ -50,6 +50,8 @@ def selected_identity(registry_path, model_key=None, series_key=None):
                 and not any(c in model_key for c in '\r\n\x00'), 'The exact model key is invalid.')
     mapped = models.get(model_key)
     if model_key in models:
+        require(mapped is not None,
+                'The model ' + model_key + ' is registered without a GitHub identity series.')
         require(mapped in SERIES, 'The exact-model mapping names an invalid series.')
     if series_key is None:
         series_key = mapped

@@ -1083,7 +1083,7 @@
           "data-row": id,
         });
       }
-      const owed = Math.max(seat.pendingCount || 0, seat.unacknowledgedCount || 0);
+      const owed = Math.max(seat.pendingCount || 0, seat.unreadCount || 0);
       const key = (seat.status || "") + "|" + owed + "|" + (seat.at || "");
       let seen = kwRowSeen.get(id);
       if (!seen) {

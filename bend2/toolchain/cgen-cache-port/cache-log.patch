@@ -1,0 +1,56 @@
+--- a/bend2/cache.ts
++++ b/bend2/cache.ts
+@@ -52,6 +52,20 @@
+   return crypto.createHash("sha256").update(data).digest("hex");
+ }
+ 
++// BEND_CGEN_CACHE_LOG puts one event per compile on stderr: disabled,
++// no-manifest, miss, miss-invalid, hit, store or no-store. It is unset by
++// default, and a diagnostic never changes the text a compile returns.
++function log_line(event: string, detail: string): void {
++  if (process.env.BEND_CGEN_CACHE_LOG === undefined) {
++    return;
++  }
++  try {
++    fs.writeSync(2, "cgen-cache: " + event + " " + detail + "\n");
++  } catch {
++    // Diagnostics must never change a compile.
++  }
++}
++
+ function sha_file(file: string): string | null {
+   try {
+     return sha_bytes(fs.readFileSync(file));
+@@ -331,10 +345,12 @@
+   seen: Map<string, string | null>, entry: string,
+   compile: () => string): Promise<Emit> {
+   if (!enabled()) {
++    log_line("disabled", entry);
+     return { c: compile(), hit: false };
+   }
+   const manifest = input_manifest(book, seen, entry);
+   if (manifest === null) {
++    log_line("no-manifest", entry);
+     return { c: compile(), hit: false };
+   }
+   const dir = cache_dir();
+@@ -353,13 +369,19 @@
+     }
+     const text = valid(dir, input, compiler, manifest);
+     if (text !== null) {
++      log_line("hit", input + " " + compiler);
+       return { c: text, hit: true };
+     }
++    log_line("miss-invalid", input + " " + compiler);
+   }
++  log_line("miss", input);
+   const c = compile();
+   const compiler = await identity.get();
+   if (compiler !== null) {
+     store(dir, input, compiler, manifest, c);
++    log_line("store", input + " " + compiler);
++  } else {
++    log_line("no-store", input);
+   }
+   return { c, hit: false };
+ }

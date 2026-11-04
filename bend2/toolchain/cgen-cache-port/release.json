@@ -1,0 +1,77 @@
+{
+  "schema": "baton-bend-cgen-cache-port-v1",
+  "summary": "The lineage that runs, with the Baton #741 emitted-C cache and a gated hit/miss diagnostic added. Built 2026-10-20 on the homelab; not selected.",
+  "base_release": {
+    "name": "2.0.25-f5185e38-pr967-pr968-e5c4efd-20261019",
+    "path": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.local/share/bend2/releases/2.0.25-f5185e38-pr967-pr968-e5c4efd-20261019"
+  },
+  "candidate_release": {
+    "name": "2.0.25-f5185e38-pr967-pr968-e5c4efd-cgen-cache-20261020",
+    "path": "/home/atari2036/render-fframes-port-20261016/work/bend2-compile-state-20261020/release/2.0.25-f5185e38-pr967-pr968-e5c4efd-cgen-cache-20261020",
+    "installed": false,
+    "selected": false
+  },
+  "lineage": {
+    "source_commit": "f5185e384146d631b94676ade3d4b4ff68fb0563",
+    "source_tree": "4ec78fe36a31a85ec1634de49034b6b803de1856",
+    "source_lineage": "PR #963 merge f5185e38; carries PR #957/#952 arm sharing and excludes non-flat WL_JMP arms; plus the Baton #741 emitted-C cache (cache.patch) and its BEND_CGEN_CACHE_LOG diagnostic"
+  },
+  "hashes": {
+    "launcher_bin_bend": "5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e",
+    "bun": "9fd36f87e4b90b07632b987a2e4ec81ca15a62c81bf983190cea6d715be2ad74",
+    "comp_ts": "dc33f3a053589e84cd95395be6b309e562633213556660a3d596aa166e288eed",
+    "main_ts": "a31402ee007230ee1f585509a82394a887e5c3dc65824b97425d3104612491cd",
+    "cache_ts": "30950fb56d75056e3c1b46ac6ce8209d49f01e556a950f18e005a55cdb06396e",
+    "fork_manifest": "c6dc09bde92c55c341095ab8d14a961c771299773fd4785fb4e4f6b88d294887",
+    "release_closure": "d247dd7a8597ab1886815d349212433f0bfdf041826aaa32bfd46ff73f70f172",
+    "release_candidate_json": "3ccf5158d2d3737e02db614d7827c371d3497e1f039bb4f5a52e3c88ca1ab39b"
+  },
+  "patches": [
+    {
+      "order": 1,
+      "filename": "bend-2.0.25-baton741/cache.patch",
+      "sha256": "c0931bfe4bab37b389de2cf0002e9bbc32eee1234da4454f9a4d965cfbcc3358",
+      "applies": "clean, zero rejected hunks, against the f5185e38 sources"
+    },
+    {
+      "order": 2,
+      "filename": "cgen-cache-port/cache-log.patch",
+      "sha256": "044f03b018fca225afe2949777f5bc6c281e7d2e2ba6784302e114dc980ab07b",
+      "applies": "clean",
+      "subject": "log hit, miss, miss-invalid, store and no-store on stderr when BEND_CGEN_CACHE_LOG is set; silent and output-neutral otherwise"
+    }
+  ],
+  "measured": {
+    "entry": "bend2/test/process.bend",
+    "entry_sha256": "2f7fa9a213edb7de8bfc182969397a01b77c865c8d7ea88d22197d7dbc9e5333",
+    "c_sha256": "959367e60758cc85ee2b5f65fb9cace8e3f1f9bbf6059996e6cc7de053a77ed9",
+    "note": "The candidate emits the base release's C byte for byte, on the hit path and with the cache off.",
+    "cold_s": 2.858,
+    "warm_s": 0.570,
+    "control_off_s": 2.676,
+    "load1_during": "23.29 to 23.57"
+  },
+  "probes": {
+    "cold_logs_miss_then_store": "pass",
+    "warm_logs_hit": "pass",
+    "hit_c_equals_cache_off_c": "pass",
+    "changed_input_misses_and_changes_c": "pass",
+    "original_input_still_hits_its_c": "pass",
+    "truncated_artifact_refused": "pass",
+    "broken_receipt_refused": "pass",
+    "wrong_recorded_digest_refused": "pass",
+    "repaired_entry_hits_again": "pass",
+    "entry_bound_trims_to_32": "pass",
+    "evicted_entry_recomputes_same_c": "pass",
+    "byte_bound": "FAIL: MAX_BYTES is evaluated only inside trim(), and store() calls trim() only when entries exceed MAX_ENTRIES, so below 33 entries the byte bound never acts"
+  },
+  "known_issues": [
+    {
+      "issue": "MAX_BYTES is not an independent bound.",
+      "detail": "cache.ts store() calls trim() only when readdirSync(dir).length > MAX_ENTRIES; trim() is where MAX_BYTES is tested. With 32 or fewer entries the cache can exceed 256 MiB; the largest observed artifact on this host is the coordinator's 53,448,597-byte C, so 32 of those is about 1.7 GiB.",
+      "proposed_fix": "Call trim() after every store instead of only past the entry bound. Proven on a probe copy: with MAX_BYTES lowered to 250000, six stores trimmed to two entries and 184090 bytes, the evicted entry recomputed the same C, and the surviving entry still hit.",
+      "not_applied": "This release carries cache.patch unmodified, so it ships the bound as upstream wrote it."
+    }
+  ],
+  "not_done": "The selector at /mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.local/bin/bend was not changed; it still names 2.0.25-f5185e38-pr967-pr968-e5c4efd-20261019. Selecting this release is the operator's decision."
+}

@@ -16,15 +16,20 @@ import sys
 import time
 
 values = json.loads(Path(__file__).with_suffix('.json').read_text())
-if sys.argv[1:] == ['--help'] or (len(sys.argv) > 2 and sys.argv[2] == 'help'):
-    if values.get('batch', True):
-        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
-        if values.get('dispatch', True):
-            sys.stdout.write('dispatch --stdin\\n')
-        if values.get('repl', False):
-            sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
-    else:
-        sys.stdout.write('delivery\\nmessage\\n')
+args = sys.argv[1:]
+if args == ['--help'] or (args and args[0] == 'help'):
+    if args == ['help', 'context']:
+        if values.get('context_eval', True):
+            sys.stdout.write('context engines|install|query|eval|result NAMED_ARGS\\n')
+    elif args == ['--help']:
+        if values.get('batch', True):
+            sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
+            if values.get('dispatch', True):
+                sys.stdout.write('dispatch --stdin\\n')
+            if values.get('repl', False):
+                sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
+        else:
+            sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
 time.sleep(values['delay'])
 sys.stdout.write(values['stdout'])
@@ -44,7 +49,8 @@ sys.exit(values['code'])
 class McpCommand(unittest.TestCase):
     def command(self, stdout='', stderr='', code=0, delay=0, *,
                 tool='baton2_status', arguments=None, session=None, expected_args=None,
-                expected_stdin='', expected_context=None, dispatch=True, repl=False):
+                expected_stdin='', expected_context=None, dispatch=True, repl=False,
+                context_eval=True):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
             executable = home / 'fixture-coordinator'
@@ -54,7 +60,7 @@ class McpCommand(unittest.TestCase):
             executable.with_suffix('.json').write_text(json.dumps({
                 'stdout': stdout, 'stderr': stderr, 'code': code,
                 'delay': delay, 'completed': str(completed), 'batch': True,
-                'dispatch': dispatch, 'repl': repl,
+                'dispatch': dispatch, 'repl': repl, 'context_eval': context_eval,
             }))
             requests = [
                 {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
@@ -143,6 +149,15 @@ class McpCommand(unittest.TestCase):
         self.assertFalse(result.get('isError', False))
         self.assertNotIn('session', self.tools['baton2_action']['inputSchema']['properties'])
 
+    def test_initial_instructions_explain_completion_review_and_decision(self):
+        self.command()
+        self.assertIn('coordinator reviews the assignment and supplied evidence', self.instructions)
+        self.assertIn('completion-confirmed to end the Player', self.instructions)
+        self.assertIn('--next TEXT to confirm and dispatch its next assignment together',
+                      self.instructions)
+        self.assertIn('Guidance states what is missing and directs the remaining work.',
+                      self.instructions)
+
     def test_repl_guidance_matches_advertised_coordinator_capability(self):
         for available in (False, True):
             with self.subTest(repl=available):
@@ -150,6 +165,41 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual('baton2_repl' in self.tools, available)
                 self.assertEqual('Use baton2_repl' in self.instructions, available)
                 self.assertIn('repl', self.tools['baton2_action']['description'])
+                if available:
+                    operations = self.tools['baton2_repl']['inputSchema']['properties']['operation']['enum']
+                    self.assertNotIn('interactive', operations)
+
+    def test_context_eval_requires_advertised_coordinator_surface(self):
+        self.command(context_eval=False)
+        self.assertNotIn('baton2_context_eval', self.tools)
+        self.command(context_eval=True)
+        self.assertIn('baton2_context_eval', self.tools)
+        self.assertNotIn('owner', self.tools['baton2_context_eval']['inputSchema']['properties'])
+
+    def test_repl_resolve_preserves_the_complete_citation(self):
+        citation = 'repl:repl:fixture:context@7'
+        result = self.command(stdout='{"reference":"repl-cell:fixture"}\n',
+            tool='baton2_repl', arguments={'operation': 'resolve', 'cell': citation},
+            session='recipient', repl=True,
+            expected_context=['repl', 'resolve', '--cell', citation])
+        self.assertFalse(result.get('isError', False))
+
+    def test_repl_context_projects_the_selected_character_range(self):
+        citation = 'repl:repl:fixture:context@7'
+        result = self.command(stdout='{"context":{"fragment":"λ"}}\n',
+            tool='baton2_repl', arguments={'operation': 'context', 'cell': citation,
+                                         'offset': 2048, 'length': 1024},
+            session='recipient', repl=True,
+            expected_context=['repl', 'context', '--cell', citation,
+                              '--offset', '2048', '--length', '1024'])
+        self.assertFalse(result.get('isError', False))
+
+    def test_repl_checkpoint_selects_the_checked_immutable_cell(self):
+        result = self.command(stdout='{"reference":"repl-cell:fixture"}\n',
+            tool='baton2_repl', arguments={'operation': 'checkpoint', 'cell': 'repl-cell:fixture'},
+            session='author', repl=True,
+            expected_context=['repl', 'checkpoint', '--cell', 'repl-cell:fixture'])
+        self.assertFalse(result.get('isError', False))
 
     def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
         first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000
@@ -235,9 +285,9 @@ class McpCommand(unittest.TestCase):
     def test_inferred_mutation_schemas_keep_explicit_compatibility_fields(self):
         self.command()
         selectors = {
-            'baton2_ack': ('id', 'receipt'),
             'baton2_guide': ('id', 'request'),
             'baton2_context_query_file': ('query',),
+            'baton2_context_eval': ('query',),
             'baton2_context_result': ('query',),
             'baton2_knowledge_record': ('id',),
             'baton2_knowledge_relate': ('id',),
@@ -251,7 +301,6 @@ class McpCommand(unittest.TestCase):
                 for field in fields:
                     self.assertNotIn(field, schema.get('required', []))
                     self.assertEqual(schema['properties'][field]['type'], 'string')
-        self.assertEqual(self.tools['baton2_ack']['inputSchema'].get('required', []), [])
         self.assertEqual(self.tools['baton2_guide']['inputSchema']['required'], ['player'])
         link = self.tools['baton2_knowledge_record']['inputSchema']['properties']['links']['items']
         self.assertNotIn('id', link['required'])
@@ -260,8 +309,6 @@ class McpCommand(unittest.TestCase):
     def test_inferred_actions_delegate_current_authority_to_attached_native_context(self):
         body = '\ufeffComplete authored input.\nλ🙂\nTrailing spaces  '
         cases = (
-            ('baton2_ack', None, ['acknowledge']),
-            ('baton2_ack', {'id': 'selected input'}, ['acknowledge', 'selected input']),
             ('baton2_guide', {'player': 'worker', 'body': body},
              ['send', 'worker', '--kind', 'guidance', '--text', body]),
             ('baton2_guide', {'player': 'worker', 'kind': 'completion-confirmed'},
@@ -290,6 +337,10 @@ class McpCommand(unittest.TestCase):
                                        'log': '/retained output', 'task': "/tasks/task's λ.txt"},
              ['turn', '--session', 'worker', '--command', '/native command',
               '--output-log', '/retained output', '--file', "/tasks/task's λ.txt"]),
+            ('baton2_context_eval', {'session': 'rt:installed', 'expression': '1 + 1',
+                                     'frame': 'frame-1', 'cwd': '/work'},
+             ['context', 'eval', '--session', 'rt:installed', '--expression', '1 + 1',
+              '--frame', 'frame-1', '--cwd', '/work']),
         )
         for tool, arguments, contextual in cases:
             with self.subTest(tool=tool, arguments=arguments):
@@ -299,15 +350,12 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual(result['content'],
                                  [{'type': 'text', 'text': '{"retained":"native decision λ"}'}])
                 self.assertNotIn('isError', result)
-        self.command(tool='baton2_ack', arguments={'id': 'selected input',
-                     'receipt': 'First complete handling.'}, session='attached-λ',
-                     expected_args=['ack', 'selected input', 'attached-λ', 'First complete handling.'])
-
-    def test_inferred_handling_keeps_native_refusal_and_complete_diagnostic(self):
-        diagnostic = json.dumps({'error': 'handling-context',
-                                 'condition': 'No live owned input context.\nλ🙂'}) + '\n'
-        self.failure('', diagnostic, code=2, tool='baton2_ack', session='attached-λ',
-                     expected_context=['acknowledge'])
+        self.command(tool='baton2_context_eval',
+                     arguments={'session': 'rt:installed', 'expression': '1 + 1',
+                                'query': 'eval-one'},
+                     session='attached-λ',
+                     expected_args=['context-eval', 'attached-λ', 'eval-one',
+                                    'rt:installed', '1 + 1', '', ''])
 
     def test_semantic_report_evidence_uses_native_context_with_an_explicit_record_id(self):
         body = '\ufeffComplete source fact.\nλ🙂\nTrailing spaces  '
@@ -408,6 +456,58 @@ class McpCommand(unittest.TestCase):
         self.assertEqual(result['content'], [{'type': 'text', 'text': output}])
         self.assertNotIn('isError', result)
 
+    def test_completion_confirmation_forwards_the_complete_next_assignment(self):
+        text = '\ufeffNext bounded assignment.\nλ🙂\n  Trailing spaces  '
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed', 'next': text},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--next', text])
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed',
+                                'request': 'exact request', 'next': text, 'id': 'exact decision'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'exact request', '--next', text, '--id', 'exact decision'])
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker'])
+        # The legacy body field names the retained request. With a next
+        # assignment it is the request selector, as in the batch tool.
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed',
+                                'body': 'explicit retained request', 'next': 'Next assignment.'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'explicit retained request', '--next', 'Next assignment.'])
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed',
+                                'body': 'ignored body', 'request': 'explicit request',
+                                'next': 'Next assignment.'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'explicit request', '--next', 'Next assignment.'])
+        output = json.dumps([{'status': 'completed', 'stdout': '[{"status":"admitted"}]'}])
+        self.command(stdout=output + '\n', tool='baton2_message_batch',
+                     arguments={'messages': [{'player': 'worker', 'kind': 'completion-confirmed',
+                                              'body': 'explicit retained request',
+                                              'next': 'Next assignment.'}]},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'explicit retained request', '--next', 'Next assignment.'])
+        self.command(stdout=output + '\n', tool='baton2_message_batch',
+                     arguments={'messages': [{'player': 'worker', 'kind': 'completion-confirmed',
+                                              'next': text},
+                                             {'player': 'other', 'kind': 'completion-confirmed'}]},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--next', text,
+                                       '--and', 'completion-confirmed', '--to', 'other'])
+        for tool in ('baton2_guide', 'baton2_message_batch'):
+            schema = self.tools[tool]['inputSchema']
+            item = schema if tool == 'baton2_guide' else schema['properties']['messages']['items']
+            self.assertEqual(item['properties']['next']['type'], 'string')
+            self.assertNotIn('next', item.get('required', []))
+
     def test_batch_message_tools_require_recorded_executable_support(self):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
@@ -434,9 +534,12 @@ class McpCommand(unittest.TestCase):
             self.assertTrue({'baton2_delivery_batch', 'baton2_outbox',
                              'baton2_message_batch'}.isdisjoint(tools))
             self.assertNotIn('baton2_input', tools)
+            self.assertNotIn('baton2_ack', tools)
             instructions = replies[0]['result']['instructions']
             self.assertIn('baton2_delivery reads one complete stored message', instructions)
             self.assertNotIn('baton2_delivery_batch', instructions)
+            self.assertNotIn('baton2_ack', instructions)
+            self.assertIn('Baton records each complete read internally', instructions)
 
     def test_native_control_tools_advertise_typed_arguments(self):
         self.command()
@@ -597,7 +700,7 @@ class McpCommand(unittest.TestCase):
                             'baton2_knowledge_promote': {'destination', 'finding'}}.get(
                                 tool, set(arguments))
                 self.assertEqual(set(schema.get('required', [])), required)
-                optional = {'baton2_resume': {'liftStop'},
+                optional = {'baton2_resume': {'liftStop', 'clearStop'},
                             'baton2_knowledge': {'scope', 'subject', 'index', 'id', 'pretty'},
                             'baton2_knowledge_relations': {'scope', 'subject', 'pretty'},
                             'baton2_knowledge_search': {'scope', 'subject', 'pretty'},
@@ -611,6 +714,9 @@ class McpCommand(unittest.TestCase):
         self.command(stdout='{"session":"recorded consumer"}\n', tool='baton2_resume',
                      arguments={'session': 'recorded consumer', 'liftStop': True}, session=session,
                      expected_args=['resume', 'recorded consumer', '--lift-stop'])
+        self.command(stdout='{"cleared":true}\n', tool='baton2_resume',
+                     arguments={'session': 'recorded consumer', 'clearStop': True}, session=session,
+                     expected_args=['resume', 'recorded consumer', '--clear-stop'])
         self.command(tool='baton2_knowledge_record', session=session,
                      arguments={'id': 'corrected-λ', 'kind': 'correction', 'claim': 'Corrected\nclaim',
                                 'evidence': 'message:retained-message', 'limits': 'One run'},
@@ -690,9 +796,9 @@ class McpCommand(unittest.TestCase):
              ['inbox', '', '--index', '--sender', '--index', '--kind', '--pretty',
               '--state', 'all', '--after-seq', wide, '--through-seq', '9007199254740994', '--pretty']),
             ('baton2_pending', {'recipient': 'root', 'sender': '', 'kind': "report's λ",
-                                'state': 'acknowledged', 'afterSeq': wide},
+                                'state': 'read', 'afterSeq': wide},
              ['pending', '--index', '--recipient', 'root', '--sender', '', '--kind', "report's λ",
-              '--state', 'acknowledged', '--after-seq', wide]),
+              '--state', 'read', '--after-seq', wide]),
         ]
         for tool, arguments, argv in cases:
             with self.subTest(tool=tool, arguments=arguments):

@@ -5,10 +5,60 @@ cd "$root"
 entry=${1:-bend2/src/coordinator/main.bend}
 output=${2:-.scratch/bend2/baton2}
 mkdir -p "$(dirname -- "$output")"
-entry_path=$(readlink -f -- "$entry" 2>/dev/null || printf '%s' "$entry")
+native_compile() {
+  compile_kind=$1
+  shift
+  if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
+    python3 "$BATON2_NATIVE_QUEUE_DRIVER" stage "$compile_kind" "$@"
+  else
+    "$@"
+  fi
+}
+if [ -n "${TMPDIR:-}" ]; then
+  scratch_base=$TMPDIR
+elif [ -n "${BATON2_SCRATCH_ROOT:-}" ]; then
+  scratch_base=$BATON2_SCRATCH_ROOT
+elif [ -r "${BATON2_SCRATCH_CONFIG:-/etc/baton/scratch-root}" ]; then
+  IFS= read -r scratch_base < "${BATON2_SCRATCH_CONFIG:-/etc/baton/scratch-root}" || :
+  [ -n "$scratch_base" ] || scratch_base=/tmp
+else
+  scratch_base=/tmp
+fi
+case "$scratch_base" in
+  /*) ;;
+  *) scratch_base="$root/$scratch_base" ;;
+esac
+build_scratch=$(mktemp -d "$scratch_base/baton2-build.XXXXXXXX")
+cleanup_build_scratch() {
+  status=$?
+  trap - EXIT
+  if [ "$status" -eq 0 ]; then
+    if ! rm -rf -- "$build_scratch"; then
+      printf 'build scratch cleanup failed; retained %s\n' "$build_scratch" >&2 || true
+    fi
+  else
+    printf 'build scratch retained after status %s: %s\n' "$status" "$build_scratch" >&2 || true
+  fi
+  exit "$status"
+}
+trap cleanup_build_scratch EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+TMPDIR=$build_scratch
+TMP=$build_scratch
+TEMP=$build_scratch
+export TMPDIR TMP TEMP
+entry_path=$(readlink -f -- "$entry" 2>/dev/null ||
+  (CDPATH= cd -- "$(dirname -- "$entry")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$entry")"))
 focused=${BATON2_RECEIVE_FOCUSED:-}
 router=${BATON2_NATIVE_RECEIVER_ROUTER:-}
 recovery=${BATON2_RECOVERY_HELPER:-}
+# Each receiver entry requires its native command router.
+case "$entry_path" in
+  "$root/bend2/src/coordinator/receive-focused.bend") focused=1 ;;
+  "$root/bend2/src/coordinator/receive-recovery-focused.bend") recovery=1 ;;
+esac
 compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
@@ -33,23 +83,30 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   printf '{"error":"build-mode-conflict","condition":"recovery-helper-with-other-native-entry","entry":"%s"}\n' "$entry_path" >&2
   exit 78
 fi
-if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
-  compiler_path=$(readlink -f -- "$compiler" 2>/dev/null || printf '%s' "$compiler")
-  case "$compiler_path" in
-    */bin/bend) ;;
-    *) printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2; exit 78 ;;
-  esac
-  grep -q 'build-admission-required' "$compiler_path" 2>/dev/null || {
-    printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2
+. "$root/bend2/scripts/queue-entry.sh"
+generated=
+if [ "$recovery" = 1 ]; then
+  if [ -n "${BEND_GENERATED_C:-}" ]; then
+    printf '%s\n' '{"error":"unverified-recovery-generated-c","entry":"focused recovery C requires a reuse proof"}' >&2
     exit 78
-  }
-  BATON2_ADMISSION_CHECK_ONLY=1 "$compiler" "$entry" -o "$output.c" >/dev/null || exit $?
+  fi
+  if [ -n "${BATON2_RECOVERY_C_PROOF:-}" ]; then
+    generated=$(python3 "$root/.github/scripts/reuse-native-recovery.py" select \
+      --source "$root" --compiler "$compiler" \
+      --proof "$BATON2_RECOVERY_C_PROOF" \
+      --proof-sha256 "${BATON2_RECOVERY_C_PROOF_SHA256:?}" \
+      --generated-c "${BATON2_RECOVERY_GENERATED_C:?}" \
+      --generator-root "${BATON2_RECOVERY_C_GENERATOR_ROOT:?}" \
+      --output "$output.recovery-c-reuse.json")
+  fi
+else
+  generated=${BEND_GENERATED_C:-}
 fi
-generated=${BEND_GENERATED_C:-}
 if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   generated=$(python3 "${BATON2_MAIN_C_VERIFIER:?}" select \
     --source "$root" --compiler "$compiler" \
+    --compiler-archive "${BATON2_SELECTED_COMPILER_ARCHIVE:?}" \
     --proof "${BATON2_MAIN_GENERATED_C_PROOF:?}" \
     --proof-sha256 "${BATON2_MAIN_GENERATED_C_PROOF_SHA256:?}" \
     --bound-root "${BATON2_MAIN_GENERATED_C_ROOT:?}" \
@@ -68,10 +125,30 @@ else
     echo 'This native binding requires Bend 2.0.25.' >&2
     exit 1
   fi
-  "$compiler" "$entry" -o "$output.c"
+  sh "$root/bend2/scripts/bend-lineage-guard.sh" "$compiler"
+  native_compile bend "$compiler" "$entry" -o "$output.c"
+fi
+for generated_include in persistent-path.h jsonl.c; do
+  if grep -Fq "#include \"$generated_include\"" "$output.c"; then
+    generated_include_path="$(dirname "$output.c")/$generated_include"
+    expected_generated_include=$(readlink -f "$root/bend2/src/host/$generated_include")
+    if [ -e "$generated_include_path" ] || [ -L "$generated_include_path" ]; then
+      if [ "$(readlink -f "$generated_include_path")" != "$expected_generated_include" ]; then
+        echo "generated C input resolves $generated_include to an unexpected file: $generated_include_path" >&2
+        exit 1
+      fi
+    else
+      ln -s "$expected_generated_include" "$generated_include_path"
+    fi
+  fi
+done
+# An entry that reaches the HTTP reader emits the libcurl include.
+extra_libs=
+if grep -q '^#include <curl/curl.h>' "$output.c"; then
+  extra_libs=-lcurl
 fi
 build_native_shards() {
-  native_link_flags="-O1 -pthread -lsqlite3 -lm"
+  native_link_flags="-O1 -pthread -lsqlite3 -lm${extra_libs:+ $extra_libs}"
   if [ -n "$1" ]; then
     native_link_flags="$native_link_flags $1"
   fi
@@ -83,14 +160,33 @@ build_native_shards() {
     --outdir "$native_binary.parallel" \
     --binary "$native_binary" \
     --shards 4 --jobs 4 --cc "${CC:-clang}" \
-    --cflag=-O1 --cflag=-pthread --main-rename \
+    --cflag=-O1 --cflag=-pthread --cflag=-I"$root/bend2/src/host" --main-rename \
     --link-extra "$root/bend2/src/host/native-entry.c" \
     --link-flags="$native_link_flags" \
     --max-aggregate-rss-mb 0 --build-only
   if [ -n "${BATON2_CCACHE:-}" ]; then
     set -- "$@" --ccache "$BATON2_CCACHE"
   fi
-  python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
+  native_compile cc python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
+}
+# A test fixture runs its generated main, so its shards link no native entry.
+# The arguments are compile flags that every translation unit needs.
+build_fixture_shards() {
+  case "$output" in
+    /*) native_binary=$output ;;
+    *) native_binary="$root/$output" ;;
+  esac
+  set -- --source "$output.c" \
+    --outdir "$native_binary.parallel" \
+    --binary "$native_binary" \
+    --shards 4 --jobs 4 --cc "${CC:-clang}" \
+    --cflag=-O1 --cflag=-pthread --cflag=-I"$root/bend2/src/host" "$@" \
+    --link-flags="-O1 -pthread -lsqlite3 -lm${extra_libs:+ $extra_libs}" \
+    --max-aggregate-rss-mb 0 --build-only
+  if [ -n "${BATON2_CCACHE:-}" ]; then
+    set -- "$@" --ccache "$BATON2_CCACHE"
+  fi
+  native_compile cc python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
 }
 if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   if [ "$router" = 1 ]; then
@@ -103,10 +199,22 @@ elif [ "$focused" = 1 ]; then
 elif [ "$recovery" = 1 ]; then
   build_native_shards -DBATON2_RECOVERY_HELPER
 else
-  extra_libs=
+  storage_test_flag=
   case "$entry_path" in
-    */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
+    */bend2/tests/storage.bend) storage_test_flag="-DBATON_STORAGE_TEST_PROC" ;;
+    */bend2/tests/storage-cargo.bend) storage_test_flag="-DBATON_STORAGE_CARGO_TEST -DBATON_STORAGE_TEST_PROC" ;;
   esac
-  "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+  case "$entry_path" in
+    "$root"/bend2/test/*.bend|"$root"/bend2/tests/*.bend)
+      set --
+      for flag in $storage_test_flag; do
+        set -- "$@" "--cflag=$flag"
+      done
+      build_fixture_shards "$@"
+      ;;
+    *)
+      native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" $storage_test_flag "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+      ;;
+  esac
 fi
 printf '%s\n' "$output"

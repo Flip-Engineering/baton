@@ -101,10 +101,10 @@ function ribbonInkClass(kind) {
   const slug = ribbonKindClass(kind).slice("ribbon-kind-".length);
   if (slug === "message-task" || slug === "message-guidance"
     || slug === "message-recovery") return "ribbon-ink-waiting";
-  // The recorded vocabulary names a receipt with and without its prefix, and
-  // receipts are the window's busiest kind.
-  if (slug === "message-report" || slug === "message-receipt"
-    || slug === "report" || slug === "receipt") return "ribbon-ink-report";
+  // The recorded vocabulary names a read with and without its prefix, and
+  // reads are the window's busiest kind. Historical windows record receipts.
+  if (slug === "message-report" || slug === "message-receipt" || slug === "message-read"
+    || slug === "report" || slug === "receipt" || slug === "read") return "ribbon-ink-report";
   if (slug === "execution" || slug === "native-request") return "ribbon-ink-running";
   if (slug === "stop") return "ribbon-ink-failed";
   if (slug.startsWith("ensemble") || slug.startsWith("membership")

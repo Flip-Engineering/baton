@@ -25,12 +25,13 @@ function run(reference, commandArgs, options = {}) {
   });
 }
 
-function runProduction(reference, commandArgs) {
+function runProduction(reference, commandArgs, env) {
   const native = process.env.BATON2_API_KEY_EXEC;
   if (!native) throw new Error('BATON2_API_KEY_EXEC must name the production api-key-exec helper');
   return execFileSync(native, [reference, ...commandArgs], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    env,
   });
 }
 
@@ -265,6 +266,34 @@ test('the production helper refuses before reading a secret or starting a child'
     assert.equal(stderr.includes(secret), false);
     assert.equal(existsSync(marker), false);
     assert.equal(await readFile(path.join(directory, 'secret'), 'utf8'), secret + '\n');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the production helper refuses a marker without a durable authorization source', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-marker-only-'));
+  try {
+    const reference = await withSecret(directory, 'secret', '[REDACTED]');
+    const attempt = path.join(directory, 'attempt-1');
+    try {
+      runProduction(reference, [process.execPath, path.join(directory, 'child.mjs')], {
+        PATH: process.env.PATH, BATON2_CREDIT_RESERVATION: attempt, BATON_ATTEMPT_DIRECTORY: attempt,
+      });
+      assert.fail('a marker without a database must refuse');
+    } catch (error) {
+      assert.equal(error.status, 2);
+      assert.equal(JSON.parse(error.stderr.trim()).condition, 'creditAdmissionUnavailable');
+    }
+    try {
+      runProduction(reference, [process.execPath, path.join(directory, 'child.mjs')], {
+        PATH: process.env.PATH, BATON2_CREDIT_RESERVATION: path.join(directory, 'other'), BATON_ATTEMPT_DIRECTORY: attempt,
+      });
+      assert.fail('a mismatched marker must refuse');
+    } catch (error) {
+      assert.equal(error.status, 2);
+      assert.equal(JSON.parse(error.stderr.trim()).condition, 'creditAdmissionUnavailable');
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

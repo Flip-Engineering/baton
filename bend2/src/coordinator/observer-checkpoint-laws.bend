@@ -48,6 +48,24 @@ law muse_primary_identity_advances_reducer_checkpoint:
   for +command: String
   {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n","",command,"","","","","")) == Bool.or(Bool.not(String.eq("",command)),False{}) : Bool}
 
+law first_spanned_output_advances_checkpoint:
+  {Observer.checkpoint_due_span(Observer.empty(),Observer.with_output(Observer.empty(),"1"),True{},True{},True{},True{}) == True{} : Bool}
+
+law later_progress_span_keeps_the_prior_checkpoint:
+  {Observer.checkpoint_due_span(Observer.with_output(Observer.empty(),"10"),Observer.with_output(Observer.empty(),"20"),True{},True{},True{},True{}) == False{} : Bool}
+
+law retained_terminal_seals_later_span_checkpoints:
+  {Observer.checkpoint_due_span(Observer.make("0\n","","","","terminal","","",""),Observer.make("0\n","","","","terminal","","",""),True{},True{},True{},True{}) == False{} : Bool}
+
+def first_spanned_output_advances_checkpoint():
+  {==}
+
+def later_progress_span_keeps_the_prior_checkpoint():
+  {==}
+
+def retained_terminal_seals_later_span_checkpoints():
+  {==}
+
 def failed_store_observation_does_not_advance_the_native_cursor(db,handle,state,spool,code,text):
   {==}
 

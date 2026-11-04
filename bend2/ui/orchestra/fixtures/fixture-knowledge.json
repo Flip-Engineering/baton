@@ -34,7 +34,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [],
       "memberEnsembles": [],
       "liveReceiver": null,
@@ -69,7 +69,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [
         "fixture-knowledge-ensemble"
       ],
@@ -106,7 +106,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [
         "fixture-knowledge-ensemble-cross"
       ],
@@ -145,7 +145,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [],
       "memberEnsembles": [],
       "liveReceiver": null,
@@ -183,7 +183,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [],
       "memberEnsembles": [
         "fixture-knowledge-ensemble",
@@ -224,7 +224,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [],
       "memberEnsembles": [
         "fixture-knowledge-ensemble"
@@ -256,7 +256,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 2,
-      "unacknowledgedCount": 2,
+      "unreadCount": 2,
       "ownedEnsembles": [],
       "memberEnsembles": [
         "fixture-knowledge-ensemble"
@@ -304,7 +304,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [],
       "memberEnsembles": [
         "fixture-knowledge-ensemble-cross"
@@ -341,7 +341,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [],
       "memberEnsembles": [],
       "liveReceiver": null,
@@ -376,7 +376,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [],
       "memberEnsembles": [
         "fixture-knowledge-ensemble-cross"
@@ -413,7 +413,7 @@
       "lastTurnId": "",
       "latestReportId": "",
       "pendingCount": 0,
-      "unacknowledgedCount": 0,
+      "unreadCount": 0,
       "ownedEnsembles": [],
       "memberEnsembles": [],
       "liveReceiver": null,

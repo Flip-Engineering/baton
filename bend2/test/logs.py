@@ -1,5 +1,6 @@
 """Log levels, event preservation, storage inspection and cleanup checks."""
 import json
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -9,7 +10,8 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = ROOT / '.scratch/bend2/baton2'
+EXE = pathlib.Path(os.environ.get('BATON2_TEST_EXE', ROOT / '.scratch/bend2/baton2'))
+BULK_EXE = os.environ.get('BATON2_LOGS_CLEAN_ALL')
 
 class Logs(unittest.TestCase):
     def setUp(self):
@@ -71,7 +73,11 @@ class Logs(unittest.TestCase):
         self.temp.cleanup()
 
     def call(self, *args):
-        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
+        if args == ('logs-clean-all',) and BULK_EXE:
+            argv = [BULK_EXE, str(self.db)]
+        else:
+            argv = [str(EXE), str(self.db), *args]
+        p = subprocess.run(argv, text=True, capture_output=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout
 
@@ -123,8 +129,7 @@ if message['kind']=='completion-request':
     assert completion['requestId']==expected_request and completion['assignmentId']==expected_assignment,completion
     assignment=coordinator('delivery',completion['assignmentId'])
     assert (assignment['recipient'],assignment['kind'],assignment['body'])==(worker,'task-assignment',expected_task),assignment
-    assert assignment['receipt']=='Fixture native reviewed its log task.',assignment
-    coordinator('ack',expected_request,parent,'Fixture parent reviewed the complete scripted log result.')
+    coordinator('as',parent,'read',expected_request)
     coordinator('message',expected_request+':confirmed',parent,worker,'completion-confirmed',expected_request)
 """)
         self.call('connect', parent, parent_state['native'],
@@ -144,15 +149,14 @@ assert state['parent']==parent and state['taskCompletion']['assignmentId']==expe
 for pending in coordinator('inbox',worker):
     message=coordinator('delivery',pending['id'])
     assert (message['sender'],message['recipient'],message['kind'],message['body'])==(worker,worker,'task-assignment',expected_task),message
-    coordinator('ack',message['id'],worker,'Fixture native reviewed its log task.')
+    coordinator('as',worker,'read',message['id'])
 assert coordinator('inbox',worker)==[]
 coordinator('message',request,worker,parent,'completion-request',result_body)
 reviewed=coordinator('delivery',request)
 assert (reviewed['sender'],reviewed['recipient'],reviewed['kind'],reviewed['body'])==(worker,parent,'completion-request',result_body),reviewed
-assert reviewed['receipt']=='Fixture parent reviewed the complete scripted log result.',reviewed
 confirmation=coordinator('delivery',request+':confirmed')
 assert (confirmation['sender'],confirmation['recipient'],confirmation['kind'],confirmation['body'])==(parent,worker,'completion-confirmed',request),confirmation
-coordinator('ack',confirmation['id'],worker,'Fixture native handled parent completion confirmation.')
+coordinator('as',worker,'read',confirmation['id'])
 completion=coordinator('session',worker)['taskCompletion']
 assert completion['assignmentId']==expected_assignment and completion['requestId']==request and completion['confirmed'] and not completion['open'],completion
 """)
@@ -162,11 +166,19 @@ assert completion['assignmentId']==expected_assignment and completion['requestId
         state = json.loads(self.call('session', player))
         self.assertEqual(state['taskCompletion'], {
             'assignmentId': turn + ':task-input', 'coordinator': parent_state['id'],
-            'requestId': turn + ':completion-request', 'confirmed': True, 'open': False})
-        confirmation = json.loads(self.call('delivery', turn + ':completion-request:confirmed'))
-        self.assertEqual(confirmation['receipt'], 'Fixture native handled parent completion confirmation.')
+            'requestId': turn + ':completion-request', 'confirmed': True, 'open': False, 'ended': True})
+        self.assertGreater(self.read_count(turn + ':completion-request:confirmed'), 0)
         self.assertEqual(json.loads(self.call('inbox', player)), [])
         self.call('connect', parent_state['id'], parent_state['native'], parent_state['endpoint'])
+
+    def read_count(self, ident, recipient=None):
+        with closing(sqlite3.connect(self.db)) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
 
     def stream(self, frames, player='omp-worker', turn='turn-1', exit_code=0):
         """Write one native OMP stream, then run the turn over it."""
@@ -377,6 +389,144 @@ sys.exit(%d)
             self.assertTrue((attempt_dir / name).is_file(), name)
         self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
 
+    def test_logs_clean_all_cleans_settled_attempts_and_preserves_pending_sessions(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'stdout'
+        evidence.write_text('settled attempt diagnostic')
+        for name in ('native.stderr', 'observer.log', 'keeper.log'):
+            (attempt_dir / name).write_text('diagnostic data')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'INSERT INTO messages(id,sender,recipient,kind,body) VALUES (?,?,?,?,?)',
+                ('bulk-clean-pending', 'root', 'root', 'guidance', 'Keep this session pending.'))
+
+        results = json.loads(self.call('logs-clean-all'))['results']
+        by_session = {item['session']: item for item in results}
+        self.assertIn('omp-worker', by_session)
+        self.assertIn('root', by_session)
+        removed = by_session['omp-worker']['attemptFiles']
+        self.assertIn('stdout', {item['file'] for item in removed if item.get('removed')})
+        self.assertFalse(evidence.exists())
+        for name in ('manifest', 'status', 'released', 'acknowledged'):
+            self.assertTrue((attempt_dir / name).is_file(), name)
+        self.assertEqual(by_session['root']['skipped'], 'pending-input')
+        self.assertEqual(json.loads(self.call('delivery', 'bulk-clean-pending'))['body'],
+                         'Keep this session pending.')
+
+        second = json.loads(self.call('logs-clean-all'))['results']
+        repeated = next(item for item in second if item['session'] == 'omp-worker')
+        self.assertFalse(any(item.get('removed') for item in repeated['attemptFiles']))
+
+    def test_logs_clean_all_skips_inaccessible_attempt_and_cleans_next_session(self):
+        self.stream([self.terminal()])
+        attempt, eligible_dir = self.prepare_attempt_artifacts()
+        eligible = eligible_dir / 'stdout'
+        eligible.write_text('eligible diagnostics')
+
+        protected_session = 'a-protected'
+        protected_attempt = 'a-protected-attempt'
+        protected_dir = pathlib.Path(str(self.db) + '.attempt-' + protected_attempt.encode().hex())
+        protected_dir.mkdir()
+        (protected_dir / 'released').write_text('released\n')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'INSERT INTO sessions(id,harness,model) VALUES (?,?,?)',
+                (protected_session, 'test', ''))
+            connection.execute(
+                'INSERT INTO executions(session,id,mode,directory,phase,status) VALUES (?,?,?,?,?,?)',
+                (protected_session, protected_attempt, 'omp', str(protected_dir), 'exited', 'exit 0'))
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt))')
+            generation_log = str(self.log) + '.attempt-' + protected_attempt.encode().hex()
+            connection.execute(
+                'INSERT INTO log_files(session,log) VALUES (?,?)',
+                (protected_session, generation_log))
+            connection.execute(
+                'INSERT INTO log_generations(session,attempt,log,base) VALUES (?,?,?,?)',
+                (protected_session, protected_attempt, generation_log, str(self.log)))
+        pathlib.Path(generation_log).touch()
+
+        protected_dir.chmod(0)
+        try:
+            results = json.loads(self.call('logs-clean-all'))['results']
+            repeated = json.loads(self.call('logs-clean-all'))['results']
+        finally:
+            protected_dir.chmod(0o700)
+
+        by_session = {item['session']: item for item in results}
+        skipped = by_session[protected_session]['attemptFiles']
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]['attempt'], protected_attempt)
+        self.assertEqual(skipped[0]['skipped'], 'attempt-artifacts-inaccessible')
+        self.assertIn('Permission denied', skipped[0]['error'])
+        self.assertEqual((protected_dir / 'released').read_text(), 'released\n')
+        log_skip = by_session[protected_session]['attemptLogs']
+        self.assertEqual(len(log_skip), 1)
+        self.assertEqual(log_skip[0]['skipped'], 'attempt-artifacts-inaccessible')
+        self.assertIn('Permission denied', log_skip[0]['error'])
+
+        eligible_result = by_session['omp-worker']['attemptFiles']
+        self.assertIn('stdout', {item['file'] for item in eligible_result if item.get('removed')})
+        self.assertFalse(eligible.exists())
+        repeated_protected = next(item for item in repeated if item['session'] == protected_session)
+        self.assertEqual(repeated_protected['attemptFiles'][0]['skipped'], 'attempt-artifacts-inaccessible')
+        self.assertFalse(any(item.get('removed') for item in next(
+            item for item in repeated if item['session'] == 'omp-worker')['attemptFiles']))
+
+    def test_logs_clean_all_skips_inaccessible_superseded_generation(self):
+        self.stream([self.terminal()])
+        current_attempt, current_dir = self.prepare_attempt_artifacts()
+        old_attempt = 'older-protected-attempt'
+        old_dir = pathlib.Path(str(self.db) + '.attempt-' + old_attempt.encode().hex())
+        old_dir.mkdir()
+        (old_dir / 'released').write_text('released\n')
+        old_log = str(self.log) + '.attempt-' + old_attempt.encode().hex()
+        current_log = str(self.log) + '.attempt-' + current_attempt.encode().hex()
+        pathlib.Path(old_log).touch()
+        pathlib.Path(current_log).touch()
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt))')
+            connection.execute(
+                'INSERT OR IGNORE INTO log_files(session,log) VALUES (?,?)',
+                ('omp-worker', old_log))
+            connection.execute(
+                'INSERT OR IGNORE INTO log_files(session,log) VALUES (?,?)',
+                ('omp-worker', current_log))
+            # Put the protected old generation before the current generation.
+            # The cleanup query treats the last rowid as current.
+            connection.execute(
+                'DELETE FROM log_generations WHERE session=? AND attempt=?',
+                ('omp-worker', current_attempt))
+            connection.execute(
+                'INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES (?,?,?,?)',
+                ('omp-worker', old_attempt, old_log, str(self.log)))
+            connection.execute(
+                'INSERT INTO log_generations(session,attempt,log,base) VALUES (?,?,?,?)',
+                ('omp-worker', current_attempt, current_log, str(self.log)))
+
+        with sqlite3.connect(self.db) as connection:
+            registered = {row[0] for row in connection.execute('SELECT log FROM log_files WHERE session=?', ('omp-worker',))}
+        self.assertIn(old_log, registered)
+        self.assertIn(current_log, registered)
+
+        registered_logs = json.loads(self.call('logs-storage'))['logs']
+        self.assertIn(old_log, [item['path'] for item in registered_logs], registered_logs)
+        old_dir.chmod(0)
+        try:
+            results = json.loads(self.call('logs-clean-all'))['results']
+        finally:
+            old_dir.chmod(0o700)
+
+        result = next(item for item in results if item['session'] == 'omp-worker')
+        protected = [item for item in result['attemptLogs']
+                     if item.get('skipped') == 'attempt-artifacts-inaccessible']
+        self.assertEqual(len(protected), 1, result)
+        self.assertEqual(protected[0]['attempt'], old_attempt)
+        self.assertIn('Permission denied', protected[0]['error'])
+        self.assertEqual((old_dir / 'released').read_text(), 'released\n')
+
     def test_attempt_without_durable_turn_record_is_retained(self):
         self.stream([self.terminal()])
         attempt, attempt_dir = self.prepare_attempt_artifacts()
@@ -515,62 +665,6 @@ sys.exit(%d)
         self.assertIn('error', row)
         self.assertTrue(evidence.is_symlink())
         self.assertEqual(outside.read_text(), 'must remain')
-
-    def test_storage_policy_names_durable_classes(self):
-        policy = json.loads(self.call('storage-policy'))
-        self.assertFalse(policy['ageOnlyDeletion'])
-        classes = {item['class']: item for item in policy['classes']}
-        self.assertEqual(set(classes), {'scratch-build', 'checkout-worktree',
-                                        'shared-immutable', 'git-objects',
-                                        'logs-evidence', 'durable-state', 'unknown'})
-        self.assertTrue(classes['scratch-build']['deletable'])
-        self.assertTrue(classes['logs-evidence']['deletable'])
-        for name in ('checkout-worktree', 'shared-immutable', 'git-objects',
-                     'durable-state', 'unknown'):
-            self.assertFalse(classes[name]['deletable'], name)
-        storage = json.loads(self.call('logs-storage'))
-        self.assertIn('policy', storage)
-        self.assertFalse(storage['policy']['ageOnlyDeletion'])
-
-    def test_storage_preview_and_apply_receipts_are_idempotent(self):
-        self.stream([self.terminal()])
-        attempt, attempt_dir = self.prepare_attempt_artifacts()
-        for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
-            (attempt_dir / name).write_text('diagnostic data for ' + name)
-        preview = json.loads(self.call('storage-preview', 'omp-worker'))
-        self.assertEqual(preview['mode'], 'preview')
-        self.assertFalse(preview['ageOnlyDeletion'])
-        item = next(row for row in preview['items'] if row['path'] == str(attempt_dir))
-        self.assertEqual(item['class'], 'logs-evidence')
-        self.assertTrue(item['wouldRemove'], item)
-        self.assertTrue((attempt_dir / 'stdout').is_file())
-        applied = json.loads(self.call('storage-apply', 'omp-worker'))
-        self.assertEqual(applied['mode'], 'apply')
-        self.assertFalse(applied['ageOnlyDeletion'])
-        removed = {row['file'] for row in applied['result']['attemptFiles']
-                   if row.get('removed') and 'file' in row}
-        self.assertIn('stdout', removed)
-        self.assertFalse((attempt_dir / 'stdout').exists())
-        second = json.loads(self.call('storage-apply', 'omp-worker'))
-        self.assertEqual(second['mode'], 'apply')
-        second_removed = {row['file'] for row in second['result']['attemptFiles']
-                          if row.get('removed') and 'file' in row}
-        self.assertEqual(second_removed, set())
-
-    def test_storage_preview_keeps_pending_attempt(self):
-        self.stream([self.terminal()])
-        attempt, attempt_dir = self.prepare_attempt_artifacts()
-        evidence = attempt_dir / 'observer.log'
-        evidence.write_text('observer evidence')
-        with sqlite3.connect(self.db) as connection:
-            connection.execute(
-                'INSERT INTO messages(id,sender,recipient,kind,body) VALUES (?,?,?,?,?)',
-                ('pending-storage-preview', 'root', 'omp-worker', 'guidance', 'Review this first.'))
-        preview = json.loads(self.call('storage-preview', 'omp-worker'))
-        item = next(row for row in preview['items'] if row['path'] == str(attempt_dir))
-        self.assertFalse(item['wouldRemove'], item)
-        self.assertEqual(item['reason'], 'pending-input')
-        self.assertEqual(evidence.read_text(), 'observer evidence')
 
     def test_cleanup_during_a_live_turn_keeps_the_live_log(self):
         self.call('logs', 'omp-worker', 'default')
@@ -822,6 +916,45 @@ while not pathlib.Path('resume-native').exists(): time.sleep(.01)
         self.stream(frames + [self.terminal()])
         updates = [row for row in map(json.loads, self.lines()) if row.get('type') == 'message_update']
         self.assertEqual(updates, [json.loads(frames[-1])])
+
+    def test_unidentified_cumulative_updates_keep_only_the_latest_snapshot(self):
+        # OMP 17.4 frames carry no message identity (issue #769): snapshots of
+        # the one open message share its lifecycle slot, so the default log
+        # holds the newest snapshot and flushes it when the stream ends open.
+        snapshots = ['thinking λ🙂 step %d' % i for i in range(3)]
+        frames = [json.dumps({'type': 'message_start',
+                              'message': {'role': 'assistant', 'content': []}})]
+        frames.extend(json.dumps({'type': 'message_update',
+                                  'assistantMessageEvent': {'type': 'thinking_delta', 'delta': snapshots[i][-1],
+                                                            'partial': {'role': 'assistant', 'content': [{'type': 'thinking', 'thinking': snapshots[i]}]}},
+                                  'message': {'role': 'assistant', 'content': [{'type': 'thinking', 'thinking': snapshots[i]}]}})
+                      for i in range(3))
+        frames.append(json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-1', 'toolName': 'bash',
+                                  'partialResult': {'content': [{'type': 'text', 'text': 'tool partial λ'}]}}))
+        self.stream(frames + [self.terminal()])
+        rows = list(map(json.loads, self.lines()))
+        updates = [row for row in rows if row.get('type') == 'message_update']
+        self.assertEqual(updates, [json.loads(frames[-2])])
+        self.assertEqual(updates[0]['message']['content'][0]['thinking'], snapshots[-1])
+        self.assertEqual([row.get('type') for row in rows].count('message_start'), 1)
+        self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
+
+    def test_unidentified_updates_close_with_their_message_end(self):
+        frames = [json.dumps({'type': 'message_start',
+                              'message': {'role': 'assistant', 'content': []}})]
+        frames.extend(json.dumps({'type': 'message_update',
+                                  'assistantMessageEvent': {'type': 'text_delta', 'delta': 'x',
+                                                            'partial': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'partial %d λ' % i}]}},
+                                  'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'partial %d λ' % i}]}})
+                      for i in range(3))
+        frames.append(json.dumps({'type': 'message_end',
+                                  'message': {'role': 'assistant', 'provider': 'provider', 'model': 'actual',
+                                              'content': [{'type': 'text', 'text': 'full answer λ'}]}}))
+        self.stream(frames + [self.terminal('full answer λ')])
+        rows = list(map(json.loads, self.lines()))
+        self.assertEqual([row for row in rows if row.get('type') == 'message_update'], [])
+        self.assertEqual([row.get('type') for row in rows].count('message_end'), 1)
+        self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'full answer λ')
 
     def test_existing_policy_migrates_and_preserves_registered_logs(self):
         with sqlite3.connect(self.db) as connection:

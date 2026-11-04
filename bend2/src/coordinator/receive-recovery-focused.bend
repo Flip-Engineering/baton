@@ -1,5 +1,6 @@
 import Base
 import ./receive.bend as Receive
+import ./control.bend as Control
 import ../host/instance.bend as Custody
 import ../host/process.bend as P
 
@@ -61,6 +62,8 @@ def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
 @unsafe
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case "--dispatch-message" <> +db <> +id <> Nil{}:
+      Control.deliver(db,id)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_host_keeper_command(String.eq(flag,"--host-process-keeper"),directory,lock)
     case +flag <> +db <> Nil{}:

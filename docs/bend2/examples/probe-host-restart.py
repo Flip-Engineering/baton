@@ -295,7 +295,7 @@ def main():
             entry['turnsAfter'] = fixture.coord('turns', name)
             if not entry.get('restartPromptHasPending'):
                 failures.append('%s: pending input was not resumed' % name)
-            if entry.get('secondInvocation', {}).get('status') != 'queued':
+            if entry.get('secondInvocation', {}).get('receive') != 'none':
                 failures.append('%s: a second native turn was admitted' % name)
             if entry.get('restartResume') != 'native-' + name:
                 failures.append('%s: resumed another identity: %s' % (name, entry.get('restartResume')))

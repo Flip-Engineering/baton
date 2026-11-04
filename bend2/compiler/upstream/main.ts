@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as mod from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import * as url from "node:url";
 import * as thr from "node:worker_threads";
 
@@ -232,6 +233,9 @@ async function cli_file(args: string[]): Promise<void> {
     if (only) {
       return cli_report(...await book_read(file), 1);
     }
+    if (outs.some(out => !/\.c?js$/.test(out))) {
+      return await cli_emit_native(file, outs);
+    }
     const seen = new Map<string, string | null>();
     const [book, n0] = await book_read(file, undefined, seen);
     if (outs.length !== 0 || book_main(book) !== null) {
@@ -248,7 +252,7 @@ async function cli_file(args: string[]): Promise<void> {
       if (ins.has(at) || (fs.existsSync(at) && fs.statSync(at).isDirectory())) {
         cli_fail("-o " + out + " is a file the program reads, or a directory");
       }
-      cli_emit(book, out);
+      fs.writeFileSync(out, Comp.js_book(book));
     }
   } catch (e) {
     cli_say(2, book_err(e) + "\n");
@@ -287,25 +291,50 @@ async function cli_checkup(file: string): Promise<void> {
   }
 }
 
-function path_real(p: string): string {
-  return fs.existsSync(p) ? fs.realpathSync(p) : path.resolve(p);
-}
-
-function cli_emit(book: Bend.Book, out: string): void {
-  if (/\.c?js$/.test(out)) {
-    fs.writeFileSync(out, Comp.js_book(book));
-  } else if (out.endsWith(".c")) {
-    fs.writeFileSync(out, Comp.compile_book(book));
-  } else {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bend-"));
-    const c   = path.join(dir, path.basename(out) + ".c");
-    fs.writeFileSync(c, Comp.compile_book(book));
-    try {
-      cli_build(out, c);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+export async function prepare_file(file: string, workspace: string, outputs: string[] = []): Promise<{ directory: string; inputs: string[] }> {
+  const seen = new Map<string, string | null>();
+  const [book, n0] = await book_read(file, undefined, seen);
+  cli_report(book, n0, 2);
+  const inputs = [...new Set([...seen.keys(), ...Object.values(book.tlds).flatMap(tld =>
+    tld.$ === "Def" ? (tld.i ?? []).map(path_real) : [])])];
+  for (const output of outputs) {
+    const target = path_real(output);
+    if (inputs.includes(target) || (fs.existsSync(target) && fs.statSync(target).isDirectory())) {
+      throw "Error: -o " + output + " is a file the program reads, or a directory";
     }
   }
+  for (const output of outputs) if (/\.c?js$/.test(output)) fs.writeFileSync(output, Comp.js_book(book));
+  return { directory: Comp.prepare_book(book, workspace), inputs };
+}
+
+async function cli_emit_native(file: string, outputs: string[]): Promise<void> {
+  const Driver = await import("./driver.ts");
+  const native = outputs.filter(output => !/\.c?js$/.test(output));
+  const parent = path.dirname(path_real(native[0]));
+  const prepared = await Driver.prepare(file, parent, outputs);
+  const source = path.join(prepared.evidence, "output.c");
+  try {
+    await Driver.emit(prepared, source);
+    Driver.cleanup(prepared);
+    for (const output of native) {
+      if (output.endsWith(".c")) {
+        const target = path_real(output);
+        const directory = fs.mkdtempSync(path.join(path.dirname(target), ".bend-output-"));
+        const partial = path.join(directory, "output.c");
+        fs.copyFileSync(source, partial);
+        fs.renameSync(partial, target);
+        fs.rmdirSync(directory);
+      } else await cli_build(output, source, prepared.evidence);
+    }
+    fs.unlinkSync(source);
+  } catch (error) {
+    cli_say(2, "Compiler process evidence: " + prepared.evidence + "\n");
+    throw error;
+  }
+}
+
+function path_real(p: string): string {
+  return fs.existsSync(p) ? fs.realpathSync(p) : path.resolve(p);
 }
 
 // cc_find is the first of $CC, clang and every clang-NN on PATH (newest
@@ -348,17 +377,49 @@ function cc_find(gpu: boolean): string {
 // nix lays them, lib; else the ! runs on the cores). On macOS a program with
 // a framework (#import: a window, audio) builds as Objective-C; on Linux it
 // links the X11 and ALSA libraries it includes.
-function cli_build(bin: string, file: string): void {
-  const c     = fs.readFileSync(file, "utf8");
+function c_features(file: string): { plain: boolean; objc: boolean; x11: boolean; alsa: boolean } {
+  const tokens = { objc: "\n#import ", x11: "#include <X11/", alsa: "#include <alsa/" };
+  const found = { plain: false, objc: false, x11: false, alsa: false };
+  const names = Object.keys(tokens) as (keyof typeof tokens)[];
+  const suffix = Math.max(...names.map(name => tokens[name].length)) - 1;
+  const fd = fs.openSync(file, "r"), buffer = Buffer.allocUnsafe(65536), decoder = new StringDecoder("utf8");
+  let tail = "\n", head = 1;
+  let zero: "none" | "space" | "zero" | "end" = "none";
+  const prefix = "\n#define BANGS";
+  // Match the macro's whitespace across reads. The initial state permits a directive at file start.
+  try {
+    for (;;) {
+      const count = fs.readSync(fd, buffer, 0, buffer.length, null);
+      const chunk = count === 0 ? decoder.end() : decoder.write(buffer.subarray(0, count));
+      const text = tail + chunk;
+      for (const name of names) found[name] ||= (name === "objc"
+        ? text.replace(/[\r\u2028\u2029]/g, "\n") : text).includes(tokens[name]);
+      if (!found.plain) for (let index = 0; index < chunk.length; index++) {
+        const char = chunk[index], line_end = /[\n\r\u2028\u2029]/.test(char);
+        if (zero === "space") zero = /\s/.test(char) ? "zero" : "none";
+        else if (zero === "zero") zero = char === "0" ? "end" : /\s/.test(char) ? "zero" : "none";
+        else if (zero === "end") { found.plain ||= line_end; zero = "none"; }
+        if ((line_end ? "\n" : char) === prefix[head]) head++;
+        else head = line_end ? 1 : 0;
+        if (head === prefix.length) { zero = "space"; head = 0; }
+      }
+      if (count === 0) { found.plain ||= zero === "end"; return found; }
+      tail = text.slice(-suffix);
+    }
+  } finally { fs.closeSync(fd); }
+}
+
+async function cli_build(bin: string, file: string, evidence: string): Promise<void> {
+  const Driver = await import("./driver.ts");
+  const features = c_features(file);
   const mac   = process.platform === "darwin";
   const cuda  = process.env.CUDA_HOME || "/usr/local/cuda";
-  const bangs = !/^#define BANGS\s+0$/m.test(c)
+  const bangs = !features.plain
     && (mac || fs.existsSync(cuda + "/include/nvrtc.h"));
   const cc    = cc_find(bangs);
-  const objc  = mac && (bangs || /^#import /m.test(c))
+  const objc  = mac && (bangs || features.objc)
     ? ["-x", "objective-c", "-fobjc-arc", "-fmodules"] : [];
-  const libs  = [["X11", "X11"], ["alsa", "asound"]].flatMap(([h, l]) =>
-    !mac && c.includes("#include <" + h + "/") ? ["-l" + l] : []);
+  const libs  = mac ? [] : [...(features.x11 ? ["-lX11"] : []), ...(features.alsa ? ["-lasound"] : [])];
   const cpu = [...objc, "-std=c11", "-O3", file, "-lpthread", "-lm",
     ...libs, "-o", path.resolve(bin)];
   const gpu = mac ? ["-DBEND_METAL=1", ...cpu]
@@ -367,7 +428,9 @@ function cli_build(bin: string, file: string): void {
   const steps: [string, string[]][] = bangs
     ? [[cc, gpu], [path.resolve(bin), ["--gpu-build"]]] : [[cc, cpu]];
   for (const [cmd, args] of steps) {
-    if (child.spawnSync(cmd, args, { stdio: "inherit" }).status !== 0) {
+    const directory = fs.mkdtempSync(path.join(evidence, "native-"));
+    const completed = await Driver.run(directory, [cmd, ...args]);
+    if (completed.code !== 0 || completed.signal !== null) {
       throw "Error: " + path.basename(cmd) + " failed to build " + bin;
     }
   }
@@ -505,6 +568,8 @@ async function pow_mine(hash: string, bytes: number): Promise<number> {
 // holds one, a walk from the claims collects who names whom, then the
 // promises flood back along those edges.
 function cli_report(book: Bend.Book, n0: number, fd: number): void {
+  const report_started = Comp.diagnostics_enabled() ? performance.now() : 0;
+  Comp.diagnostic("book.report.begin", { definitions: book.order.length - n0 });
   const own  = [...new Set(book.order.slice(n0))];
   const bad  = new Set(Object.keys(book.tlds).filter((k) => {
     const t = book.tlds[k] as Bend.Def;
@@ -518,11 +583,7 @@ function cli_report(book: Bend.Book, n0: number, fd: number): void {
     const t = book.tlds[k];
     if (t !== undefined && !seen.has(k)) {
       seen.add(k);
-      const rs = new Set<string>();
-      for (const c of t.$ === "ADT" ? t.c : [t]) {
-        term_refs_higher(c.T, rs);
-      }
-      term_refs(t.$ === "Def" ? t.e : undefined, rs);
+      const rs = Comp.source_refs(book, k);
       for (const r of rs) {
         (uses[r] ??= []).push(k);
         if (!seen.has(r) && !queued.has(r)) {
@@ -543,118 +604,8 @@ function cli_report(book: Bend.Book, n0: number, fd: number): void {
   } else if (fd === 1) {
     cli_say(1, "All terms check.\n");
   }
-}
-
-// term_refs_higher walks HTerm directly and opens its binder closures with
-// the same fresh variables used by term_lower. It collects names without
-// constructing a lowered copy of the full type tree.
-function term_refs_higher(tm: Bend.HTerm, out: Set<string>, depth = 0): void {
-  const t = Bend.term_force(tm);
-  switch (t.$) {
-    case "Var": {
-      const v = t.v;
-      if (v !== undefined && v.$ !== "PVar" && v.$ !== "PCtr") {
-        term_refs_higher(v as Bend.HTerm, out, depth);
-      }
-      return;
-    }
-    case "Ref": {
-      out.add(t.k);
-      return;
-    }
-    case "Sub": {
-      const v = t.v;
-      if (v.$ !== "PVar" && v.$ !== "PCtr") {
-        term_refs_higher(v as Bend.HTerm, out, depth);
-      }
-      term_refs_higher(t.f, out, depth);
-      return;
-    }
-    case "Let": {
-      for (const v of t.v) term_refs_higher(v, out, depth);
-      const xs = t.k.map((k, j) => Bend.Var<Bend.HBody>(k, depth + j));
-      term_refs_higher(t.f(xs), out, depth + t.k.length);
-      return;
-    }
-    case "Typ": {
-      term_refs_higher(t.g, out, depth);
-      return;
-    }
-    case "Qnt":
-    case "Qua":
-    case "Lit":
-    case "Efq":
-    case "Rfl":
-    case "Hol": {
-      return;
-    }
-    case "Min": {
-      term_refs_higher(t.a, out, depth);
-      term_refs_higher(t.b, out, depth);
-      return;
-    }
-    case "All": {
-      term_refs_higher(t.A, out, depth);
-      term_refs_higher(t.B(Bend.Var<Bend.HBody>(t.k, depth)), out, depth + 1);
-      return;
-    }
-    case "Lam": {
-      term_refs_higher(t.f(Bend.Var<Bend.HBody>(t.k, depth)), out, depth + 1);
-      return;
-    }
-    case "App": {
-      term_refs_higher(t.f, out, depth);
-      term_refs_higher(t.x, out, depth);
-      return;
-    }
-    case "ADT": {
-      out.add(t.k);
-      for (const x of t.x) term_refs_higher(x, out, depth);
-      return;
-    }
-    case "Ctr": {
-      for (const x of t.x) term_refs_higher(x, out, depth);
-      return;
-    }
-    case "Mat": {
-      term_refs_higher(t.h, out, depth);
-      term_refs_higher(t.m, out, depth);
-      return;
-    }
-    case "Eql": {
-      term_refs_higher(t.a, out, depth);
-      term_refs_higher(t.b, out, depth);
-      term_refs_higher(t.T, out, depth);
-      return;
-    }
-    case "Rwt": {
-      term_refs_higher(t.e, out, depth);
-      term_refs_higher(t.p, out, depth);
-      term_refs_higher(t.f, out, depth);
-      return;
-    }
-    case "Ann": {
-      term_refs_higher(t.x, out, depth);
-      term_refs_higher(t.T, out, depth);
-      return;
-    }
-  }
-}
-
-// term_refs adds to out the names a term (a span skipped) refers to.
-function term_refs(tm: unknown, out: Set<string>): void {
-  if (typeof tm === "object" && tm !== null) {
-    const { $, k } = tm as { $?: string; k?: string };
-    if (($ === "Ref" || $ === "ADT") && k !== undefined) {
-      out.add(k);
-    }
-    const o = tm as Record<string, unknown>;
-    for (const f in o) {
-      if (f !== "s" && Object.prototype.hasOwnProperty.call(o, f)) {
-        term_refs(o[f], out);
-      }
-    }
-  }
+  Comp.diagnostic("book.report.end", { definitions: own.length, affected: list.length,
+    duration_ms: Comp.diagnostics_enabled() ? performance.now() - report_started : undefined });
 }
 
 function cli_say(fd: number, text: string): void {
@@ -678,23 +629,39 @@ function cli_fail(msg: string): never {
 
 async function book_read(file: string, base?: Bend.Book,
   seen = new Map<string, string | null>()): Promise<[Bend.Book, number]> {
+  const read_started = Comp.diagnostics_enabled() ? performance.now() : 0;
+  Comp.diagnostic("book.read.begin", { file });
   const book = base === undefined ? Bend.book_nil() : book_seed(base);
   if (base !== undefined) {
     seen.set(BASE, "");
   }
+  Comp.diagnostic("book.load.begin", { file });
+  const load_started = Comp.diagnostics_enabled() ? performance.now() : 0;
   const n0 = await Bend.book_load(book, file, "", seen);
+  Comp.diagnostic("book.load.end", { file, definitions: book.order.length,
+    duration_ms: Comp.diagnostics_enabled() ? performance.now() - load_started : undefined });
   const laws = path.join(path.dirname(file), "LAWS.bend");
   if (path.basename(file) === "PROOF.bend" && fs.existsSync(laws)
     && !seen.has(fs.realpathSync(laws))) {
     cli_fail("PROOF.bend must import ./LAWS.bend");
   }
-  Bend.book_valid(book, base?.order.length ?? 0);
+  Comp.diagnostic("book.valid.begin", { file });
+  const valid_started = Comp.diagnostics_enabled() ? performance.now() : 0;
+  Bend.book_valid(book, base?.order.length ?? 0, Comp.diagnostics_enabled()
+    ? (event, details) => Comp.diagnostic(event, details) : undefined);
+  Comp.diagnostic("book.valid.end", { file,
+    duration_ms: Comp.diagnostics_enabled() ? performance.now() - valid_started : undefined });
+  Comp.diagnostic("book.owned.begin", { file });
   Comp.book_owned(book, Comp.SYNTH);
+  Comp.diagnostic("book.owned.end", { file });
   const hols = book.hols + book.open;
   if (hols > 0) {
     throw "Error: " + String(hols) + " TODO" + (hols === 1 ? "" : "s")
       + " found.\nThe code is incomplete, and not a valid proof yet.";
   }
+  Comp.diagnostic("book.read.end", { file,
+    duration_ms: Comp.diagnostics_enabled() ? performance.now() - read_started : undefined });
+  Comp.register_sources(book, seen);
   return [book, n0];
 }
 
@@ -732,8 +699,11 @@ function book_run(book: Bend.Book, n0: number, argv: string[]): number {
 }
 
 function book_err(e: unknown): string {
+  Comp.diagnostic_error(e);
   const err = e as Bend.Err;
-  if (e instanceof RangeError) {
+  if (e instanceof RangeError
+    && /(?:maximum call stack size exceeded|out of stack space|stack overflow)/i
+      .test(e.message)) {
     return "Error: the machine stack overflowed (a deep recursion, or a"
       + " literal too large to expand)";
   }

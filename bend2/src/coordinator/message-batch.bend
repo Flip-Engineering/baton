@@ -98,7 +98,7 @@ def snapshot_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U
     case Done{value}: snapshot_value(value)
 
 def snapshot_sql(+id: String) -> String:
-  "SELECT hex(CAST(CASE WHEN m.receipt IS NULL THEN 'pending' ELSE 'acknowledged' END AS TEXT)) || char(9) || hex(CAST(" ++ C.delivery_row() ++ " AS TEXT)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ ";"
+  "SELECT hex(CAST(CASE WHEN " ++ C.read_sql("m") ++ " THEN 'read' ELSE 'pending' END AS TEXT)) || char(9) || hex(CAST(" ++ C.delivery_row() ++ " AS TEXT)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ ";"
 
 def snapshot(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String & String>):
   do IO<Result<&1,&1,U32 & String,String & String>>:
@@ -173,10 +173,10 @@ def wake_parts(wake: Result<&1,&1,U32 & String,Unit>) -> Bool & String:
     case Fail{(code,cause)}: (True{}, "{\"status\":\"refused\"," ++ error_tail(code,cause) ++ "}")
     case Done{unit}: (False{}, "{\"status\":\"accepted\"}")
 
-def admitted_status(+receipt: String, refused: Bool) -> String:
+def admitted_status(+read: String, refused: Bool) -> String:
   match refused:
-    case True{}: Bool.pick(String,String.eq(receipt,"acknowledged"),"acknowledged","pending")
-    case False{}: Bool.pick(String,String.eq(receipt,"acknowledged"),"acknowledged","admitted")
+    case True{}: Bool.pick(String,String.eq(read,"read"),"read","pending")
+    case False{}: Bool.pick(String,String.eq(read,"read"),"read","admitted")
 
 def admitted_present(+index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, +receipt: String, +message: String, +refused: Bool, +wake_text: String) -> String:
   message_prefix(index,id,sender,recipient,kind) ++ ",\"status\":" ++ J.string_literal(admitted_status(receipt,refused)) ++ ",\"admission\":{\"status\":\"admitted\",\"message\":" ++ Tx.trim_nl(saved) ++ "},\"wake\":" ++ wake_text ++ ",\"receiptStatus\":" ++ J.string_literal(receipt) ++ ",\"delivery\":" ++ message ++ ",\"detailRead\":" ++ detail_read(id) ++ "}"

@@ -9,6 +9,8 @@ import Base
 import ../src/coordinator/subscription-fallback.bend as Subs
 import ../src/harness/codex-player.bend as Codex
 import ../src/harness/claude-player.bend as Claude
+import ../src/harness/muse-player.bend as Muse
+import ../src/harness/omp-player.bend as Omp
 import ../src/git/text.bend as Tx
 
 def fixture_list() -> String:
@@ -71,6 +73,58 @@ def spaced_store_value(binding: List<String>) -> IO(Unit):
 
 def spaced_store(profiles: List<&2,Subs.Profile>) -> IO(Unit):
   spaced_store_value(Subs.store_binding("codex","/fixture/stores/codex alt"))
+
+def omp_store_value(binding: List<String>) -> IO(Unit):
+  match binding:
+    case single <> Nil{}: check("omp-profile-binds-agent-dir",String.eq(single,"PI_CODING_AGENT_DIR=/fixture/stores/omp"))
+    case other: IO.die(Unit,1,"fixture-profile omp-store: not one element")
+
+def omp_store(profiles: List<&2,Subs.Profile>) -> IO(Unit):
+  omp_store_value(Subs.store_binding("omp","/fixture/stores/omp"))
+
+def omp_order_argv(argv: List<String>) -> IO(Unit):
+  match argv:
+    case env <> assigned <> command <> rest:
+      check("omp-profile-argv-binds-agent-dir",Bool.and(String.eq(env,"/usr/bin/env"),Bool.and(String.eq(assigned,"PI_CODING_AGENT_DIR=/fixture/stores/omp"),String.eq(command,"/fixture/bin/omp"))))
+    case other: IO.die(Unit,1,"fixture-profile omp-order: too few arguments")
+
+def omp_order(store: String) -> IO(Unit):
+  omp_order_argv(Tx.split_nul(Omp.argv_profile(Subs.store_binding("omp",store),"/fixture/bin/omp","deepseek/deepseek-flash","max","/fixture/sessions","native-fixture",False{})))
+
+def muse_store_value(binding: List<String>) -> IO(Unit):
+  match binding:
+    case single <> Nil{}: check("muse-profile-binds-config-home",String.eq(single,"XDG_CONFIG_HOME=/fixture/stores/muse"))
+    case other: IO.die(Unit,1,"fixture-profile muse-store: not one element")
+
+def muse_store(profiles: List<&2,Subs.Profile>) -> IO(Unit):
+  muse_store_value(Subs.store_binding("muse","/fixture/stores/muse"))
+
+def muse_order_argv(argv: List<String>) -> IO(Unit):
+  match argv:
+    case env <> assigned <> command <> rest:
+      check("muse-profile-argv-binds-config-home",Bool.and(String.eq(env,"/usr/bin/env"),Bool.and(String.eq(assigned,"XDG_CONFIG_HOME=/fixture/stores/muse"),String.eq(command,"/fixture/bin/muse"))))
+    case other: IO.die(Unit,1,"fixture-profile muse-order: too few arguments")
+
+def muse_order(store: String) -> IO(Unit):
+  muse_order_argv(Tx.split_nul(Muse.argv_profile(Subs.store_binding("muse",store),"/fixture/bin/muse","muse-wonder-1.0","high","/fixture/prompt.txt","native-fixture",False{})))
+
+def history_none(value: Maybe<String>, label: String) -> IO(Unit):
+  match value:
+    case None{}: check(label,True{})
+    case Some{v}: check(label,False{})
+
+def history_is(value: Maybe<String>, expected: String, label: String) -> IO(Unit):
+  match value:
+    case Some{+v}: check(label,String.eq(v,expected))
+    case None{}: check(label,False{})
+
+def history_checks() -> IO(Unit):
+  do IO<Unit>:
+    omp : Unit <- history_none(Subs.history_store_variable("omp"),"history-omp-skipped")
+    muse : Unit <- history_none(Subs.history_store_variable("muse"),"history-muse-skipped")
+    codex : Unit <- history_is(Subs.history_store_variable("codex"),"CODEX_HOME","history-codex-store")
+    claude : Unit <- history_is(Subs.history_store_variable("claude-code"),"CLAUDE_CONFIG_DIR","history-claude-store")
+    IO.pure(Unit,Unit{})
 
 # The corrected env order is proved on the real argv composition: env, both existing
 # key unbinds, then the store assignment, then the command.
@@ -251,6 +305,10 @@ def main() -> IO(Unit):
     codex : Unit <- codex_order("/fixture/stores/codex alt")
     plain : Unit <- codex_plain()
     claude : Unit <- claude_order("/fixture/stores/claude-main")
+    omp : Unit <- omp_store(profiles)
+    omp_argv : Unit <- omp_order("/fixture/stores/omp")
+    muse : Unit <- muse_store(profiles)
+    muse_argv : Unit <- muse_order("/fixture/stores/muse")
     claude_plain_ok : Unit <- claude_plain()
     records : Unit <- record_checks()
     reads : Unit <- read_checks()
@@ -258,6 +316,7 @@ def main() -> IO(Unit):
     route_count : Unit <- route_six(routes)
     refused_codex : List<&2,Subs.Route> <- IO.pure(List<&2,Subs.Route>,Subs.route_lines(Tx.split_lines("codex codex-main\n")))
     route_first : Unit <- route_chosen(routes,refused_codex,"codex","codex-main","omp","sol-main","/fixture/bin/omp path")
+    history : Unit <- history_checks()
     refused_two : List<&2,Subs.Route> <- IO.pure(List<&2,Subs.Route>,Subs.route_lines(Tx.split_lines("omp sol-main\ncodex codex-main\n")))
     route_opus : Unit <- route_chosen(routes,refused_two,"muse","muse-main","claude-code","opus-main","/fixture/bin/claude")
     refused_four : List<&2,Subs.Route> <- IO.pure(List<&2,Subs.Route>,Subs.route_lines(Tx.split_lines("omp sol-main\nmuse muse-main\ncodex codex-main\nomp opus-side\n")))

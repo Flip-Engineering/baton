@@ -1,0 +1,12 @@
+# Uninstalled template. The deployment owner installs it with the service
+# after storage-clean is qualified and root approves deployment.
+[Unit]
+Description=Daily Baton storage cleanup (issue #912, #1049)
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

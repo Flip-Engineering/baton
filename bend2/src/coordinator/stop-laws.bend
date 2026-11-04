@@ -6,6 +6,7 @@ import ../host/process.bend as P
 import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
+import ../context/native-runtime.bend as ContextRuntime
 
 # These equations bind command admission and keeper control effects. SQLite
 # transaction isolation and native process lifetime remain host obligations;
@@ -18,10 +19,12 @@ law stopped_receive_cannot_acquire_an_owner:
   for effort: String
   for cwd: String
   for log: String
-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.available(db,session,cmd,model,effort,cwd,log,again,True{}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for predecessor: String
+  for -updates: Chan(String)
+  {Receive.available(db,session,cmd,model,effort,cwd,log,again,True{},predecessor,updates) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def stopped_receive_cannot_acquire_an_owner(db,session,cmd,model,effort,cwd,log,again):
+def stopped_receive_cannot_acquire_an_owner(db,session,cmd,model,effort,cwd,log,again,predecessor,updates):
   {==}
 
 def refused_admission_releases(lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -46,20 +49,22 @@ law stopped_admission_releases_without_launch:
   for storage: String
   for prompt: String
   for recovery: String
-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,again,False{}) == refused_admission_releases(lock) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for predecessor: String
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,predecessor,again,False{}) == refused_admission_releases(lock) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def stopped_admission_releases_without_launch(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,again):
+def stopped_admission_releases_without_launch(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,predecessor,again):
   {==}
 
 # Both direct turns and retained receives call this transaction while holding
-# their session lock. The terminal stop predicate also decides the result.
+# their session lock. The terminal stop predicate and the derived completion
+# closure of the assignment (C.task_closed_sql) also decide the result.
 law stop_admission_transaction_preserves_terminal_state:
   for +session: String
   for +id: String
   for +mode: String
   for +directory: String
-  {Stop.admit_sql(session,id,mode,directory) == "BEGIN IMMEDIATE;INSERT INTO executions(session,id,mode,directory,phase,status) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(mode) ++ "," ++ C.q(directory) ++ ",'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") ON CONFLICT(session) DO UPDATE SET id=excluded.id,mode=excluded.mode,directory=excluded.directory,phase=excluded.phase,status='';SELECT NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ");COMMIT;" : String}
+  {Stop.admit_sql(session,id,mode,directory) == "BEGIN IMMEDIATE;INSERT INTO executions(session,id,mode,directory,phase,status) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(mode) ++ "," ++ C.q(directory) ++ ",'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND NOT " ++ C.task_closed_sql(C.q(session)) ++ " ON CONFLICT(session) DO UPDATE SET id=excluded.id,mode=excluded.mode,directory=excluded.directory,phase=excluded.phase,status='';SELECT NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND NOT " ++ C.task_closed_sql(C.q(session)) ++ ";COMMIT;" : String}
 
 def stop_admission_transaction_preserves_terminal_state(session,id,mode,directory):
   {==}
@@ -120,7 +125,9 @@ def accepted_stop(+db: String, +session: String, id: String, reason: String, for
   do IO<Unit>:
     error : String <- IO.try(String,Stop.request(db,session,id,reason,force))
     checked : Unit <- Stop.validate(error)
+    released : Unit <- Stop.release_starting(db,session)
     reconciled : Unit <- Stop.reconcile_request(db,session)
+    runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
     result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
     IO.write(result)
 
@@ -135,28 +142,26 @@ law stop_acceptance_does_not_wait_for_completion:
 def stop_acceptance_does_not_wait_for_completion(db,session,id,reason,force):
   {==}
 
-# Signal selection reads the terminal stop and current execution together. The
-# submitted signal is compared by identity: TERM and KILL have unrelated numbers.
+# Reconciliation reads the attempt and directory from the durable stop row.
+# Call arguments may describe a prior owner after retained recovery.
 def reconcile_recorded_stop(+db: String, +session: String, +attempt: String, directory: String) -> IO(Unit):
-  do IO<Unit>:
-    signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
-    Stop.send_control(db,session,attempt,directory,Stop.selected_signal(U32.read(Tx.trim_nl(signal))))
+  Stop.reconcile_request(db,session)
 
-law stop_reconcile_selects_the_recorded_signal_and_attempt:
+law stop_reconcile_uses_the_recorded_attempt_and_directory:
   for +db: String
   for +session: String
   for +attempt: String
   for +directory: String
   {Stop.reconcile(db,session,attempt,directory) == reconcile_recorded_stop(db,session,attempt,directory) : IO(Unit)}
 
-def stop_reconcile_selects_the_recorded_signal_and_attempt(db,session,attempt,directory):
+def stop_reconcile_uses_the_recorded_attempt_and_directory(db,session,attempt,directory):
   {==}
 
 # The answer reads the stored operation and distinguishes an idle stop from a
 # requested native signal. SQLite rendering is exercised by the idle fixture.
 law stop_result_reads_recorded_execution_status:
   for +session: String
-  {Stop.result_sql(session) == "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";" : String}
+  {Stop.result_sql(session) == "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";" : String}
 
 def stop_result_reads_recorded_execution_status(session):
   {==}
@@ -178,9 +183,9 @@ def stopped_completion_reports_to_the_recorded_upstream_recipient(session,attemp
   {==}
 
 law admitted_stop_clears_only_its_own_claim:
-  for session: String
-  for id: String
-  for reason: String
+  for +session: String
+  for +id: String
+  for +reason: String
   {Stop.stop_claim_sql(session,id,reason) == "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ");" : String}
 
 def admitted_stop_clears_only_its_own_claim(session,id,reason):

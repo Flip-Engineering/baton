@@ -71,6 +71,15 @@ class OrchestraProjection(unittest.TestCase):
         else:
             self.temp.cleanup()
 
+    def read_count(self, ident, recipient=None):
+        with sqlite3.connect(self.db) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
+
     def call(self, *args, success=True):
         result = subprocess.run([str(EXE), str(self.db), *args], text=True,
                                 capture_output=True)
@@ -112,8 +121,8 @@ if message['kind']=='completion-request':
     completion=coordinator('session',worker)['taskCompletion']
     assert completion['coordinator']==parent and completion['requestId']==request,completion
     assignment=coordinator('delivery',completion['assignmentId'])
-    assert assignment['recipient']==worker and assignment['receipt'] is not None,assignment
-    coordinator('ack',request,parent,'Fixture coordinator reviewed the requested result.')
+    assert assignment['recipient']==worker,assignment
+    coordinator('as',parent,'read',request)
     coordinator('message',request+':confirmed',parent,worker,'completion-confirmed',request)
 ''')
             self.call('connect', parent, parent_state['native'],
@@ -138,8 +147,7 @@ if message['kind']=='completion-request':
             + repr(str(self.db)) + ",'delivery',message],text=True))\n"
             "    assert delivery['recipient']==" + repr(player) + ",delivery\n"
             "    subprocess.run([" + repr(str(EXE)) + "," + repr(str(self.db))
-            + ",'ack',message," + repr(player)
-            + ",'fixture-native-reviewed'],check=True,stdout=subprocess.DEVNULL)\n"
+            + ",'as'," + repr(player) + ",'read',message],check=True,stdout=subprocess.DEVNULL)\n"
             "def coordinator(*arguments):\n"
             "    return json.loads(subprocess.check_output([" + repr(str(EXE)) + ","
             + repr(str(self.db)) + ",*arguments],text=True))\n"
@@ -148,7 +156,7 @@ if message['kind']=='completion-request':
             "completion=state['taskCompletion']\n"
             "assert completion['open'],completion\n"
             "assignment=coordinator('delivery',completion['assignmentId'])\n"
-            "assert assignment['recipient']==worker and assignment['receipt'] is not None,assignment\n"
+            "assert assignment['recipient']==worker,assignment\n"
             "parent=completion['coordinator']\n"
             "assert parent==state['parent'],state\n"
             "request=" + repr(ident + ':completion-request') + "\n"
@@ -157,12 +165,11 @@ if message['kind']=='completion-request':
             "reviewed=coordinator('delivery',request)\n"
             "assert (reviewed['sender'],reviewed['recipient'],reviewed['kind'],reviewed['body'])=="
             "(worker,parent,'completion-request',result_text),reviewed\n"
-            "assert reviewed['receipt']=='Fixture coordinator reviewed the requested result.',reviewed\n"
             "confirmation=request+':confirmed'\n"
             "reviewed=coordinator('delivery',confirmation)\n"
             "assert (reviewed['sender'],reviewed['recipient'],reviewed['kind'],reviewed['body'])=="
             "(parent,worker,'completion-confirmed',request),reviewed\n"
-            "coordinator('ack',confirmation,worker,'Fixture worker handled coordinator confirmation.')\n"
+            "coordinator('as',worker,'read',confirmation)\n"
             "settled=coordinator('session',worker)['taskCompletion']\n"
             "assert settled['assignmentId']==completion['assignmentId'] and settled['requestId']==request "
             "and settled['confirmed'] and not settled['open'],settled\n")
@@ -328,7 +335,7 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
 
         self.run_turn('worker', 'worker-finished', 'completed',
                       'Worker completed the assigned task.', input_id='task-worker')
-        self.assertEqual(self.call('delivery', 'task-worker')['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count('task-worker'), 0)
         self.assertEqual(self.call('delivery', 'worker-finished')['recipient'], 'lead')
         self.run_turn('failed-worker', 'worker-failed', 'failed',
                       'Worker failed with a provider error.')
@@ -357,7 +364,9 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                             for row in rows))
         with sqlite3.connect(self.db) as db:
             pending_inputs = db.execute('''SELECT id, kind, sender, receipt FROM messages
-                                             WHERE recipient='worker' AND receipt IS NULL
+                                             WHERE recipient='worker'
+                                               AND NOT EXISTS (SELECT 1 FROM message_reads r
+                                                                WHERE r.message=messages.id AND r.recipient=messages.recipient)
                                                AND kind IN ('task', 'guidance', 'recovery')
                                                AND NOT EXISTS (SELECT 1 FROM session_stops
                                                                 WHERE session='worker')

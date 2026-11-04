@@ -1,5 +1,6 @@
 import Base
 import ../src/coordinator/receive.bend as Receive
+import ../src/host/instance.bend as Custody
 
 # Focused observer qualification entry. It calls the production recovery
 # functions directly and omits general NativeInput and command registration.
@@ -12,8 +13,12 @@ def recover_receive_command(+db: String, +session: String, +id: String, +cursor:
                             native: String) -> IO(Unit):
   IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
 
+# The host starts the database owner by re-executing this executable with
+# --instance-owner, so the entry serves that flag and --instance-shutdown.
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
+    case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case "--recover-observer" <> db <> session <> observer <> Nil{}:
       recover_observer_command(db,session,observer)
     case "--recover-receive" <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:

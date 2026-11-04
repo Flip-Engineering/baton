@@ -25,7 +25,7 @@ Options:
   --command EXECUTABLE Override the selected harness executable found in PATH.
   --model MODEL        Override the selected route's model.
   --effort EFFORT      Override the selected route's effort.
-  --workspace PATH     Select a new session's working directory.
+  --workspace PATH     Select a new session's working directory and project context.
   --output-log PATH    Select its native transcript path.
   --dispatch-id ID     Retain an explicit dispatched message identity.
   --text TEXT          Supply literal task text, including text beginning with --.
@@ -33,7 +33,7 @@ New sessions use the named saved route and explicit overrides. An existing
 session supplies its recorded route; --route explicitly selects saved values
 for configuration. Explicit harness, model and effort override those values.
 An existing receiver remains selected until an explicit command changes it.
-New sessions resolve codex, omp, muse, dsh or claude through the current PATH.
+New sessions resolve codex, omp, muse, dsh, antigravity or claude through the current PATH.
 Full input and setup results are stored in the database and returned with inspect commands.
 An existing open assignment receives continuation input automatically. Baton
 resolves the sending agent from its recorded launch context. Stops remain
@@ -128,7 +128,7 @@ function projectResolution(path) {
 }
 
 function executableInPath(harness) {
-  const name = { codex: 'codex', omp: 'omp', muse: 'muse', dsh: 'dsh', 'claude-code': 'claude' }[harness];
+  const name = { codex: 'codex', omp: 'omp', muse: 'muse', dsh: 'dsh', antigravity: 'agy', 'claude-code': 'claude' }[harness];
   for (const directory of (process.env.PATH ?? '/usr/bin:/bin').split(':')) {
     try {
       const path = realpathSync(resolve(directory || '.', name));
@@ -139,6 +139,18 @@ function executableInPath(harness) {
   }
   fail('taskCommandMissing', `The selected harness executable ${name} is absent from PATH.`,
     'Install and authenticate the selected harness, or pass --command with its executable.');
+}
+
+function executableAvailable(command) {
+  const candidates = command.includes('/') ? [resolve(command)]
+    : (process.env.PATH ?? '/usr/bin:/bin').split(':').map((directory) => resolve(directory || '.', command));
+  for (const path of candidates) {
+    try {
+      accessSync(path, constants.X_OK);
+      if (statSync(path).isFile()) return true;
+    } catch {}
+  }
+  return false;
 }
 
 function canonicalFile(path) {
@@ -173,7 +185,16 @@ export function startTask(executable, database, argv) {
   };
   const native = (...args) => call([database, ...args]);
   const selectContext = () => {
-    projectPath = realpathSync(resolve(options?.project ?? process.cwd()));
+    let recordedWorkspace = null;
+    if (options?.session && !options.new && !options.project && !options.workspace && explicitDatabase) {
+      const recorded = native('session', options.session);
+      if (typeof recorded.workspace !== 'string' || !recorded.workspace) {
+        fail('taskWorkspaceMissing', `Session ${options.session} has no recorded working directory.`,
+          'Record its working directory with receiver SESSION COMMAND LOG CWD, then retry.');
+      }
+      recordedWorkspace = recorded.workspace;
+    }
+    projectPath = realpathSync(resolve(options?.project ?? options?.workspace ?? recordedWorkspace ?? process.cwd()));
     resolution = projectResolution(projectPath);
     key = resolution.common ?? projectPath;
     const pointer = join(key, 'baton2/database');
@@ -304,7 +325,7 @@ export function startTask(executable, database, argv) {
     result.route = { ...route, settingsPath: named ? settingsPath : null, name: options.route ?? null,
       sources: Object.fromEntries(['harness', 'model', 'effort'].map((field) => [field,
         options[field] !== undefined ? 'explicit' : named ? 'named-project-route' : 'recorded-session'])) };
-    if (!['codex', 'omp', 'muse', 'claude-code', 'dsh'].includes(route.harness) || !route.model || !route.effort) {
+    if (!['codex', 'omp', 'muse', 'claude-code', 'dsh', 'antigravity'].includes(route.harness) || !route.model || !route.effort) {
       fail('taskRouteIncomplete', 'A supported harness, model and effort must be configured.',
         'Pass --route NAME for a saved project route, or supply --harness, --model and --effort.');
     }
@@ -326,6 +347,12 @@ export function startTask(executable, database, argv) {
     const command = options.command ?? receiver?.command ?? (!selected ? executableInPath(route.harness) : undefined);
     result.command = { executable: command ?? null,
       source: options.command !== undefined ? 'explicit' : receiver ? 'recorded-receiver' : selected ? 'recorded-endpoint' : 'PATH' };
+    if (command && !executableAvailable(command)) {
+      const next = selected
+        ? `Re-register the receiver with baton receiver ${sessionId} COMMAND LOG ${workspace}, then retry this dispatch.`
+        : 'Install the selected harness or pass --command with an executable path.';
+      fail('taskCommandMissing', `The selected harness executable ${command} is absent or not executable.`, next);
+    }
     const log = resolve(options.log ?? receiver?.log ??
       join(`${database}.transcripts`, Buffer.from(sessionId).toString('hex'), requestId, 'native.jsonl'));
     result.outputLog = selected && !options.command && options.log === undefined ? receiver?.log ?? null : log;

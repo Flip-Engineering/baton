@@ -76,7 +76,8 @@ def download(pin, target):
 
 
 def runtime_inputs(args):
-    assert platform.system() == 'Darwin' and platform.machine() == 'arm64'
+    target = getattr(args, 'target_platform', None) or (platform.system().lower() + '-' + platform.machine())
+    assert target == 'darwin-arm64', 'The pinned REPL runtime is available for darwin-arm64'
     args.output.mkdir(parents=True, exist_ok=False)
     archive = args.output / 'bun-darwin-aarch64.zip'
     notices = args.output / 'Bun-NOTICES'
@@ -259,6 +260,7 @@ if __name__ == '__main__':
     source.add_argument('--output', type=Path, required=True)
     runtime = actions.add_parser('runtime')
     runtime.add_argument('--output', type=Path, required=True)
+    runtime.add_argument('--target-platform', help='runtime platform to stage; defaults to this host')
     installed = actions.add_parser('smoke')
     installed.add_argument('--prefix', type=Path, required=True)
     installed.add_argument('--output', type=Path, required=True)

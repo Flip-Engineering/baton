@@ -118,11 +118,13 @@ def main():
             raise RuntimeError('Runner group ID/name does not match the requested group')
         if group.get('visibility') != 'selected':
             raise RuntimeError('Runner group visibility must be selected')
-        if group.get('restricted_to_workflows') is not True:
-            raise RuntimeError('Runner group must restrict access to selected workflows')
-        workflows = group.get('selected_workflows')
-        if not isinstance(workflows, list) or workflow_ref not in workflows:
-            raise RuntimeError('Runner group does not authorize the exact direct branch workflow ref')
+        restricted_to_workflows = group.get('restricted_to_workflows')
+        if not isinstance(restricted_to_workflows, bool):
+            raise RuntimeError('Runner group response has no workflow restriction state')
+        if restricted_to_workflows:
+            workflows = group.get('selected_workflows')
+            if not isinstance(workflows, list) or workflow_ref not in workflows:
+                raise RuntimeError('Runner group does not authorize the exact direct branch workflow ref')
 
         repositories = list_group_repositories(args.org, args.runner_group_id, token)
         selected_rows = [row for row in repositories if row['id'] == args.repository_id]

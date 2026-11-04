@@ -42,7 +42,7 @@ function selOwed(seat) {
   if (seat.owedTotal !== null && seat.owedTotal !== undefined && seat.owedTotal !== "") {
     return Number(seat.owedTotal) || 0;
   }
-  return Math.max(Number(seat.pendingCount || 0), Number(seat.unacknowledgedCount || 0));
+  return Math.max(Number(seat.pendingCount || 0), Number(seat.unreadCount || 0));
 }
 
 function selFacts(parent, facts, cls) {
@@ -206,7 +206,7 @@ function selQuotedBody(parent, key, what, body) {
 function selEventText(ev, hideKind) {
   var parts = [selEventAge(ev.at) || ev.at || "time unrecorded"];
   if (ev.kind && !hideKind) parts.push(ev.kind);
-  if (ev.kind === "receipt" && ev.counterpart) parts.push("message from " + ev.counterpart);
+  if (ev.kind === "read" && ev.counterpart) parts.push("message from " + ev.counterpart);
   if (ev.summary) parts.push(ev.summary);
   return parts.join(" · ");
 }
@@ -218,12 +218,12 @@ function selDot(status, notProgressing) {
   return "var(--muted)";
 }
 
-// Timeline tone from the recorded kind: failures red, receipts and reports
+// Timeline tone from the recorded kind: failures red, reads and reports
 // attention, promotions and shares selection, else muted.
 function selEventTone(ev) {
   var kind = String((ev && ev.kind) || "").toLowerCase();
   if (kind.indexOf("fail") !== -1) return "bad";
-  if (kind === "receipt" || kind.indexOf("report") !== -1) return "note";
+  if (kind === "read" || kind.indexOf("report") !== -1) return "note";
   if (kind.indexOf("promot") !== -1 || kind.indexOf("shar") !== -1) return "info";
   return "plain";
 }

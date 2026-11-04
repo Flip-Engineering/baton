@@ -49,7 +49,7 @@
    "reference": false,
    "role": "principal-conductor",
    "stop": null,
-   "unacknowledgedCount": 0,
+   "unreadCount": 0,
    "workspace": "/tmp/fixture/worktrees/fixture-knowledge-empty-root"
   },
   {
@@ -82,7 +82,7 @@
    "reference": false,
    "role": "associate-conductor",
    "stop": null,
-   "unacknowledgedCount": 0,
+   "unreadCount": 0,
    "workspace": "/tmp/fixture/worktrees/fixture-knowledge-empty-conductor"
   },
   {
@@ -110,7 +110,7 @@
    "reference": false,
    "role": "player",
    "stop": null,
-   "unacknowledgedCount": 1,
+   "unreadCount": 1,
    "workspace": "/tmp/fixture/worktrees/fixture-knowledge-empty-player"
   }
  ],
