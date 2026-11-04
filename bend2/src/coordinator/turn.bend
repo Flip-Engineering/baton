@@ -1,6 +1,7 @@
 import Base
 import ./agent-guidance.bend as AgentGuidance
 import ./agent-input.bend as AgentInput
+import ./message-status.bend as MessageStatus
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./stop.bend as Stop
@@ -320,15 +321,16 @@ def input(+handle: U32, +prompt: String, +harness: String, level: String) -> IO(
     Claude.input(handle,prompt))))))
 
 def stdin_kept_open(+harness: String) -> Bool:
-  String.eq(harness,"omp\n")
+  Bool.or(String.eq(harness,"omp\n"),String.eq(harness,"antigravity\n"))
 
 def close_input(handle: U32, close: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match close:
     case True{}: P.ProcessChild.close_stdin(handle)
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
-# OMP keeps stdin open for steer frames. Every other harness, including DSH,
-# writes one prompt and receives EOF at the same point.
+# OMP keeps stdin open for steer frames. AGY keeps its stream open between
+# completed prompts so Baton can deliver queued input at a result boundary.
+# Other harnesses write one prompt and receive EOF at the same point.
 def send_prompt(+handle: U32,prompt: String,+harness: String,level: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,harness,level)
@@ -1176,6 +1178,57 @@ def question_frame_failed(result: Result<&1,&1,U32 & String,String>) -> Bool:
     case Done{line}: False{}
     case Fail{error}: True{}
 
+def agy_batch_sql(+player: String) -> String:
+  "SELECT hex(coalesce(group_concat(CAST(seq AS TEXT),char(10)),'')) || char(9) || hex(coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT seq," ++ MessageStatus.complete_message_sql("id","kind","sender","body") ++ " AS input FROM messages WHERE recipient=" ++ C.q(player) ++ " AND " ++ MessageStatus.owed_sql("messages") ++ " ORDER BY seq);"
+
+def agy_pending_reads(+db: String, +player: String, lines: List<String>) -> IO(Unit):
+  match lines:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +head <> tail: do IO<Unit>:
+      AgentInput.forward_read(db,player,Tx.trim_nl(head))
+      agy_pending_reads(db,player,tail)
+
+def agy_gate_open(+db: String, +player: String) -> IO(Bool):
+  do IO<Bool>:
+    open : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.task_open_sql(C.q(player)) ++ " AND " ++ C.task_request_sql(C.q(player)) ++ " IS NULL THEN 1 ELSE 0 END;"))
+    IO.pure(Bool,String.eq(Tx.trim_nl(open),"1"))
+
+# AGY accepts another user event after its current result. Baton records each
+# complete read only after that event was written successfully. This is a turn
+# boundary; it does not inject into an active tool call.
+def agy_result_continue(+db: String, +player: String, handle: U32, result_frame: Bool) -> IO(Bool):
+  match result_frame:
+    case False{}: IO.pure(Bool,False{})
+    case True{}: do IO<Bool>:
+      +batch : String <- IO.try(String,DB.Sql.query(db,agy_batch_sql(player)))
+      +fields : List<String> <- IO.pure(List<String>,Tx.split_tabs(Tx.trim_nl(batch)))
+      +encoded_sequences : String <- IO.pure(String,agy_batch_sequences(fields))
+      +encoded_prompt : String <- IO.pure(String,agy_batch_prompt(fields))
+      +pending : String <- IO.pure(String,Req.scalar_value(Req.decode_scalar_utf8(Tx.hex_decode(encoded_sequences))))
+      +gate : Bool <- agy_gate_open(db,player)
+      +continue : Bool <- IO.pure(Bool,Bool.or(Bool.not(String.is_empty(pending)),gate))
+      Bool.pick(IO(Bool),continue,
+        (do IO<Bool>:
+          +pending_text : String <- IO.pure(String,Req.scalar_value(Req.decode_scalar_utf8(Tx.hex_decode(encoded_prompt))))
+          +prompt : String <- IO.pure(String,Bool.pick(String,String.is_empty(pending),"",pending_text) ++ "\n\nContinue the work. When the assignment is ready, use run_command with the recorded coordinator executable, database, and session to run completion-request --text SUMMARY.")
+          sent : Result<&1,&1,U32 & String,Unit> <- Agy.input(handle,prompt)
+          case sent:
+            case Fail{error}: IO.die(Bool,0,"AGY input write failed: " ++ error_text(error))
+            case Done{unit}: do IO<Bool>:
+              Bool.pick(IO(Unit),String.is_empty(pending),IO.pure(Unit,Unit{}),agy_pending_reads(db,player,Tx.split_lines(pending)))
+              IO.pure(Bool,True{})),
+        IO.pure(Bool,False{}))
+
+def agy_batch_sequences(fields: List<String>) -> String:
+  match fields:
+    case encoded <> prompt <> Nil{}: encoded
+    case other: ""
+
+def agy_batch_prompt(fields: List<String>) -> String:
+  match fields:
+    case encoded <> prompt <> Nil{}: prompt
+    case other: ""
+
 @unsafe
 def consume_frame(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +spool: String, +spanned: Bool, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, +wake_sub: U32, +alive: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, +line: String, +notice: String) -> IO(WakeRead):
   do IO<WakeRead>:
@@ -1207,10 +1260,11 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
       +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
       +next_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant),monitor)
+      +agy_continue : Bool <- agy_result_continue(db,player,handle,Bool.and(agy,String.eq(Tx.trim_nl(kind),"result")))
       +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
       +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
       +terminal_frame : Bool <- primary_terminal(db,event,"",False{})
-      +admitted : Bool <- terminal_admitted(db,event,next_primary,terminal_frame,String.eq(harness,"muse\n"))
+      +admitted : Bool <- terminal_admitted(db,event,next_primary,Bool.and(terminal_frame,Bool.not(agy_continue)),String.eq(harness,"muse\n"))
       +state : String <- completion_state_event(db,id,player,event,Bool.and(admitted,Bool.not(sealed)))
       +observation_sealed : Bool <- IO.pure(Bool,terminal_observation_sealed(sealed,terminal_frame,admitted,state))
       conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
@@ -1218,7 +1272,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       +observed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed),Tx.trim_nl(harness)))
       +terminal_selected : Bool <- IO.pure(Bool,Bool.and(relevant,Bool.and(admitted,Bool.not(sealed))))
       +ended : String <- terminal_event(event,terminal,terminal_selected)
-      +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.and(Bool.not(monitor),Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended)))))))
+      +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.and(Bool.not(monitor),Bool.and(Bool.or(String.eq(harness,"omp\n"),agy),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended)))))))
       +codex_frame : Bool <- IO.pure(Bool,String.eq(harness,"codex\n"))
       +codex_state : String <- codex_frames(db,codex_log,decoded,line,codex_frame)
       +question_needed : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
@@ -1430,10 +1484,10 @@ def retained_identity_prefix(model: String, identity: String & String) -> String
 def retained_input(muse: Bool, omp: Bool, claude: Bool, +prompt: String, level: String) -> String:
   Bool.pick(String,muse,"",Bool.pick(String,claude,Claude.user_frame(prompt),Bool.pick(String,omp,Omp.prompt(prompt,level),prompt)))
 
-# The Muse task file, Claude's single frame and Codex's stdin all close the child's
-# input; OMP keeps it open for steer frames.
-def retained_keep_stdin(muse: Bool, omp: Bool, claude: Bool) -> U32:
-  Bool.pick(U32,muse,0,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))
+# The Muse task file, Claude's single frame and Codex's stdin close child input.
+# OMP accepts steer frames and AGY accepts another user event after a result.
+def retained_keep_stdin(muse: Bool, omp: Bool, claude: Bool, agy: Bool) -> U32:
+  Bool.pick(U32,Bool.or(omp,agy),1,Bool.pick(U32,Bool.or(muse,claude),0,0))
 
 # DSH persists sessions under DSH_HOME. One home per seat keeps two sessions
 # from sharing a conversation store. The database directory holds it so the
@@ -1520,7 +1574,7 @@ def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +
     case Done{Dsh.Prepared{tools, model_patch}}: do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
       +arguments : String = Bool.pick(String,dsh,prefix ++ Dsh.argv(home,cmd,model,effort,tools,model_patch,native,String.is_empty(native)),Bool.pick(String,agy,prefix ++ Agy.argv(cmd,model,effort,native,String.is_empty(native)),args))
       checked : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),omp,Omp.preflight_arguments(arguments),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
-      retained_launch_result(checked,arguments,Bool.pick(String,agy,Agy.user_frame(initial),retained_input(muse,omp,claude,initial,level)),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt))
+      retained_launch_result(checked,arguments,Bool.pick(String,agy,Agy.user_frame(initial),retained_input(muse,omp,claude,initial,level)),initial,retained_keep_stdin(muse,omp,claude,agy),Bool.or(muse,seal_prompt))
 
 def retained_launch_plain(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
   match account:
