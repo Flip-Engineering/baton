@@ -79,11 +79,9 @@ def instance_mode(owner: Bool, shutdown: Bool, db: String) -> IO(Unit):
         case False{}: IO.die(Unit,2,"expected instance mode")
 
 def witness_mode(db: String) -> IO(Unit):
-  do IO<Unit>:
-    witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.owner_witness(db)
-    match witness:
-      case Fail{error}: IO.die(Unit,2,"owner witness failed")
-      case Done{value}: IO.print(value)
+  match Custody.Instance.owner_witness(db):
+    case Fail{error}: IO.die(Unit,2,"owner witness failed")
+    case Done{value}: IO.print(value)
 
 def ensure_witness_mode(db: String) -> IO(Unit):
   match Custody.Instance.ensure_owner_witness(db):
