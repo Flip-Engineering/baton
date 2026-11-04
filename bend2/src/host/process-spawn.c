@@ -4913,11 +4913,7 @@ static void br_owner_executable(pid_t pid,char **path_out,char hex[65]) {
    credentials: the record's pid names an owner that may have exited and whose
    pid may have been reused. */
 static int br_owner_peer_pid(int socket_fd,pid_t *pid) {
-  struct ucred peer;
-  socklen_t size=sizeof(peer);
-  if(getsockopt(socket_fd,SOL_SOCKET,SO_PEERCRED,&peer,&size))return errno;
-  *pid=peer.pid;
-  return 0;
+  return br_observer_pid(socket_fd,pid);
 }
 /* Names the drain in the detail of a refused admission, so the settlement the
    caller records carries the owner, its executable and the retry condition. The
