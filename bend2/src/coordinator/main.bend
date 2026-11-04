@@ -275,7 +275,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.Serve{}:
       IO.try(Unit,Instance.serve(db))
     case C.OwnerStatus{}:
-      IO.try(Unit,Instance.owner_status(db))
+      IO.try(Unit,Instance.owner_readiness(db))
     case C.Receive{+session,cmd,model,effort,cwd,log,+message}: do IO<Unit>:
       result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
       reported : Unit <- Receive.report_result(db,session,message,result)
