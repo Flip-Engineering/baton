@@ -59,6 +59,16 @@ def current_sql(session: String, directory: String) -> String:
   "SELECT hex(e.id) || char(9) || hex(s.native) FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=" ++ q(session)
   ++ " AND e.directory=" ++ q(directory) ++ " AND e.phase='running' AND s.native<>'' AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=e.session);"
 
+# The admitted attempt of one session and directory that has not settled: its
+# row is still starting or running and no stop is recorded. An owned read whose
+# running execution or bound native identity is not committed yet waits while
+# this returns 1 (#1412). Settlement through an exited row, an admitted stop or
+# a replaced attempt directory ends the wait through the ordinary refusal.
+def startup_live_sql(+session: String, +directory: String) -> String:
+  "SELECT count(*) FROM executions e WHERE e.session=" ++ q(session)
+  ++ " AND e.directory=" ++ q(directory) ++ " AND e.phase IN ('starting','running')"
+  ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=e.session);"
+
 def record_sql(+session: String, +directory: String, +attempt: String, +native: String, identity: String, saved: String, +read: Bool) -> String:
   "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT " ++ q(attempt) ++ ",m.id,m.recipient," ++ q(native) ++ "," ++ q(identity)
   ++ " FROM json_each(" ++ q(saved) ++ ") j CROSS JOIN messages m ON m.id=" ++ exposed(read,"id")

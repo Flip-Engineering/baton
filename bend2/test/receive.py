@@ -256,6 +256,35 @@ if '--profile' in args and config.get('dsh_public_read'):
         if result.returncode: sys.exit(result.returncode)
     print(json.dumps({'type':'final','text':'read recorded' if identifiers else 'no input'},separators=(',',':')),flush=True)
     sys.exit(0)
+if '--profile' in args and config.get('owned_read_startup'):
+    # Controlled DSH headless native for the owned-read startup regression
+    # (#1412). The read starts before the session event is printed, so the
+    # running execution and the native identity are not committed when the
+    # read first checks. The read runs as a child of the native with the
+    # launch's BATON_DATABASE/BATON_SESSION/BATON_ATTEMPT_DIRECTORY context,
+    # and the session event follows while that child is still waiting, exactly
+    # as an installed native that reads its owned input as its first action.
+    task=sys.stdin.read()
+    identifiers=list(dict.fromkeys(re.findall(r'\[id: ([^\]]+)\]',task)))[:1]
+    children=[]
+    for ident in identifiers:
+        children.append((ident,subprocess.Popen([config['exe'],config['db'],'read',ident],
+                                                stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)))
+    settled=[]
+    for ident,child in children:
+        try:
+            child.wait(timeout=1.0)
+            settled.append((ident,child,child.stdout.read(),child.stderr.read()))
+        except subprocess.TimeoutExpired:
+            settled.append((ident,child,None,None))
+    print(json.dumps({'type':'session','sessionId':'dsh-native-'+str(os.getpid()),'cwd':os.getcwd()},separators=(',',':')),flush=True)
+    with (home/'owned-read-startup.jsonl').open('w') as recorded:
+        for ident,child,out,err in settled:
+            if out is None: out,err=child.communicate()
+            recorded.write(json.dumps({'id':ident,'code':child.returncode,
+                                       'stdout':out,'stderr':err})+'\n')
+    print(json.dumps({'type':'final','text':'startup read finished' if identifiers else 'no input'},separators=(',',':')),flush=True)
+    sys.exit(0)
 if args[:1]==['legacy_keeper']:
     import array,ctypes,fcntl,select,struct
     legacy=config['legacy_keeper']

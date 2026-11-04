@@ -203,11 +203,35 @@ def record_fields(+db: String, +session: String, +directory: String, +saved: Str
         IO.die(Unit,2,"The owned input action has no matching live native process birth. Read status remains unrecorded."))
     case other: IO.die(Unit,2,"The owned input action has no matching active execution, native conversation and stop state. Read status remains unrecorded.")
 
+# A native process runs as soon as the keeper releases its start gate, while
+# the coordinator commits the running execution and the observed native
+# identity only after the retained result returns (#1412). A first owned read
+# in that window found no active execution row and exited 2, so an installed
+# native that reads its input as its first action lost it. The owned read of a
+# live admitted attempt re-reads until its exact custody is committed: the
+# running phase and bound native identity that current_sql selects, with the
+# live birth witness that record_fields checks. The wait lasts while the
+# attempt itself lasts; an exited row, an admitted stop or a replaced attempt
+# directory ends it through the same refusal as before, so custody, explicit
+# stops and stale-attempt refusal are unchanged.
+@unsafe
+def record_when(+db: String, +session: String, +directory: String, saved: String, read: Bool, fields: List<String>) -> IO(Unit):
+  match fields:
+    case attempt_hex <> native_hex <> Nil{}: record_fields(db,session,directory,saved,read,fields)
+    case other: do IO<Unit>:
+      live : String <- IO.try(String,Store.query_through_busy(db,Status.startup_live_sql(session,directory)))
+      Bool.pick(IO(Unit),String.eq(live,"1\n"),
+        do IO<Unit>:
+          waited : Unit <- IO.sleep(10)
+          again : String <- IO.try(String,Store.query_through_busy(db,Status.current_sql(session,directory)))
+          record_when(db,session,directory,saved,read,Tx.split_tabs(Tx.trim_nl(again))),
+        record_fields(db,session,directory,saved,read,other))
+
 def record(+db: String, +session: String, +directory: String, saved: String, read: Bool) -> IO(Unit):
   do IO<Unit>:
     ensured : Unit <- Store.ensure_before_begin(db)
-    fields : String <- IO.try(String,DB.Sql.read(db,Status.current_sql(session,directory)))
-    record_fields(db,session,directory,saved,read,Tx.split_tabs(Tx.trim_nl(fields)))
+    fields : String <- IO.try(String,Store.query_through_busy(db,Status.current_sql(session,directory)))
+    record_when(db,session,directory,saved,read,Tx.split_tabs(Tx.trim_nl(fields)))
 
 # The read event for one forwarded guidance frame: the running execution's own
 # witness binds the native identity. A missing or stale witness skips the
