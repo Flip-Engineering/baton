@@ -84,6 +84,8 @@ sh bend2/scripts/build-native.sh bend2/test/account-credits-entry.bend .scratch/
 BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" "$PYTHON3" bend2/test/account-credits-focused.py
 sh bend2/scripts/build-native.sh bend2/harness/claude-credit-observe.bend .scratch/bend2/claude-credit-observe
 BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py
+sh bend2/scripts/build-native.sh bend2/test/claude-read-evidence-entry.bend .scratch/bend2/claude-read-evidence-entry
+BATON2_CLAUDE_READ_EVIDENCE="$root/.scratch/bend2/claude-read-evidence-entry" "$PYTHON3" bend2/test/claude-read-evidence.py
 sh bend2/scripts/build-native.sh bend2/harness/usage-read.bend .scratch/bend2/usage-read
 "$PYTHON3" bend2/test/usage-read-codex.py "$root/.scratch/bend2/usage-read"
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" BATON2_USAGE_READ="$root/.scratch/bend2/usage-read" "$PYTHON3" bend2/test/native-helper-install.py
