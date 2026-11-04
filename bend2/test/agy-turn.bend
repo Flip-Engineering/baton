@@ -21,7 +21,7 @@ def setup(+db: String) -> IO(Unit):
 def observe(+db: String, +id: String, +line: String) -> IO(Unit):
   do IO<Unit>:
     +event : String <- Agy.event(db,line)
-    result : String <- IO.try(String,DB.Sql.query(db,C.observe_sql(id,"agy-player",event,False{})))
+    result : String <- IO.try(String,DB.Sql.query(db,C.observe_sql(id,"agy-player",event,False{},"antigravity")))
     IO.print("event\t" ++ event)
 
 def admitted_line(+db: String, +id: String, +line: String, admit: Bool) -> IO(Unit):

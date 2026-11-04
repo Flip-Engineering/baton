@@ -24,29 +24,6 @@ function instrument(source: string): string {
     + "function file_push(fl: File, line: string): void {");
 }
 
-const capped = `function file_push(fl: File, line: string): void {
-  const tab = fl.tab < INDENTS.length ? fl.tab : INDENTS.length - 1;
-  // Facts-only passes use the same compiler decisions while counting output
-  // lines without retaining their strings.
-  if (fl.dry) {
-    fl.dry_lines += 1;
-    fl.dry_units += line.length + tab * 2;
-    return;
-  }
-  fl.seg.lines.push(INDENTS[tab] + line);
-}`;
-
-const uncapped = `function file_push(fl: File, line: string): void {
-  // Facts-only passes use the same compiler decisions while counting output
-  // lines without retaining their strings.
-  if (fl.dry) {
-    fl.dry_lines += 1;
-    fl.dry_units += line.length + fl.tab * 2;
-    return;
-  }
-  fl.seg.lines.push("  ".repeat(fl.tab) + line);
-}`;
-
 const fixture = `import Base
 
 def dispatch(args: List<String>) -> IO(Unit):
@@ -65,10 +42,24 @@ const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.
 const upstream = path.join(root, "bend2/compiler/upstream");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-bounded-indent-"));
 try {
-  for (const name of ["bend.ts", "base.bend"]) {
+  for (const name of fs.readdirSync(upstream).filter(name =>
+    name.endsWith(".ts") || name === "base.bend")) {
     fs.copyFileSync(path.join(upstream, name), path.join(temp, name));
   }
   fs.cpSync(path.join(upstream, "effs"), path.join(temp, "effs"), { recursive: true });
+  // Observe file_push before the link removes leading helper indentation.
+  // Helper hashes still use the canonical layout in both compiler copies.
+  const linker = path.join(temp, "link.ts");
+  if (fs.existsSync(linker)) {
+    let text = fs.readFileSync(linker, "utf8");
+    const layout = '  helpers = helpers.map(([name, text, refs, cids]) => [name, c_layout(text), refs, cids]);';
+    if (text.includes(layout)) {
+      text = replaceOnce(text, layout, '  const emitted_helpers = helpers;\n' + layout);
+      text = replaceOnce(text, 'return { names, helpers: helpers.map(',
+        'return { names, helpers: emitted_helpers.map(');
+      fs.writeFileSync(linker, text);
+    }
+  }
   // The branch C literal lowering removes the deep decision tree. This test
   // exercises the indentation cap, so use the generic lowering in its temp
   // compiler copies. The branch C lowering has its own test.
@@ -79,6 +70,11 @@ try {
     bendSource.includes(lower)
       ? replaceOnce(bendSource, lower, generic) : bendSource);
   const source = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");
+  const capped = source.match(/function file_push\(fl: File, line: string\): void \{\n[\s\S]*?\n\}/)?.[0];
+  assert.ok(capped !== undefined, "file_push definition");
+  const uncapped = `function file_push(fl: File, line: string): void {
+${capped.includes("fl.dry") ? "  if (fl.dry) return;\n" : ""}  fl.seg.lines.push("  ".repeat(fl.tab) + line);
+}`;
   fs.writeFileSync(path.join(temp, "capped.ts"), instrument(source));
   fs.writeFileSync(path.join(temp, "uncapped.ts"),
     instrument(replaceOnce(source, capped, uncapped)));

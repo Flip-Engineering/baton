@@ -3,8 +3,11 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import signal
 import sqlite3
+import struct
+import subprocess
 import sys
 import unittest
 
@@ -16,6 +19,16 @@ spec.loader.exec_module(receive)
 # Its socket commands establish process state before each stop or force request.
 FIXTURE = receive.FIXTURE.replace('import json,os,pathlib,re,socket,subprocess,sys',
                                  'import json,os,pathlib,re,signal,socket,subprocess,sys')
+FIXTURE = FIXTURE.replace("""    json.loads(sys.stdin.readline())
+    state=json.loads(sys.stdin.readline())
+    prompt=json.loads(sys.stdin.readline())['message']""", """    state=None
+    while True:
+        request=json.loads(sys.stdin.readline())
+        if request['type']=='get_state': state=request
+        if request['type']=='prompt':
+            prompt=request['message']
+            break
+    assert state is not None""", 1)
 FIXTURE = FIXTURE.replace('args=sys.argv[1:]', '''args=sys.argv[1:]
 if args[:1]==['tool_fixture']:
     connection=socket.create_connection(('127.0.0.1',config['port']))
@@ -41,8 +54,8 @@ FIXTURE = FIXTURE.replace("    if action.get('progress'):", """    if action.get
     if action.get('progress'):""", 1)
 
 # The stop helper runs one turn for each supported retained harness. The shared
-# fixture speaks Codex and OMP; these insertions add the Muse task-file envelope
-# and the Claude user-frame envelope without touching the shared fixture.
+# fixture speaks Codex, OMP and DSH; these insertions add the Muse task-file
+# envelope and the Claude user-frame envelope.
 FIXTURE = FIXTURE.replace(r"""omp='--mode' in args""", r"""omp='--mode' in args
 muse='--prompt-file' in args
 claude='--input-format' in args""", 1)
@@ -69,9 +82,22 @@ FIXTURE = FIXTURE.replace(r"""        remaining_input=sys.stdin.read()
 
 
 class Stop(unittest.TestCase):
-    setUp = receive.Receive.setUp
+    def setUp(self):
+        receive.Receive.setUp(self)
+        origin = self.directory / 'origin.git'
+        subprocess.run(['git', 'clone', '--bare', str(self.repo), str(origin)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), 'remote', 'add', 'origin', str(origin)],
+                       check=True, capture_output=True)
+        (self.directory / 'omp').symlink_to(self.fixture)
+        private_home = self.directory / 'home'
+        private_home.mkdir()
+        self.environment = dict(os.environ, HOME=str(private_home))
+        self.environment.pop('BATON2_GIT_REGISTRY', None)
+
     close_children = receive.Receive.close_children
     owned_processes = receive.Receive.owned_processes
+    process_names = receive.Receive.process_names
     eventually = receive.Receive.eventually
     coord = receive.Receive.coord
     spawn = receive.Receive.spawn
@@ -86,6 +112,9 @@ class Stop(unittest.TestCase):
     accept_or_child_exit = receive.Receive.accept_or_child_exit
     accept_child = receive.Receive.accept_child
     shutdown_idle_database_owner = receive.Receive.shutdown_idle_database_owner
+    session_guard_available = receive.Receive.session_guard_available
+    selected_process = receive.Receive.selected_process
+    signal_selected = receive.Receive.signal_selected
     action = receive.Receive.action
     capture_child_output = receive.Receive.capture_child_output
     child_communication = receive.Receive.child_communication
@@ -167,6 +196,155 @@ class Stop(unittest.TestCase):
         self.assertNotEqual(refused.returncode, 0)
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
 
+    def test_missing_attempt_stop_records_custody_missing_without_native_exit(self):
+        self.configure()
+        self.player(harness='omp')
+        attempt = 'receive:parent:1:missing-custody'
+        directory = self.directory / 'missing-stop-attempt'
+        with sqlite3.connect(self.db) as database:
+            database.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                             "VALUES('parent',?,'retained',?,'starting','')",
+                             (attempt, str(directory)))
+        before = self.rows("SELECT id,phase,status,directory FROM executions WHERE session='parent'")
+        stopped = self.stop()
+        self.assertEqual(stopped['status'], 'custody-missing')
+        self.assertIsNone(stopped['nativeStatus'])
+        self.assertIsNone(stopped['submittedSignal'])
+        self.assertEqual(stopped['attempt'], attempt)
+        self.assertIn('custody is missing', stopped['controlError'])
+        self.assertEqual(self.rows("SELECT id,phase,status,directory FROM executions WHERE session='parent'"),
+                         before)
+        self.assertFalse(directory.exists())
+        self.assertEqual(self.stop(), stopped)
+        reports = self.rows("SELECT id,body FROM messages WHERE recipient='root' "
+                            "AND json_extract(body,'$.type')='session-stop-custody-missing'")
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(json.loads(reports[0]['body'])['stopId'], stopped['stopId'])
+
+    def test_live_native_with_absent_attempt_uses_owner_held_identity(self):
+        observer, stream, started = self.begin()
+        attempt_dir = pathlib.Path(self.rows(
+            "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
+        hidden = self.directory / 'held-stop-attempt'
+        shutil.move(str(attempt_dir), str(hidden))
+        stopped = self.stop()
+        self.assertEqual(stopped['status'], 'requested')
+        self.assertEqual(stopped['submittedSignal'], 15)
+        self.assertTrue(hidden.is_dir())
+        self.assertFalse(attempt_dir.exists())
+        self.assertEqual(self.stop(), stopped)
+        shutil.move(str(hidden), str(attempt_dir))
+        self.finish(observer, ok=False)
+        completed = self.completed()
+        self.assertEqual(completed['nativeStatus'], 'signal 15')
+        reports = self.rows("SELECT id,body FROM messages WHERE recipient='root' "
+                            "AND json_extract(body,'$.stopId')=?", [completed['stopId']])
+        self.assertEqual(len(reports), 1)
+        by_type = {json.loads(row['body'])['type']: row for row in reports}
+        self.assertEqual(set(by_type), {'session-stopped'})
+        self.assertEqual(by_type['session-stopped']['id'], completed['reportId'])
+        self.assertEqual(json.loads(by_type['session-stopped']['body'])['nativeStatus'], 'signal 15')
+        self.assertEqual(self.rows("SELECT phase,status FROM executions WHERE session='parent'"),
+                         [{'phase': 'exited', 'status': 'signal 15'}])
+        self.shutdown_idle_database_owner('restored custody left processes running')
+
+    def test_live_native_with_missing_control_endpoint_uses_owner_identity(self):
+        observer, stream, started = self.begin()
+        attempt_dir = pathlib.Path(self.rows(
+            "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
+        manifest = (attempt_dir / 'manifest').read_bytes()
+        self.assertIn(manifest[:8], (b'BATONRP1', b'BATONRP2'))
+        count = 8 if manifest[:8] == b'BATONRP2' else 6
+        header = struct.Struct(f'=8s{count}Q2I')
+        magic, *fields = header.unpack_from(manifest)
+        self.assertEqual(magic, manifest[:8])
+        lengths = fields[:count]
+        self.assertEqual(len(manifest), header.size + sum(lengths))
+        offset = header.size + sum(lengths[:5])
+        endpoint = pathlib.Path(os.fsdecode(manifest[offset:offset + lengths[5]]))
+        self.assertTrue(endpoint.exists())
+        endpoint.unlink()
+
+        stopped = self.stop()
+        self.assertEqual(stopped['status'], 'requested')
+        self.assertEqual(stopped['submittedSignal'], 15)
+        self.assertIsNone(stopped['controlError'])
+        self.finish(observer, ok=False)
+        completed = self.completed()
+        self.assertEqual(completed['nativeStatus'], 'signal 15')
+        self.shutdown_idle_database_owner('owner-verified stop left processes running')
+
+    def test_live_owner_keeps_launch_window_stop_requested_until_custody_is_ready(self):
+        observer, stream, started = self.begin(resist=True)
+        self.assertFalse(self.session_guard_available('parent'))
+        attempt_dir = pathlib.Path(self.rows(
+            "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
+        hidden = self.directory / 'launch-window-attempt'
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE executions SET phase='starting',status='' WHERE session='parent'")
+        shutil.move(str(attempt_dir), str(hidden))
+
+        pending = self.stop()
+        self.assertEqual(pending['status'], 'requested')
+        self.assertIsNone(pending['submittedSignal'])
+        self.assertEqual(self.rows("SELECT id FROM messages WHERE recipient='root' "
+                                   "AND json_extract(body,'$.type')='session-stop-custody-missing'"), [])
+
+        shutil.move(str(hidden), str(attempt_dir))
+        restored = self.stop()
+        self.assertEqual(restored['status'], 'requested')
+        self.assertEqual(restored['submittedSignal'], 15)
+        self.assertEqual(self.rows("SELECT id FROM messages WHERE recipient='root' "
+                                   "AND json_extract(body,'$.type')='session-stop-custody-missing'"), [])
+        selected_native = self.selected_process(started['pid'])
+        self.signal_selected(selected_native, signal.SIGKILL)
+        self.finish(observer, ok=False)
+        completed = self.completed()
+        self.assertEqual(completed['status'], 'stopped')
+        self.assertEqual(len(self.rows("SELECT id FROM messages WHERE recipient='root' "
+                                       "AND json_extract(body,'$.stopId')=?", [completed['stopId']])), 1)
+        self.shutdown_idle_database_owner('launch-window stop left processes running')
+
+    def test_recover_observer_restores_missing_stop_and_delivers_signal_before_exit(self):
+        observer, stream, started = self.begin(resist=True)
+        attempt_dir = pathlib.Path(self.rows(
+            "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
+        selected_observer = self.selected_process(observer.pid)
+        self.signal_selected(selected_observer, signal.SIGKILL)
+        self.eventually(lambda: (self.selected_process(observer.pid) or {}).get('state', 'Z').startswith('Z'),
+                        'The selected observer did not exit.')
+        hidden = self.directory / 'recover-observer-missing-attempt'
+        shutil.move(str(attempt_dir), str(hidden))
+
+        missing = self.stop()
+        self.assertEqual(missing['status'], 'custody-missing')
+        self.assertIsNone(missing['submittedSignal'])
+        self.assertIsNone(missing['nativeStatus'])
+        shutil.move(str(hidden), str(attempt_dir))
+
+        recovery = self.spawn('recover-observer', 'parent', observer.pid)
+        requested = self.eventually(
+            lambda: (lambda stop: stop if stop.get('status') == 'requested'
+                     and stop.get('submittedSignal') == 15 else None)(
+                         self.coord('player', 'parent').get('stop', {})),
+            'recover-observer did not restore the requested signal from durable custody')
+        self.assertEqual(requested['status'], 'requested')
+        self.assertEqual(requested['submittedSignal'], 15)
+
+        selected_native = self.selected_process(started['pid'])
+        self.signal_selected(selected_native, signal.SIGKILL)
+        self.finish(recovery, ok=False)
+        completed = self.completed()
+        self.assertEqual(completed['status'], 'stopped')
+        reports = self.rows("SELECT id,body FROM messages WHERE recipient='root' "
+                            "AND json_extract(body,'$.stopId')=?", [completed['stopId']])
+        self.assertEqual(len(reports), 2)
+        by_type = {json.loads(row['body'])['type']: row for row in reports}
+        self.assertEqual(set(by_type), {'session-stop-custody-missing', 'session-stopped'})
+        self.assertNotEqual(by_type['session-stop-custody-missing']['id'],
+                            by_type['session-stopped']['id'])
+        self.shutdown_idle_database_owner('recover-observer stop left processes running')
+
     def retained_stop_preserves_work_native_identity_receipts_and_output(self, harness):
         observer, stream, started = self.begin(harness=harness)
         self.action(stream, start_tool=True)
@@ -209,8 +387,14 @@ class Stop(unittest.TestCase):
     def test_retained_claude_code_stop_preserves_work_and_exits_native_and_tool(self):
         self.retained_stop_preserves_work_native_identity_receipts_and_output('claude-code')
 
+    def test_retained_dsh_stop_preserves_work_and_exits_native_and_tool(self):
+        self.retained_stop_preserves_work_native_identity_receipts_and_output('dsh')
+
     def test_explicit_force_reaches_same_term_resistant_attempt_after_observer_loss(self):
-        observer, stream, started = self.begin(resist=True)
+        self.explicit_force_reaches_same_term_resistant_attempt_after_observer_loss('omp')
+
+    def explicit_force_reaches_same_term_resistant_attempt_after_observer_loss(self, harness='omp'):
+        observer, stream, started = self.begin(harness=harness, resist=True)
         requested = self.stop()
         self.assertEqual(requested['status'], 'requested')
         self.assertEqual(requested['submittedSignal'], 15)
@@ -236,6 +420,9 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('force-stop', 'parent', 'operator-stop')['nativeStatus'], 'signal 9')
         self.assertTrue(receive.read_recorded(self.db, completed['reportId'], 'root'))
+
+    def test_explicit_force_reconciles_dsh_attempt_after_observer_loss(self):
+        self.explicit_force_reaches_same_term_resistant_attempt_after_observer_loss('dsh')
 
     def test_legacy_direct_turn_refuses_stop_without_mutating_input(self):
         self.configure()

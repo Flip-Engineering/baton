@@ -1,5 +1,6 @@
 """The source installation carries the focused facade, full router, and recovery helper."""
 import argparse
+import datetime
 import hashlib
 import importlib.util
 import json
@@ -87,13 +88,13 @@ class ReceiverLayout(unittest.TestCase):
         (prefix / 'bin').mkdir()
         specs = STAGE.binary_specs(self.args(), PACKAGE)
         records = STAGE.stage_binaries(prefix, specs, PACKAGE)
-        focused = records[0]
+        full = next(record for record in records if record['role'] == 'full-cli')
         source_manifest = self.source_manifest(records)
         manifest = {
             'schema': 'baton2-native-install-v2', 'source': {'commit': COMMIT, 'status': ''},
             'binaries': records, 'source_manifest': source_manifest,
-            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
-                       'sha256': focused['sha256'], 'source': focused['source']},
+            'binary': {'path': full['path'], 'alias': full.get('alias'),
+                       'sha256': full['sha256'], 'source': full['source']},
         }
         PACKAGE.write_json(prefix / 'source-manifest.json', source_manifest)
         PACKAGE.write_json(prefix / 'manifest.json', manifest)
@@ -157,6 +158,79 @@ class ReceiverLayout(unittest.TestCase):
             self.assertEqual((source.stat().st_size,
                               hashlib.sha256(source.read_bytes()).hexdigest()),
                              (row['bytes'], row['sha256']), row['path'])
+
+    def test_repl_range_errors_keep_cli_classification_and_original_detail(self):
+        runtime = os.environ.get('BEND_BUN') or shutil.which('bun')
+        if not runtime:
+            self.skipTest('Bun is required')
+        runtime = Path(runtime).resolve()
+        notices = self.home / 'Bun-NOTICES'
+        notices.write_text('Runtime notices for the staging fixture\n')
+        prefix = self.home / 'repl'
+        staged = subprocess.run(
+            [sys.executable, str(ROOT / 'bend2/scripts/stage-repl-compiler.py'),
+             '--runtime', str(runtime), '--runtime-sha256', PACKAGE.sha256(runtime),
+             '--runtime-notices', str(notices), '--output', str(prefix)],
+            capture_output=True, text=True)
+        self.assertEqual(staged.returncode, 0, staged.stdout + staged.stderr)
+        entry = self.home / 'expression.bend'
+        entry.write_text('0\n')
+        cases = [('call-stack', 'Maximum call stack size exceeded', True),
+                 ('stack-space', 'Out of stack space', True),
+                 ('stack-overflow', 'stack overflow', True),
+                 ('allocation', 'Out of memory', False),
+                 ('string-length', 'Invalid string length', False)]
+        for enabled in (False, True):
+            for name, message, stack in cases:
+                with self.subTest(diagnostics=enabled, error=name):
+                    directory = self.home / f'{name}-{int(enabled)}'
+                    directory.mkdir()
+                    original = directory / 'original.json'
+                    preload = directory / 'preload.ts'
+                    preload.write_text(
+                        'import fs from "node:fs";\n'
+                        'const parse = JSON.parse;\n'
+                        'JSON.parse = function(text, ...args) {\n'
+                        '  if (text === "[]\\n") {\n'
+                        f'    const error = new RangeError({json.dumps(message)});\n'
+                        f'    fs.writeFileSync({json.dumps(str(original))}, '
+                        'JSON.stringify({ name: error.name, message: error.message, stack: error.stack }));\n'
+                        '    throw error;\n'
+                        '  }\n'
+                        '  return Reflect.apply(parse, this, [text, ...args]);\n'
+                        '};\n')
+                    argv = [str(runtime), '--smol', '--preload', str(preload),
+                            str(prefix / 'upstream/repl.ts'), 'eval', str(entry),
+                            str(self.home), str(directory / 'output'), 'U32']
+                    started = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    child = subprocess.Popen(argv, stdin=subprocess.PIPE,
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                             text=True, env={**os.environ,
+                                                 'BEND_NO_TELEMETRY': '1',
+                                                 'BEND_COMPILER_DIAGNOSTICS': str(int(enabled))})
+                    stdout, stderr = child.communicate('[]\n')
+                    (directory / 'stdout').write_text(stdout)
+                    (directory / 'stderr').write_text(stderr)
+                    (directory / 'result.json').write_text(json.dumps({
+                        'argv': argv, 'pid': child.pid, 'started': started,
+                        'ended': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        'code': child.returncode}))
+                    self.assertTrue(original.is_file(),
+                                    'the staged REPL reached the injected stdin error')
+                    self.assertEqual(child.returncode, 1, stdout + stderr)
+                    self.assertEqual(stdout, '')
+                    lines = stderr.splitlines()
+                    expected = ('Error: the machine stack overflowed (a deep recursion, '
+                                'or a literal too large to expand)' if stack
+                                else 'RangeError: ' + message)
+                    self.assertEqual(lines.pop(), expected)
+                    if enabled:
+                        frames = [json.loads(line) for line in lines]
+                        error = next(frame for frame in frames
+                                     if frame.get('compiler_diagnostic') == 'exception')
+                        self.assertEqual(error['error'], json.loads(original.read_text()))
+                    else:
+                        self.assertEqual(lines, [])
 
     def test_post_stage_provenance_refreshes_receipt_and_all_checksums(self):
         prefix, manifest, records = self.staged()
@@ -241,9 +315,11 @@ class ReceiverLayout(unittest.TestCase):
         records = PACKAGE.stage_receiver_binaries(payload, specs, built)
         self.assertEqual([record['role'] for record in records],
                          ['focused-facade', 'full-cli', 'recovery-helper'])
+        self.assertEqual((payload / 'bin/baton').read_bytes(),
+                         (payload / 'bin/baton2').read_bytes())
         self.assertEqual((payload / 'bin/baton2').read_bytes(),
                          (payload / 'bin/baton-full').read_bytes())
-        self.assertNotEqual((payload / 'bin/baton').read_bytes(),
+        self.assertNotEqual((payload / 'bin/baton-focused').read_bytes(),
                             (payload / 'bin/baton2').read_bytes())
         self.assertEqual([record['build_mode'] for record in records],
                          ['focused-native-entry', 'full-native-receiver-router',
@@ -282,7 +358,7 @@ class ReceiverLayout(unittest.TestCase):
                                          full_source_tree='d' * 40,
                                          full_wrapper_source_commit=None), PACKAGE)
     def test_focused_build_mode_refuses_the_general_entry(self):
-        environment = dict(os.environ, BATON2_RECEIVE_FOCUSED='1')
+        environment = dict(os.environ, BATON2_RECEIVE_FOCUSED='1', TMPDIR=str(self.home))
         result = subprocess.run(
             ['sh', str(ROOT / 'bend2/scripts/build-native.sh'),
              str(ROOT / 'bend2/src/coordinator/main.bend'),
@@ -293,7 +369,7 @@ class ReceiverLayout(unittest.TestCase):
 
 
     def test_full_receiver_router_refuses_a_non_main_entry(self):
-        environment = dict(os.environ, BATON2_NATIVE_RECEIVER_ROUTER='1')
+        environment = dict(os.environ, BATON2_NATIVE_RECEIVER_ROUTER='1', TMPDIR=str(self.home))
         result = subprocess.run(
             ['sh', str(ROOT / 'bend2/scripts/build-native.sh'),
              str(ROOT / 'bend2/src/coordinator/receive-focused.bend'),
@@ -303,7 +379,7 @@ class ReceiverLayout(unittest.TestCase):
         self.assertIn('receiver-router-without-main', result.stderr)
 
     def test_recovery_helper_build_mode_refuses_another_entry(self):
-        environment = dict(os.environ, BATON2_RECOVERY_HELPER='1')
+        environment = dict(os.environ, BATON2_RECOVERY_HELPER='1', TMPDIR=str(self.home))
         result = subprocess.run(
             ['sh', str(ROOT / 'bend2/scripts/build-native.sh'),
              str(ROOT / 'bend2/src/coordinator/receive-focused.bend'),
@@ -319,15 +395,19 @@ class ReceiverLayout(unittest.TestCase):
         prefix, manifest, records = self.staged()
         self.assertEqual([record['role'] for record in records],
                          ['focused-facade', 'full-cli', 'recovery-helper'])
-        for name in ('baton', 'baton2', 'baton-full', 'baton-recovery'):
+        for name in ('baton', 'baton-focused', 'baton2', 'baton-full', 'baton-recovery'):
             path = prefix / 'bin' / name
             self.assertTrue(path.is_file() and os.access(path, os.X_OK), name)
         self.assertEqual((prefix / 'bin/baton2').read_bytes(),
                          (prefix / 'bin/baton-full').read_bytes())
-        self.assertNotEqual((prefix / 'bin/baton').read_bytes(),
+        self.assertEqual((prefix / 'bin/baton').read_bytes(),
+                         (prefix / 'bin/baton2').read_bytes())
+        self.assertEqual((prefix / 'bin/baton2').read_bytes(),
+                         (prefix / 'bin/baton-full').read_bytes())
+        self.assertNotEqual((prefix / 'bin/baton-focused').read_bytes(),
                             (prefix / 'bin/baton2').read_bytes())
         self.assertEqual(manifest['binary']['path'], 'bin/baton')
-        self.assertIsNone(manifest['binary']['alias'])
+        self.assertEqual(manifest['binary']['alias'], 'bin/baton2')
         self.assertEqual([record['source']['commit'] for record in records],
                          [COMMIT, COMMIT, COMMIT])
         self.assertEqual([record['source']['tree'] for record in records],
@@ -355,6 +435,58 @@ class ReceiverLayout(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'requires exactly three binaries'):
             STAGE.stage_binaries(prefix, specs[:1], PACKAGE)
 
+    def test_darwin_target_metadata_is_independent_of_linux_host(self):
+        args = self.args(target_system='Darwin', target_machine='arm64')
+        with mock.patch.object(PACKAGE.platform, 'system', return_value='Linux'), \
+                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'):
+            self.assertEqual(PACKAGE.artifact_target(args), ('Darwin', 'arm64'))
+
+    def test_cross_host_build_selects_the_staged_sdk_and_queue_compiler(self):
+        args = self.args(target_system='Darwin', target_machine='arm64',
+                         focused_binary=None, full_binary=None, recovery_binary=None)
+        llvm = self.home / 'llvm'
+        (llvm / 'bin').mkdir(parents=True)
+        (llvm / 'bin/clang').touch()
+        (llvm / 'bin/ld64.lld').touch()
+        sdk = self.home / 'sdk'
+        (sdk / 'usr/include').mkdir(parents=True)
+        sdk_tree_sha = 'f' * 64
+        sdk_manifest = sdk.with_name(sdk.name + '.transfer-manifest.json')
+        sdk_manifest.write_text(json.dumps({
+            'schema': 'baton2-private-sdk-transfer-v1', 'destination': str(sdk.resolve()),
+            'verification': {'destination_tree_sha256': sdk_tree_sha},
+        }))
+        sdk_manifest_sha = PACKAGE.sha256(sdk_manifest)
+        args.darwin_llvm_root = llvm
+        args.darwin_sdkroot = sdk
+        with mock.patch.object(PACKAGE.platform, 'system', return_value='Linux'), \
+                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'), \
+                mock.patch.object(PACKAGE, 'DARWIN_SDK_TREE_SHA256', sdk_tree_sha), \
+                mock.patch.object(PACKAGE, 'DARWIN_SDK_MANIFEST_SHA256', sdk_manifest_sha):
+            environment, cross_host = PACKAGE.configure_cross_host_build(
+                args, {}, 'Darwin', 'arm64')
+        self.assertTrue(cross_host)
+        self.assertEqual(environment['CC'],
+                         str(ROOT / 'bend2/scripts/darwin-arm64-clang.sh'))
+        self.assertEqual(environment['BATON2_DARWIN_LLVM_ROOT'], str(llvm.resolve()))
+        self.assertEqual(environment['BATON2_DARWIN_SDKROOT'], str(sdk.resolve()))
+        self.assertEqual(environment['BATON2_DARWIN_SDK_TREE_SHA256'], sdk_tree_sha)
+
+    def test_cross_host_build_refuses_an_unqueued_compiler_override(self):
+        args = self.args(target_system='Darwin', target_machine='arm64',
+                         focused_binary=None, full_binary=None, recovery_binary=None,
+                         darwin_llvm_root=self.home, darwin_sdkroot=self.home)
+        with mock.patch.object(PACKAGE.platform, 'system', return_value='Linux'), \
+                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'):
+            with self.assertRaisesRegex(RuntimeError, 'shared homelab compile queue'):
+                PACKAGE.configure_cross_host_build(args, {'BATON2_NATIVE_QUEUE_DRIVER': '/tmp/direct'},
+                                                   'Darwin', 'arm64')
+
+    def test_non_darwin_artifact_target_is_refused(self):
+        args = self.args(target_system='Linux', target_machine='x86_64')
+        with self.assertRaisesRegex(RuntimeError, 'requires a Darwin arm64 target'):
+            PACKAGE.artifact_target(args)
+
 
     def test_full_retained_c_hash_is_recorded_and_checked(self):
         namespace = self.args(full_c_sha256='f' * 64)
@@ -378,7 +510,7 @@ class ReceiverLayout(unittest.TestCase):
 
     def test_installed_check_refuses_missing_or_altered_sibling(self):
         prefix, manifest, records = self.staged()
-        full = prefix / 'bin/baton2'
+        full = prefix / 'bin/baton'
         full.unlink()
         with self.assertRaisesRegex(RuntimeError, 'full-cli binary is missing'):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
@@ -386,7 +518,7 @@ class ReceiverLayout(unittest.TestCase):
         alias = prefix / 'bin/baton-full'
         alias.write_bytes(b'changed\n')
         alias.chmod(0o755)
-        with self.assertRaisesRegex(RuntimeError, 'full-cli alias differs'):
+        with self.assertRaisesRegex(RuntimeError, 'full-cli alias bin/baton-full differs'):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
 
     def test_installed_check_refuses_missing_recovery_helper(self):
@@ -409,38 +541,40 @@ class ReceiverLayout(unittest.TestCase):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
 
 
-    def test_missing_full_routes_hides_both_router_paths_then_restores(self):
+    def test_public_full_cli_remains_available_through_compatibility_alias(self):
         prefix = self.home / 'route-prefix'
         binary = prefix / 'bin'
         binary.mkdir(parents=True)
-        (binary / 'baton').write_text(
-            '#!/bin/sh\nd=$(dirname "$0")\n'
-            '[ ! -e "$d/baton2" ] && [ ! -e "$d/baton-full" ] || exit 0\n'
-            'exit 78\n')
+        (binary / 'baton').write_text('#!/bin/sh\nexit 78\n')
         (binary / 'baton').chmod(0o755)
         (binary / 'baton2').write_text('router\n')
-        (binary / 'baton-full').write_text('general\n')
+        (binary / 'baton-full').write_text('#!/bin/sh\nexit 0\n')
+        (binary / 'baton-full').chmod(0o755)
         operation = VERIFY.probe_missing_full_routes(prefix)
-        self.assertEqual(operation['returncode'], 78)
+        self.assertEqual(operation['returncode'], 0)
+        self.assertEqual(operation['argv'][-1], '--help')
+        self.assertTrue((binary / 'baton').is_file())
         self.assertTrue((binary / 'baton2').is_file())
         self.assertTrue((binary / 'baton-full').is_file())
+        self.assertFalse((binary / '.baton.retained').exists())
         self.assertFalse((binary / '.baton2.retained').exists())
-        self.assertFalse((binary / '.baton-full.retained').exists())
 
-    def test_missing_full_routes_restores_both_paths_after_refusal(self):
+    def test_public_full_cli_restores_paths_after_compatibility_probe_refusal(self):
         prefix = self.home / 'route-refusal-prefix'
         binary = prefix / 'bin'
         binary.mkdir(parents=True)
         (binary / 'baton').write_text('#!/bin/sh\nexit 0\n')
         (binary / 'baton').chmod(0o755)
         (binary / 'baton2').write_text('router\n')
-        (binary / 'baton-full').write_text('general\n')
-        with self.assertRaisesRegex(RuntimeError, 'instead of 78'):
+        (binary / 'baton-full').write_text('#!/bin/sh\nexit 1\n')
+        (binary / 'baton-full').chmod(0o755)
+        with self.assertRaisesRegex(RuntimeError, 'instead of 0'):
             VERIFY.probe_missing_full_routes(prefix)
+        self.assertTrue((binary / 'baton').is_file())
         self.assertTrue((binary / 'baton2').is_file())
         self.assertTrue((binary / 'baton-full').is_file())
+        self.assertFalse((binary / '.baton.retained').exists())
         self.assertFalse((binary / '.baton2.retained').exists())
-        self.assertFalse((binary / '.baton-full.retained').exists())
 
 
 if __name__ == '__main__':

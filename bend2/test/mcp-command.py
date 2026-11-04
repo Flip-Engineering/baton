@@ -149,6 +149,15 @@ class McpCommand(unittest.TestCase):
         self.assertFalse(result.get('isError', False))
         self.assertNotIn('session', self.tools['baton2_action']['inputSchema']['properties'])
 
+    def test_initial_instructions_explain_completion_review_and_decision(self):
+        self.command()
+        self.assertIn('coordinator reviews the assignment and supplied evidence', self.instructions)
+        self.assertIn('completion-confirmed to end the Player', self.instructions)
+        self.assertIn('--next TEXT to confirm and dispatch its next assignment together',
+                      self.instructions)
+        self.assertIn('Guidance states what is missing and directs the remaining work.',
+                      self.instructions)
+
     def test_repl_guidance_matches_advertised_coordinator_capability(self):
         for available in (False, True):
             with self.subTest(repl=available):
@@ -166,6 +175,31 @@ class McpCommand(unittest.TestCase):
         self.command(context_eval=True)
         self.assertIn('baton2_context_eval', self.tools)
         self.assertNotIn('owner', self.tools['baton2_context_eval']['inputSchema']['properties'])
+
+    def test_repl_resolve_preserves_the_complete_citation(self):
+        citation = 'repl:repl:fixture:context@7'
+        result = self.command(stdout='{"reference":"repl-cell:fixture"}\n',
+            tool='baton2_repl', arguments={'operation': 'resolve', 'cell': citation},
+            session='recipient', repl=True,
+            expected_context=['repl', 'resolve', '--cell', citation])
+        self.assertFalse(result.get('isError', False))
+
+    def test_repl_context_projects_the_selected_character_range(self):
+        citation = 'repl:repl:fixture:context@7'
+        result = self.command(stdout='{"context":{"fragment":"λ"}}\n',
+            tool='baton2_repl', arguments={'operation': 'context', 'cell': citation,
+                                         'offset': 2048, 'length': 1024},
+            session='recipient', repl=True,
+            expected_context=['repl', 'context', '--cell', citation,
+                              '--offset', '2048', '--length', '1024'])
+        self.assertFalse(result.get('isError', False))
+
+    def test_repl_checkpoint_selects_the_checked_immutable_cell(self):
+        result = self.command(stdout='{"reference":"repl-cell:fixture"}\n',
+            tool='baton2_repl', arguments={'operation': 'checkpoint', 'cell': 'repl-cell:fixture'},
+            session='author', repl=True,
+            expected_context=['repl', 'checkpoint', '--cell', 'repl-cell:fixture'])
+        self.assertFalse(result.get('isError', False))
 
     def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
         first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000
@@ -421,6 +455,58 @@ class McpCommand(unittest.TestCase):
                               expected_context=native)
         self.assertEqual(result['content'], [{'type': 'text', 'text': output}])
         self.assertNotIn('isError', result)
+
+    def test_completion_confirmation_forwards_the_complete_next_assignment(self):
+        text = '\ufeffNext bounded assignment.\nλ🙂\n  Trailing spaces  '
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed', 'next': text},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--next', text])
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed',
+                                'request': 'exact request', 'next': text, 'id': 'exact decision'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'exact request', '--next', text, '--id', 'exact decision'])
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker'])
+        # The legacy body field names the retained request. With a next
+        # assignment it is the request selector, as in the batch tool.
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed',
+                                'body': 'explicit retained request', 'next': 'Next assignment.'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'explicit retained request', '--next', 'Next assignment.'])
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed',
+                                'body': 'ignored body', 'request': 'explicit request',
+                                'next': 'Next assignment.'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'explicit request', '--next', 'Next assignment.'])
+        output = json.dumps([{'status': 'completed', 'stdout': '[{"status":"admitted"}]'}])
+        self.command(stdout=output + '\n', tool='baton2_message_batch',
+                     arguments={'messages': [{'player': 'worker', 'kind': 'completion-confirmed',
+                                              'body': 'explicit retained request',
+                                              'next': 'Next assignment.'}]},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'explicit retained request', '--next', 'Next assignment.'])
+        self.command(stdout=output + '\n', tool='baton2_message_batch',
+                     arguments={'messages': [{'player': 'worker', 'kind': 'completion-confirmed',
+                                              'next': text},
+                                             {'player': 'other', 'kind': 'completion-confirmed'}]},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--next', text,
+                                       '--and', 'completion-confirmed', '--to', 'other'])
+        for tool in ('baton2_guide', 'baton2_message_batch'):
+            schema = self.tools[tool]['inputSchema']
+            item = schema if tool == 'baton2_guide' else schema['properties']['messages']['items']
+            self.assertEqual(item['properties']['next']['type'], 'string')
+            self.assertNotIn('next', item.get('required', []))
 
     def test_batch_message_tools_require_recorded_executable_support(self):
         with tempfile.TemporaryDirectory() as home:

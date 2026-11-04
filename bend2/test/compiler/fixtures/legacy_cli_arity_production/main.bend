@@ -15,7 +15,7 @@ def observe_context_runtime_cli(+flag: String, +db: String, +owner: String, +lau
 def recover_context_query_cli(+flag: String, +db: String, +owner: String, +query: String, +directory: String, +worktree: String, +bootstrap_file: String) -> IO(Unit):
   IO.pure(Unit,Unit{})
 
-def dispatch_cli(+directory: String, +lock: String, +args: List<String>, +keeper: Bool, +message: Bool) -> IO(Unit):
+def dispatch_cli(+directory: String, +lock: String, args: List<String>, +keeper: Bool, +message: Bool) -> IO(Unit):
   IO.pure(Unit,Unit{})
 
 def recover_direct_cli(+flag: String, +db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +harness: String, +directory: String, +native: String) -> IO(Unit):

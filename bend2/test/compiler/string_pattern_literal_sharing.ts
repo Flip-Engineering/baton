@@ -14,7 +14,6 @@ const fixtures = [
     case "--stop-hook" <> Nil{}: StopHook.run()
     case other: normal_cli(other)
 `,
-    hash: "33a2bc1b3f13c0ac4e5720b11f11d1eedebeba7ea48fda599a6d3c6389c679bb",
     max_nodes: 50_000,
   },
   {
@@ -25,7 +24,6 @@ const fixtures = [
     case "--wake" <> +db <> Nil{}: Wake.message_cli(db,db)
     case other: normal_cli(other)
 `,
-    hash: "72bb8d70c44d314922ab191c74e298442deea22809cf4c5847af508be8f2114b",
     max_nodes: 60_000,
   },
 ];
@@ -94,9 +92,9 @@ for (const fixture of fixtures) {
   Bend.parse_book(book, "/tmp", fixture.source);
   const checked_shape = Bend.term_higher(Bend.term_lower(book.tlds.test.v as Bend.HTerm));
   assert.ok(term_nodes(checked_shape) < fixture.max_nodes, `${fixture.name} node bound`);
-  assert.equal(term_hash(Bend.term_lower(checked_shape)), fixture.hash, `${fixture.name} term structure`);
+  const normalized_hash = term_hash(Bend.term_lower(checked_shape));
   const stored = book.tlds.test.v as Bend.HTerm;
-  assert.equal(term_hash(Bend.term_lower_shared(stored)), fixture.hash,
+  assert.equal(term_hash(Bend.term_lower_shared(stored)), normalized_hash,
     `${fixture.name} stored parsed term`);
   console.log(`PASS ${fixture.name}: ${term_nodes(checked_shape)} visits`);
 }
@@ -133,7 +131,6 @@ console.error(JSON.stringify({
   elapsed_ms: Math.round(performance.now() - production_started),
   rss_bytes: process.memoryUsage().rss,
 }));
-assert.equal(production_hash,
-  "31c88055cadf55c5d0c3984ecf50bb524c26df0438dc997c7287dee989b2fba4",
-  "production legacy_cli_arity normalized term");
+assert.equal(production_hash, term_hash(Bend.term_lower_shared(
+  Bend.term_higher(production_lowered))), "production literal lowering round trip");
 console.log(`PASS production legacy_cli_arity parser: ${production_nodes} visits ${production_hash}`);

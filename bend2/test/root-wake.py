@@ -58,6 +58,9 @@ class BusyObserver:
 spec = importlib.util.spec_from_file_location('receive_fixture', pathlib.Path(__file__).with_name('receive.py'))
 receive = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(receive)
+spec = importlib.util.spec_from_file_location('wake_wait', pathlib.Path(__file__).with_name('wake_wait.py'))
+wake_wait = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(wake_wait)
 
 # The fixture serves whichever adapter started it: Codex, OMP and Muse each name the
 # harness with a distinct argv shape. Every turn records its own invocation, accepts
@@ -134,6 +137,7 @@ class RootWake(unittest.TestCase):
 
     close_children = receive.Receive.close_children
     owned_processes = receive.Receive.owned_processes
+    process_names = receive.Receive.process_names
 
     @classmethod
     def setUpClass(cls):
@@ -148,6 +152,7 @@ class RootWake(unittest.TestCase):
         self.directory = pathlib.Path(self.temp.name)
         self.children = []
         self.controls = []
+        self.termination = wake_wait.on_termination(self.cleanup_fixture)
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
         self.environment = dict(os.environ, HOME=str(self.home))
@@ -192,8 +197,19 @@ class RootWake(unittest.TestCase):
         self.leaf_followup = self.write('leaf-followup.txt', 'Follow-up for the Claude player.\n')
 
     def tearDown(self):
-        self.close_children()
+        wake_wait.restore_termination(self.termination)
+        self.cleanup_fixture()
         self.temp.cleanup()
+
+    def cleanup_fixture(self):
+        """Idle database owners stop through the supported shutdown command; any
+        process still left is then stopped with the rest of the fixture."""
+        try:
+            stopped = wake_wait.stop_owners(EXE, self.db, self.owned_processes)
+            if stopped is not None and stopped.returncode:
+                print(f'instance shutdown for {self.db} failed: {stopped.stderr}', file=sys.stderr)
+        finally:
+            self.close_children()
 
     def write(self, name, text):
         path = self.directory / name
@@ -229,11 +245,11 @@ class RootWake(unittest.TestCase):
         (self.releases / f'{session}.{turn}.release').write_text('go\n')
 
     def eventually(self, observation, description):
-        while True:
-            result = observation()
-            if result:
-                return result
-            time.sleep(0.05)
+        return wake_wait.wait_for(observation, description, self.owned_processes, self.db,
+                                  self.diagnostics)
+
+    def diagnostics(self):
+        return wake_wait.evidence(self.directory, self.db, self.owned_processes(), self.rows)
 
     def busy_environment(self, name):
         marker = self.directory / (name + '.busy')
@@ -1236,7 +1252,9 @@ while True:
         self.assertEqual(first[0]['args'][:2], ['-c', 'forced_login_method="chatgpt"'])
         configs = [first[0]['args'][index + 1] for index, arg in enumerate(first[0]['args'])
                    if arg == '-c']
-        self.assertEqual(configs, ['forced_login_method="chatgpt"', 'model_reasoning_effort="low"'])
+        self.assertEqual(configs[:2], ['forced_login_method="chatgpt"', 'model_reasoning_effort="low"'])
+        self.assertEqual([config.partition('=')[0] for config in configs[2:]], ['hooks.Stop', 'hooks.PostToolUse'])
+        self.assertIn('--dangerously-bypass-hook-trust', first[0]['args'])
         self.assertEqual(first[0]['args'][first[0]['args'].index('--model') + 1], 'root')
         self.assertEqual(first[0]['native'], 'native-root')
 
@@ -1357,6 +1375,34 @@ while True:
         self.assertEqual({row['sender'] for row in inbox}, {'root'})
         self.assertEqual(len(inbox), 3)
         self.assert_consumed_once_and_by_its_recipient(['root', 'lead', 'child'])
+
+    def test_completion_request_replaces_a_held_codex_root_wake(self):
+        queued, _ = self.public_proxy()
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.recruit('child', 'root', 'omp')
+        first = self.coord_raw('report', 'held-child-report', 'child', 'Report while the root app is active.')
+        self.assertNotEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute("UPDATE codex_inbox_wakes SET cause='' WHERE session='root'")
+
+        body = 'Completion request: review the child work and confirm or guide the player. Evidence: full report body.'
+        admitted = self.coord_raw('message', 'child-completion-request', 'child', 'root',
+                                  'completion-request', body)
+        self.assertEqual(admitted.returncode, 0, admitted.stdout + admitted.stderr)
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 2, calls)
+        notice = calls[-1]['params']['input'][0]['text']
+        self.assertIn('child-completion-request', notice)
+        with sqlite3.connect(str(self.db)) as database:
+            self.assertIsNotNone(database.execute(
+                "SELECT 1 FROM codex_inbox_wakes WHERE session='root'").fetchone())
+            database.execute(
+                "INSERT INTO message_reads(attempt,message,recipient,native,identity) "
+                "VALUES('completion-review','child-completion-request','root','native-app-root','fixture')")
+            self.assertIsNone(database.execute(
+                "SELECT 1 FROM codex_inbox_wakes WHERE session='root'").fetchone())
 
     def test_receiver_requires_a_model_and_directory_and_records_the_supplied_directory(self):
         # An existing Codex session is registered for wake by recording the model,

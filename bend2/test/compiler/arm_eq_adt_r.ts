@@ -37,6 +37,7 @@ if (source === undefined) {
 }
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-arm-eq-adt-r-"));
 const testModule = path.join(tmp, "comp.arm_eq_adt_r_test.ts");
+fs.cpSync(path.dirname(source), tmp, { recursive: true });
 fs.copyFileSync(path.join(path.dirname(source), "bend.ts"),
   path.join(tmp, "bend.ts"));
 fs.copyFileSync(path.join(path.dirname(source), "base.bend"),

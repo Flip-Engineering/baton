@@ -22,7 +22,7 @@ import ./ui-view.bend as UiView
 import ./control.bend as Control
 import ./stop-hook.bend as StopHook
 import ./wake.bend as Wake
-import ../coordinator/root-channel.bend as RootChannel
+import ./root-channel.bend as RootChannel
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
 import ./accounts.bend as Accounts
@@ -55,6 +55,20 @@ def run(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
     +result : String <- IO.try(String, Store.apply(db,command))
     woken : Unit <- IO.try(Unit,Wake.drive_command(db,command,Done{result}))
+    print_result(result)
+
+# The first input forwarded to the successor wakes it after the succession
+# commits; a failed wake leaves the committed succession and the forwarded
+# input in place.
+def forwarded_wake_sql(+successor: String, +predecessor: String) -> String:
+  +prefix = C.forwarded_prefix(predecessor,successor)
+  "SELECT coalesce((SELECT m.id FROM messages m WHERE m.recipient=" ++ C.q(successor) ++ " AND m.kind='forwarded-input' AND substr(m.id,1,length(" ++ C.q(prefix) ++ "))=" ++ C.q(prefix) ++ " AND " ++ C.owed_sql("m") ++ " ORDER BY m.seq LIMIT 1),'');"
+
+def succeed(+db: String, +successor: String, +predecessor: String) -> IO(Unit):
+  do IO<Unit>:
+    +result : String <- IO.try(String,Store.apply(db,C.Succeed{successor,predecessor}))
+    first : String <- IO.try(String,DB.Sql.query(db,forwarded_wake_sql(successor,predecessor)))
+    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,Tx.trim_nl(first))
     print_result(result)
 
 def read_command(+db: String, +command: C.Command) -> IO(Unit):
@@ -241,6 +255,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.ProjectSessions{path}: Project.sessions(db,path)
     case C.Resume{session,lift_stop}: Project.resume(db,session,lift_stop)
     case C.ClearStop{session}: Stop.clear(db,session)
+    case C.Succeed{successor,predecessor}: succeed(db,successor,predecessor)
     case C.View{subject,reader,port}: UiView.run(db,subject,reader,port)
     case C.UiSubscribe{after_cursor,generation}:
       UISubscription.run(db,after_cursor,generation)
@@ -271,11 +286,13 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       ran : Unit <- Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
       collected : Unit <- StoragePolicy.collect_settled(db,session)
       IO.pure(Unit, collected)
-    case C.ObserveFile{id,+player,path}:
+    case C.ObserveFile{+id,+player,path}:
       do IO<Unit>:
-        event : String <- IO.try(String,T.Text.read(path))
+        +event : String <- IO.try(String,T.Text.read(path))
         +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
         run(db,C.Observe{id,player,event,False{},Tx.trim_nl(harness)})
+        observed : Unit <- Turn.refusal_observed(db,player,id,event)
+        IO.pure(Unit,Unit{})
     case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
     case C.NativeReplyFile{parent,id,path}:
       do IO<Unit>:
@@ -424,7 +441,7 @@ def normal_cli_codex_witness(args: List<String>, db: String, head: String) -> IO
     case native <> Nil{}: IO.try(Unit,CodexInbox.witness(db,native))
     case other: normal_cli_fallback(db,head,other)
 
-def normal_cli_codex(args: List<String>, db: String, head: String) -> IO(Unit):
+def normal_cli_codex(args: List<String>, db: String, +head: String) -> IO(Unit):
   match head:
     case "codex-inbox-session": normal_cli_codex_session(args,db,head)
     case "codex-inbox-follow": normal_cli_codex_follow(args,db,head)

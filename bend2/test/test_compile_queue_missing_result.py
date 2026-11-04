@@ -77,7 +77,7 @@ class QueueMissingResultTests(unittest.TestCase):
         import fcntl
         import time
         token = "cancel-token"
-        lock = (self.state / "heavy.lock").open("w")
+        lock = (self.state / "cc.lock").open("w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         compiler = self.root / "fake-holder"
@@ -113,7 +113,10 @@ class QueueMissingResultTests(unittest.TestCase):
         record = self.retained_result()
         self.assertIn("status=canceled", record)
         self.assertIn("exit=130", record)
-        self.assertIn("all requesters canceled", record)
+        # A cancellation that arrives before the supervisor publishes records "all
+        # requesters canceled"; one that arrives while the command starts or runs
+        # records "execution canceled". Both are the canceled outcome with exit 130.
+        self.assertTrue("all requesters canceled" in record or "execution canceled" in record, record)
 
 
 if __name__ == "__main__":

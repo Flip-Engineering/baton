@@ -1,11 +1,14 @@
 # Focused behavioral evidence for the pending-input candidate report and wake.
 # The entry drives the same Commands parsing and Stall handlers the coordinator
 # CLI dispatches, without compiling the coordinator Main.
+# The instance-owner modes let Store publish commits: the owner start re-runs
+# this executable with --instance-owner.
 
 import Base
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/stall.bend as Stall
 import ../src/host/sqlite.bend as DB
+import ../src/host/instance.bend as Custody
 import ../src/coordinator/delivery.bend as Delivery
 
 def init_db(+db: String) -> IO(Unit):
@@ -40,8 +43,10 @@ def evidence(args: List<&1, String>) -> IO(Unit):
       first : Unit <- parser_check("stall", C.parse(["stall"]))
       parser_check("stall-wake", C.parse(["stall-wake"]))
     case "--dispatch-message" <> db <> id <> Nil{}: dispatch_message(db,id)
+    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
+    case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case db <> mode <> Nil{}: dispatch(db,mode)
-    case _: IO.die(Unit, 2, "usage: stall-evidence DB init|report|wake | parse | --dispatch-message DB ID")
+    case _: IO.die(Unit, 2, "usage: stall-evidence DB init|report|wake | parse | --dispatch-message DB ID | --instance-owner DB | --instance-shutdown DB")
 
 def main() -> IO(Unit):
   do IO<Unit>:

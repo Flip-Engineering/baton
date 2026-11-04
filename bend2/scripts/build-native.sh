@@ -49,10 +49,16 @@ TMPDIR=$build_scratch
 TMP=$build_scratch
 TEMP=$build_scratch
 export TMPDIR TMP TEMP
-entry_path=$(readlink -f -- "$entry" 2>/dev/null || printf '%s' "$entry")
+entry_path=$(readlink -f -- "$entry" 2>/dev/null ||
+  (CDPATH= cd -- "$(dirname -- "$entry")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$entry")"))
 focused=${BATON2_RECEIVE_FOCUSED:-}
 router=${BATON2_NATIVE_RECEIVER_ROUTER:-}
 recovery=${BATON2_RECOVERY_HELPER:-}
+# Each receiver entry requires its native command router.
+case "$entry_path" in
+  "$root/bend2/src/coordinator/receive-focused.bend") focused=1 ;;
+  "$root/bend2/src/coordinator/receive-recovery-focused.bend") recovery=1 ;;
+esac
 compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
@@ -100,6 +106,7 @@ if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   generated=$(python3 "${BATON2_MAIN_C_VERIFIER:?}" select \
     --source "$root" --compiler "$compiler" \
+    --compiler-archive "${BATON2_SELECTED_COMPILER_ARCHIVE:?}" \
     --proof "${BATON2_MAIN_GENERATED_C_PROOF:?}" \
     --proof-sha256 "${BATON2_MAIN_GENERATED_C_PROOF_SHA256:?}" \
     --bound-root "${BATON2_MAIN_GENERATED_C_ROOT:?}" \
@@ -121,21 +128,27 @@ else
   sh "$root/bend2/scripts/bend-lineage-guard.sh" "$compiler"
   native_compile bend "$compiler" "$entry" -o "$output.c"
 fi
-if grep -Fq '#include "persistent-path.h"' "$output.c"; then
-  persistent_header_dir=$(dirname "$output.c")
-  persistent_header="$persistent_header_dir/persistent-path.h"
-  expected_persistent_header=$(readlink -f "$root/bend2/src/host/persistent-path.h")
-  if [ -e "$persistent_header" ] || [ -L "$persistent_header" ]; then
-    if [ "$(readlink -f "$persistent_header")" != "$expected_persistent_header" ]; then
-      echo "generated C input resolves persistent-path.h to an unexpected file: $persistent_header" >&2
-      exit 1
+for generated_include in persistent-path.h jsonl.c; do
+  if grep -Fq "#include \"$generated_include\"" "$output.c"; then
+    generated_include_path="$(dirname "$output.c")/$generated_include"
+    expected_generated_include=$(readlink -f "$root/bend2/src/host/$generated_include")
+    if [ -e "$generated_include_path" ] || [ -L "$generated_include_path" ]; then
+      if [ "$(readlink -f "$generated_include_path")" != "$expected_generated_include" ]; then
+        echo "generated C input resolves $generated_include to an unexpected file: $generated_include_path" >&2
+        exit 1
+      fi
+    else
+      ln -s "$expected_generated_include" "$generated_include_path"
     fi
-  else
-    ln -s "$expected_persistent_header" "$persistent_header"
   fi
+done
+# An entry that reaches the HTTP reader emits the libcurl include.
+extra_libs=
+if grep -q '^#include <curl/curl.h>' "$output.c"; then
+  extra_libs=-lcurl
 fi
 build_native_shards() {
-  native_link_flags="-O1 -pthread -lsqlite3 -lm"
+  native_link_flags="-O1 -pthread -lsqlite3 -lm${extra_libs:+ $extra_libs}"
   if [ -n "$1" ]; then
     native_link_flags="$native_link_flags $1"
   fi
@@ -156,6 +169,25 @@ build_native_shards() {
   fi
   native_compile cc python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
 }
+# A test fixture runs its generated main, so its shards link no native entry.
+# The arguments are compile flags that every translation unit needs.
+build_fixture_shards() {
+  case "$output" in
+    /*) native_binary=$output ;;
+    *) native_binary="$root/$output" ;;
+  esac
+  set -- --source "$output.c" \
+    --outdir "$native_binary.parallel" \
+    --binary "$native_binary" \
+    --shards 4 --jobs 4 --cc "${CC:-clang}" \
+    --cflag=-O1 --cflag=-pthread --cflag=-I"$root/bend2/src/host" "$@" \
+    --link-flags="-O1 -pthread -lsqlite3 -lm${extra_libs:+ $extra_libs}" \
+    --max-aggregate-rss-mb 0 --build-only
+  if [ -n "${BATON2_CCACHE:-}" ]; then
+    set -- "$@" --ccache "$BATON2_CCACHE"
+  fi
+  native_compile cc python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
+}
 if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   if [ "$router" = 1 ]; then
     build_native_shards -DBATON2_NATIVE_RECEIVER_ROUTER
@@ -167,16 +199,22 @@ elif [ "$focused" = 1 ]; then
 elif [ "$recovery" = 1 ]; then
   build_native_shards -DBATON2_RECOVERY_HELPER
 else
-  extra_libs=
-  case "$entry_path" in
-    */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
-    */bend2/harness/usage-read.bend) extra_libs=-lcurl ;;
-  esac
   storage_test_flag=
   case "$entry_path" in
     */bend2/tests/storage.bend) storage_test_flag="-DBATON_STORAGE_TEST_PROC" ;;
-    */bend2/tests/storage-cargo.bend) storage_test_flag=-DBATON_STORAGE_CARGO_TEST ;;
+    */bend2/tests/storage-cargo.bend) storage_test_flag="-DBATON_STORAGE_CARGO_TEST -DBATON_STORAGE_TEST_PROC" ;;
   esac
-  native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" $storage_test_flag "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+  case "$entry_path" in
+    "$root"/bend2/test/*.bend|"$root"/bend2/tests/*.bend)
+      set --
+      for flag in $storage_test_flag; do
+        set -- "$@" "--cflag=$flag"
+      done
+      build_fixture_shards "$@"
+      ;;
+    *)
+      native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" $storage_test_flag "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+      ;;
+  esac
 fi
 printf '%s\n' "$output"

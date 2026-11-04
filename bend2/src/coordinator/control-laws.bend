@@ -588,7 +588,7 @@ law a_refused_configured_identity_names_the_recorded_model:
   for +model: String
   for +repository: String
   for out: String
-  {Control.identity_check_refusal(model,repository,G.RRun{G.SExit{1},out}) == IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.") : IO(Unit)}
+  {Control.identity_check_refusal(model,repository,G.RRun{G.SExit{1},out}) == IO.die(Unit,2,"The configured series identity check failed for recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ ": helper exited 1: " ++ Tx.trim_nl(out) ++ ". Correct the model mapping or repository's App installation, then retry.") : IO(Unit)}
 
 def a_refused_configured_identity_names_the_recorded_model(model,repository,out):
   {==}
@@ -597,7 +597,7 @@ law a_failed_configured_identity_spawn_refuses_the_configuration:
   for +model: String
   for +repository: String
   for detail: String
-  {Control.identity_check_refusal(model,repository,G.RSpawn{detail}) == IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.") : IO(Unit)}
+  {Control.identity_check_refusal(model,repository,G.RSpawn{detail}) == IO.die(Unit,2,"The configured series identity check failed for recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ ": helper could not run: " ++ detail ++ ". Correct the helper installation or repository's App installation, then retry.") : IO(Unit)}
 
 def a_failed_configured_identity_spawn_refuses_the_configuration(model,repository,detail):
   {==}

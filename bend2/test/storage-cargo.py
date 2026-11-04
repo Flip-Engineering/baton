@@ -38,6 +38,8 @@ class CargoRelease(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='cargo-release-', dir=ROOT / '.scratch')
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
+        self.proc = self.root / 'proc'
+        self.proc.mkdir()
         self.source = self.root / 'source'
         (self.source / 'src').mkdir(parents=True)
         (self.source / 'Cargo.toml').write_text(
@@ -60,7 +62,8 @@ fn main() {
         self.environment = dict(os.environ, CARGO_TARGET_DIR=str(self.target),
                                 CARGO_HOME=str(self.root / 'cargo-home'),
                                 CARGO_NET_OFFLINE='true', RUSTC=str(RUSTC),
-                                TMPDIR=str(self.root))
+                                TMPDIR=str(self.root),
+                                BATON_STORAGE_TEST_PROC=str(self.proc))
         self.environment.pop('CARGO_BUILD_BUILD_DIR', None)
         self.db = self.root / 'state.sqlite'
         with sqlite3.connect(self.db) as db:
@@ -624,6 +627,19 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         self.assertIn('error=95', answer, answer)
         self.assertEqual((candidate / 'keep' / 'file.txt').read_text(), 'keep\n')
 
+    @unittest.skipUnless(os.geteuid() == 0, 'foreign uid fixture requires ownership change')
+    def test_foreign_owned_descendant_preserves_the_candidate(self):
+        parent = self.root / 'parent'
+        candidate = parent / 'candidate'
+        child = candidate / 'nested' / 'tracked.txt'
+        child.parent.mkdir(parents=True)
+        child.write_text('owned by another uid\n')
+        os.chown(child, 65534, 65534)
+        answer, stderr = self.native_remove(candidate, parent)
+        self.assertTrue(answer.startswith(('refused', 'error:')), answer)
+        self.assertIn('preserves uid boundary', stderr)
+        self.assertEqual(child.read_text(), 'owned by another uid\n')
+
     def test_unknown_child_mount_identity_preserves_the_subtree(self):
         mounted = self.target / 'debug' / 'mount-unknown'
         mounted.mkdir()
@@ -638,6 +654,277 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         self.assertEqual((mounted / 'keep').read_text(), 'retained subtree\n')
         self.assertTrue(self.target.exists())
         self.build()
+
+    def staging_clone(self):
+        # A bare repository is the authenticated remote. The upstream checkout
+        # and the candidate clone both record it as origin, so the identity and
+        # reachability checks run without network access.
+        remote = self.root / 'remote.git'
+        subprocess.run(['git', 'init', '-q', '--bare', str(remote)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(remote), 'symbolic-ref', 'HEAD', 'refs/heads/main'],
+                       check=True, capture_output=True)
+        upstream = self.root / 'upstream'
+        subprocess.run(['git', 'clone', '-q', str(remote), str(upstream)],
+                       check=True, capture_output=True)
+        def git(*args, cwd=None):
+            return subprocess.run(['git', '-C', str(cwd or upstream), *args],
+                                  check=True, capture_output=True, text=True)
+        git('config', 'user.email', 'fixture@example.invalid')
+        git('config', 'user.name', 'Fixture')
+        (upstream / 'file.txt').write_text('published\n')
+        (upstream / '.gitignore').write_text('*.env\n')
+        git('add', '.')
+        git('commit', '-qm', 'published')
+        git('push', '-q', 'origin', 'HEAD:refs/heads/main')
+        staging = self.root / 'staging'
+        staging.mkdir()
+        clone = staging / 'root-source'
+        subprocess.run(['git', 'clone', '-q', str(remote), str(clone)],
+                       check=True, capture_output=True)
+        git('config', 'user.email', 'fixture@example.invalid', cwd=clone)
+        git('config', 'user.name', 'Fixture', cwd=clone)
+        return upstream, staging, clone, remote
+
+    def staging_apply(self, staging, source=None):
+        roots = 'staging-source-released=' + str(staging) + (('|' + str(source)) if source else '')
+        env = dict(self.environment, BATON_STORAGE_ROOTS=roots)
+        return self.call('apply', self.db, 'owner', environment=env)
+
+    def test_staging_source_requires_an_explicit_release_marker(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        env = dict(self.environment,
+                   BATON_STORAGE_ROOTS='staging-source=' + str(staging) + '|' + str(upstream))
+        answer = self.call('apply', self.db, 'owner', environment=env)
+        self.assertIn('staging-source-release-required', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_clone_is_collected_when_published_and_clean(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('staging-source-released', answer)
+        self.assertFalse(clone.exists())
+        self.assertTrue(upstream.exists())
+        self.assertTrue(remote.exists())
+
+    def test_staging_source_dirty_clone_is_preserved(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        (clone / 'local-change.txt').write_text('uncommitted\n')
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('worktree-dirty', answer)
+        self.assertTrue(clone.exists())
+        self.assertEqual((clone / 'local-change.txt').read_text(), 'uncommitted\n')
+
+    def test_staging_source_unpublished_commit_is_preserved(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        subprocess.run(['git', '-C', str(clone), 'commit', '--allow-empty', '-qm', 'local'],
+                       check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_reflog_only_commit_is_preserved(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        (clone / 'local-only.txt').write_text('unique commit retained by reflog\n')
+        subprocess.run(['git', '-C', str(clone), 'add', 'local-only.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'commit', '-qm', 'reflog-only work'],
+                       check=True, capture_output=True)
+        unique = subprocess.check_output(['git', '-C', str(clone), 'rev-parse', 'HEAD'], text=True).strip()
+        published = subprocess.check_output(['git', '-C', str(clone), 'rev-parse', 'HEAD^'], text=True).strip()
+        subprocess.run(['git', '-C', str(clone), 'reset', '--hard', 'HEAD^'],
+                       check=True, capture_output=True)
+
+        self.assertEqual(subprocess.check_output(
+            ['git', '-C', str(clone), 'status', '--porcelain'], text=True), '')
+        self.assertIn(unique, subprocess.check_output(
+            ['git', '-C', str(clone), 'reflog', '--format=%H'], text=True).splitlines())
+        self.assertEqual(subprocess.check_output(
+            ['git', '-C', str(clone), 'rev-parse', 'HEAD'], text=True).strip(), published)
+        advertised = subprocess.check_output(
+            ['git', '-C', str(upstream), 'ls-remote', 'origin'], text=True)
+        advertised_oids = {line.split('\t', 1)[0] for line in advertised.splitlines()}
+        local_oids = set(subprocess.check_output(
+            ['git', '-C', str(clone), 'for-each-ref', '--format=%(objectname)'],
+            text=True).splitlines())
+        self.assertTrue(local_oids)
+        self.assertTrue(local_oids <= advertised_oids)
+        self.assertIn(published, advertised_oids)
+        fsck = subprocess.check_output(
+            ['git', '-C', str(clone), 'fsck', '--no-progress', '--no-reflogs', '--unreachable'],
+            text=True)
+        self.assertIn('unreachable commit ' + unique, fsck)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_unreachable_object_is_preserved(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        dangling = subprocess.run(['git', '-C', str(clone), 'hash-object', '-w', '--stdin'],
+                                  input=b'unreachable unique development data\n',
+                                  check=True, capture_output=True, text=False).stdout.decode().strip()
+        fsck = subprocess.check_output(
+            ['git', '-C', str(clone), 'fsck', '--no-progress', '--no-reflogs', '--unreachable'],
+            text=True)
+        self.assertIn('unreachable blob ' + dangling, fsck)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_reflog_of_published_history_is_collectable(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        (upstream / 'next.txt').write_text('published follow-up\n')
+        subprocess.run(['git', '-C', str(upstream), 'add', 'next.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'commit', '-qm', 'published follow-up'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'push', '-q', 'origin', 'HEAD:refs/heads/main'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'fetch', '-q', 'origin'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'reset', '--hard', 'origin/main'],
+                       check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('staging-source-released', answer)
+        self.assertFalse(clone.exists())
+
+    def test_staging_source_local_tip_ancestor_of_new_remote_tip_is_collectable(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        old = subprocess.check_output(['git', '-C', str(clone), 'rev-parse', 'HEAD'], text=True).strip()
+        (upstream / 'next.txt').write_text('published follow-up\n')
+        subprocess.run(['git', '-C', str(upstream), 'add', 'next.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'commit', '-qm', 'published follow-up'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'push', '-q', 'origin', 'HEAD:refs/heads/main'],
+                       check=True, capture_output=True)
+        newest = subprocess.check_output(['git', '-C', str(remote), 'rev-parse', 'refs/heads/main'],
+                                         text=True).strip()
+        self.assertNotEqual(old, newest)
+        self.assertEqual(subprocess.check_output(
+            ['git', '-C', str(clone), 'rev-parse', 'HEAD'], text=True).strip(), old)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('staging-source-released', answer)
+        self.assertFalse(clone.exists())
+
+    def test_staging_source_other_upstream_cannot_publish_candidate_ref(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        other = self.root / 'other.git'
+        subprocess.run(['git', 'clone', '-q', '--bare', str(remote), str(other)],
+                       check=True, capture_output=True)
+        other_work = self.root / 'other-work'
+        subprocess.run(['git', 'clone', '-q', str(other), str(other_work)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(other_work), 'config', 'user.email', 'fixture@example.invalid'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(other_work), 'config', 'user.name', 'Fixture'],
+                       check=True, capture_output=True)
+        (other_work / 'other-only.txt').write_text('published to the other remote only\n')
+        subprocess.run(['git', '-C', str(other_work), 'add', 'other-only.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(other_work), 'commit', '-qm', 'other remote only'],
+                       check=True, capture_output=True)
+        unique = subprocess.check_output(
+            ['git', '-C', str(other_work), 'rev-parse', 'HEAD'], text=True).strip()
+        subprocess.run(['git', '-C', str(other_work), 'push', '-q', 'origin', 'HEAD:refs/heads/other-only'],
+                       check=True, capture_output=True)
+
+        subprocess.run(['git', '-C', str(upstream), 'remote', 'add', 'other', str(other)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'fetch', '-q', 'other'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'branch', '--set-upstream-to=other/main', 'main'],
+                       check=True, capture_output=True)
+        default_listing = subprocess.check_output(
+            ['git', '-C', str(upstream), 'ls-remote'], text=True)
+        authenticated_listing = subprocess.check_output(
+            ['git', '-C', str(upstream), 'ls-remote', 'origin'], text=True)
+        self.assertIn(unique, default_listing)
+        self.assertNotIn(unique, authenticated_listing)
+
+        subprocess.run(['git', '-C', str(clone), 'remote', 'add', 'other', str(other)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'fetch', '-q', 'other', 'other-only'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'branch', 'other-only', 'FETCH_HEAD'],
+                       check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_same_name_diverged_ref_is_preserved(self):
+        # The remote feature branch stays at the published commit while the
+        # local branch of the same name carries a unique commit. HEAD remains
+        # on the published main, so only the ref object proves the divergence.
+        upstream, staging, clone, remote = self.staging_clone()
+        def git(*args, cwd):
+            return subprocess.run(['git', '-C', str(cwd), *args],
+                                  check=True, capture_output=True, text=True)
+        git('checkout', '-q', '-b', 'feature', cwd=upstream)
+        git('push', '-q', 'origin', 'feature', cwd=upstream)
+        git('checkout', '-q', 'main', cwd=upstream)
+        git('fetch', '-q', 'origin', cwd=clone)
+        git('checkout', '-q', '-b', 'feature', 'origin/feature', cwd=clone)
+        git('commit', '--allow-empty', '-qm', 'local-diverged', cwd=clone)
+        git('checkout', '-q', 'main', cwd=clone)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+        self.assertTrue((clone / '.git' / 'refs' / 'heads' / 'feature').is_file())
+
+    def test_staging_source_ignored_local_file_is_preserved(self):
+        # Ignored files are omitted by a plain git status. A staging tree must
+        # not be removed while one exists, because it is unknown local data.
+        upstream, staging, clone, remote = self.staging_clone()
+        (clone / 'local.env').write_text('SECRET=unique\n')
+        status = subprocess.check_output(
+            ['git', '-C', str(clone), 'status', '--porcelain'], text=True)
+        self.assertEqual(status, '')
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('worktree-dirty', answer)
+        self.assertTrue(clone.exists())
+        self.assertEqual((clone / 'local.env').read_text(), 'SECRET=unique\n')
+
+    def test_staging_source_other_ref_namespace_is_preserved(self):
+        # A note lives in refs/notes/commits and is unique local data even
+        # though every branch and HEAD point at advertised remote objects.
+        upstream, staging, clone, remote = self.staging_clone()
+        subprocess.run(['git', '-C', str(clone), 'notes', 'add', '-m', 'audit', 'HEAD'],
+                       check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_remote_identity_mismatch_is_preserved(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        other = self.root / 'other.git'
+        subprocess.run(['git', 'init', '-q', '--bare', str(other)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'remote', 'set-url', 'origin', str(other)],
+                       check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('remote-identity-mismatch', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_linked_worktree_registration_is_preserved(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        linked = staging / 'linked-checkout'
+        subprocess.run(['git', '-C', str(clone), 'worktree', 'add', '-q', str(linked)],
+                       check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('worktree-dependency', answer)
+        self.assertTrue(clone.exists())
+        self.assertTrue(linked.exists())
+        self.assertTrue((linked / '.git').is_file())
+
+    def test_staging_source_root_without_authenticated_repo_is_refused(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        env = dict(self.environment, BATON_STORAGE_ROOTS='staging-source=' + str(staging))
+        run = subprocess.run([str(BINARY), 'apply', str(self.db), 'owner'],
+                             cwd=ROOT, env=env, text=True, capture_output=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn('no participating writer covers root', run.stderr)
+        self.assertTrue(clone.exists())
 
 if __name__ == '__main__':
     unittest.main()

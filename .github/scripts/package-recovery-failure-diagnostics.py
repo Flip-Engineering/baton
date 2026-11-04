@@ -39,6 +39,8 @@ QUEUE_FILES = frozenset(
     {
         "queue-config.json",
         "compile-queue.lock",
+        "compile-queue-bend.lock",
+        "evidence/compile-queue/cancel-all.json",
         "request.json",
         "receipt",
         "client.stdout",

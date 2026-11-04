@@ -164,10 +164,10 @@ class QueueOpaqueInputTests(unittest.TestCase):
                 self.assertNotEqual(before, changed)
                 before = changed
 
-    def waiter_rss_under_heavy_lock(self, payload):
+    def waiter_rss_under_cc_lock(self, payload):
         (self.root / "output").unlink(missing_ok=True)
-        # The shared heavy lock holds compilation while the queue records waiter allocation.
-        lock = (self.state / "heavy.lock").open("w")
+        # The cc admission lock holds a queued CC request while the test samples allocation.
+        lock = (self.state / "cc.lock").open("w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         process = subprocess.Popen(self.command(self.candidate, action="run", payload=payload),
@@ -189,23 +189,23 @@ class QueueOpaqueInputTests(unittest.TestCase):
                     if len(samples) == 3:
                         return min(samples)
                 time.sleep(0.1)
-            self.fail("queue did not wait on the shared heavy lock")
+            self.fail("queue did not wait on the CC admission lock")
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
             stdout, stderr = process.communicate(timeout=60)
             self.assertEqual(process.returncode, 0, stdout + stderr)
 
     @unittest.skipUnless(pathlib.Path("/proc/self/status").exists(), "Linux /proc is required")
-    def test_large_opaque_payload_waiter_allocation_under_heavy_lock(self):
-        # These are allocation observations while the shared compile lock is held.
+    def test_large_opaque_payload_waiter_allocation_under_cc_lock(self):
+        # These are allocation observations while the CC admission lock is held.
         small = self.root / "small.bin"
         large = self.root / "large.bin"
         small.write_bytes(b"\x00\xff\xfe\n" * 1024)
         with large.open("wb") as stream:
             for _ in range(64):
                 stream.write(b"\x00\xff\xfe\n" * (1024 * 256))
-        small_rss = self.waiter_rss_under_heavy_lock(small)
-        large_rss = self.waiter_rss_under_heavy_lock(large)
+        small_rss = self.waiter_rss_under_cc_lock(small)
+        large_rss = self.waiter_rss_under_cc_lock(large)
         observation = {"small_bytes": small.stat().st_size, "large_bytes": large.stat().st_size,
                        "small_waiter_rss_kib": small_rss, "large_waiter_rss_kib": large_rss,
                        "rss_growth_kib": large_rss - small_rss}

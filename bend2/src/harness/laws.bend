@@ -47,14 +47,15 @@ def m2_omp_fresh_start_is_the_spawn_attempt(cmd, model, effort, cwd, sessions, s
   {==}
 
 law m2_claude_start_is_the_spawn_attempt:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
-  {Claude.start_player(cmd, model, effort, cwd, stderr) == P.ProcessChild.spawn(P.argv(Claude.arguments(cmd,model,effort)),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Claude.start_player(entries, cmd, model, effort, cwd, stderr) == P.ProcessChild.spawn(P.argv(Claude.with_environment(entries,Claude.arguments(cmd,model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_claude_start_is_the_spawn_attempt(cmd, model, effort, cwd, stderr):
+def m2_claude_start_is_the_spawn_attempt(entries, cmd, model, effort, cwd, stderr):
   {==}
 
 law m2_agy_start_is_the_spawn_attempt:
@@ -153,15 +154,16 @@ def m2_claude_argv_starts_a_fresh_conversation(cmd, model, effort, session):
   {==}
 
 law m5_claude_resume_carries_the_accepted_session:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Claude.resume_player(cmd, model, effort, cwd, stderr, session) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Claude.resume_player(entries, cmd, model, effort, cwd, stderr, session) == P.ProcessChild.spawn(P.argv(Claude.with_environment(entries,List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session]))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m5_claude_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session):
+def m5_claude_resume_carries_the_accepted_session(entries, cmd, model, effort, cwd, stderr, session):
   {==}
 
 law m5_agy_argv_carries_the_accepted_conversation:
@@ -217,7 +219,7 @@ def m5_muse_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr,
 law m11_codex_arguments_carry_the_declared_values:
   for +model: String
   for +effort: String
-  {Codex.arguments(model, effort) == ["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort),"--dangerously-bypass-approvals-and-sandbox","-"] : List<String>}
+  {Codex.arguments(model, effort) == List.append(&1,String,["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort)],List.append(&1,String,Codex.hook_configs(),["--dangerously-bypass-hook-trust","--dangerously-bypass-approvals-and-sandbox","-"])) : List<String>}
 
 def m11_codex_arguments_carry_the_declared_values(model, effort):
   {==}
@@ -230,6 +232,16 @@ law m11_omp_arguments_carry_the_declared_values:
   {Omp.arguments(cmd, model, effort, sessions) == [cmd,"--mode","rpc","--model",model,"--thinking",effort,"--approval-mode","yolo","--session-dir",sessions] : List<String>}
 
 def m11_omp_arguments_carry_the_declared_values(cmd, model, effort, sessions):
+  {==}
+
+law m11_omp_completion_arguments_add_the_gate_tool:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +sessions: String
+  {Omp.completion_arguments(Nil{},cmd,model,effort,sessions,"",True{},"/libexec/baton2/omp-completion.mjs") == List.append(&1,String,Omp.arguments(cmd,model,effort,sessions),["--extension","/libexec/baton2/omp-completion.mjs"]) : List<String>}
+
+def m11_omp_completion_arguments_add_the_gate_tool(cmd,model,effort,sessions):
   {==}
 
 law m11_claude_user_frame_carries_the_text_as_a_literal:

@@ -32,7 +32,14 @@ are:
 ```sh
 BEND=/absolute/path/to/bend sh bend2/scripts/build-native.sh
 BEND=/absolute/path/to/bend sh bend2/scripts/check-native.sh
+BEND=/absolute/path/to/bend sh bend2/scripts/check-entry.sh bend2/test/focused-codex-inbox-entry.bend
 ```
+
+`check-entry.sh` checks one Bend entry through the repository queue adapter.
+`BEND` selects the compiler distribution; the shared queue client and state
+come from `queue-entry.sh`. An explicit queue configuration preserves an
+intentional historical toolchain selection. Check-only requests use the
+`check` kind and retain their exit status and streams without a C artifact.
 
 `check-native.sh` runs the native tests, host-effect fixtures and Node context/UI suites. Retain the
 commands, source revision, toolchain identity, complete outputs and actual exit

@@ -321,9 +321,9 @@ export type Ctx = PMap<Ann>;
 export type PVar  = { $: "PVar"; k: Name; i: number; q: Quant; s?: Span };
 export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span; lit?: string };
 export type Patt  = PVar | PCtr;
-export type Case  = { p: Patt[]; f: Body };
+export type Case  = { p: Patt[]; f: Body; g?: [PVar, PCtr][] };
 export type Rows  = Array<Case>;
-export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span };
+export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span; done?: Name[] };
 export type Local = { $: "Local"; k: Patt[]; q: Quant; v: LTerm[]; f: Body };
 export type Reply = { $: "Reply"; x: LTerm; s?: Span };
 export type Body  = Match | Local | Reply
@@ -721,133 +721,208 @@ export function term_higher(tm: LTerm, env: Env = null): HTerm {
   return term_higher_inner(tm, env, { spans: new WeakMap(), ids: new WeakMap(), next: 0 });
 }
 
-function term_higher_inner(tm: LTerm, env: Env, cache: ClosedCtrCache): HTerm {
-  switch (tm.$) {
-    case "Var": {
-      if (tm.i < 0) {
-        return tm;
-      }
-      const v = list_get(env, tm.i);
-      if (v === null) {
-        return tm.v ?? Ref(tm.k, tm.s);
-      } else if (typeof v === "function") {
-        return v(tm.s);
-      } else {
-        return v.s !== undefined || tm.s === undefined || (v.$ === "Var" && v.i < 0) ? v : { ...v, s: tm.s };
-      }
+// The last count results, removed from the stack, as the children array of a
+// Let, ADT or Ctr. A node with a fixed number of children pops them one by one.
+function higher_kids(results: HTerm[], count: number): HTerm[] {
+  const base = results.length - count;
+  const kids = results.slice(base);
+  results.length = base;
+  return kids;
+}
+
+function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm {
+  // A curried binder body is a lambda: build it without traversal stacks.
+  if (term.$ === "Lam") {
+    const b = term;
+    return Lam(b.k, b.i, (x: HTerm) =>
+      term_higher_inner(b.f, list_set(env, b.i, x), cache), b.s, b.q);
+  }
+  // Binder callbacks retain the constructor cache and start a fresh traversal.
+  type Task =
+    | { visit: LTerm, env: Env }
+    | { build: LTerm, env: Env, count: number }
+    | { sub: Extract<LTerm, { $: "Sub" }>, env: Env };
+  const results: HTerm[] = [];
+  const tasks: Task[] = [{ visit: term, env }];
+  while (tasks.length > 0) {
+    const task = tasks.pop() as Task;
+    if ("sub" in task) {
+      const v = results.pop() as HTerm;
+      tasks.push({ visit: task.sub.f, env: list_set(task.env, task.sub.i, v) });
+      continue;
     }
-    case "Ref": {
-      if (tm.k.lastIndexOf(".") === 0) {
-        const op = tm.s === undefined ? tm.k : tm.s.src.slice(tm.s.beg, tm.s.end);
-        throw Err(book_nil(), ctx_nil(), "a type for this operator (write (a " + op + " b : Nat))", undefined, tm.s, undefined,
-          "Note: we broke this after launch, sorry. Until 2.0.16 a bare operator meant Nat.\n"
-          + "That was a bug: operators demand annotation. Wrap the expression and it'll work again.");
-      }
-      return Ref(tm.k, tm.s, tm.b);
-    }
-    case "Sub": {
-      const x = tm.v;
-      const v = x.$ === "PVar" || x.$ === "PCtr"
-        ? (s?: Span) => term_higher_inner(patt_term(x, s), env, cache)
-        : term_higher_inner(x, env, cache);
-      return term_higher_inner(tm.f, list_set(env, tm.i, v), cache);
-    }
-    case "Let": {
-      const b = tm;
-      const v = b.v.map((x) => term_higher_inner(x, env, cache));
-      return Let(b.k, b.i, v, (xs: HTerm[]) => {
-        let e = env;
-        for (let j = 0; j < xs.length; j++) {
-          e = list_set(e, b.i[j], xs[j]);
+    if ("build" in task) {
+      const tm = task.build;
+      switch (tm.$) {
+        case "Let": {
+          const b = tm;
+          results.push(Let(b.k, b.i, higher_kids(results, task.count), (xs: HTerm[]) => {
+            let e = task.env;
+            for (let j = 0; j < xs.length; j++) {
+              e = list_set(e, b.i[j], xs[j]);
+            }
+            return term_higher_inner(b.f, e, cache);
+          }, b.s, b.q));
+          break;
         }
-        return term_higher_inner(b.f, e, cache);
-      }, b.s, b.q);
-    }
-    case "All": {
-      const b = tm;
-      const A = term_higher_inner(b.A, env, cache);
-      return All(b.q, b.k, b.i, A, (x: HTerm) => {
-        return term_higher_inner(b.B, list_set(env, b.i, x), cache);
-      }, b.s);
-    }
-    case "Lam": {
-      const b = tm;
-      return Lam(b.k, b.i, (x: HTerm) => {
-        return term_higher_inner(b.f, list_set(env, b.i, x), cache);
-      }, b.s, b.q);
-    }
-    case "Typ": {
-      return Typ(term_higher_inner(tm.g, env, cache), tm.s);
-    }
-    case "Qnt":
-    case "Qua": {
-      return tm;
-    }
-    case "Min": {
-      return Min(term_higher_inner(tm.a, env, cache), term_higher_inner(tm.b, env, cache), tm.s);
-    }
-    case "App": {
-      const f = term_higher_inner(tm.f, env, cache);
-      const x = term_higher_inner(tm.x, env, cache);
-      if (f.$ === "Lam") {
-        return f.f(x);
-      }
-      return App(f, x, tm.s);
-    }
-    case "ADT": {
-      return ADT(tm.k, tm.x.map((x) => term_higher_inner(x, env, cache)), tm.s, tm.r);
-    }
-    case "Ctr": {
-      const xs = tm.x.map((x) => term_higher_inner(x, env, cache));
-      // String patterns expand to closed constructor chains. Pattern
-      // substitution can copy the same chain into each fallback branch;
-      // intern those closed subtrees while preserving their source spans.
-      if (tm.s !== undefined && STRING_LITERAL_CTRS.has(tm.k)) {
-        const child_ids = xs.map((x) => cache.ids.get(x));
-        if (child_ids.every((id) => id !== undefined)) {
-          let table = cache.spans.get(tm.s);
-          if (table === undefined) {
-            table = new Map();
-            cache.spans.set(tm.s, table);
-          }
-          const key = `${tm.k}|${tm.s.beg}:${tm.s.end}|${child_ids.join(",")}`;
-          const entry = table.get(key);
-          const prior = entry?.value.deref();
-          if (prior !== undefined) return prior;
-          const out = Ctr(tm.k, xs, tm.s);
-          const id = entry?.id ?? cache.next++;
-          cache.ids.set(out, id);
-          table.set(key, { id, value: new WeakRef(out) });
-          return out;
+        case "All": {
+          const b = tm;
+          const A = results.pop() as HTerm;
+          results.push(All(b.q, b.k, b.i, A, (x: HTerm) =>
+            term_higher_inner(b.B, list_set(task.env, b.i, x), cache), b.s));
+          break;
         }
+        case "Typ": {
+          const g = results.pop() as HTerm;
+          results.push(Typ(g, tm.s));
+          break;
+        }
+        case "Min": {
+          const b = results.pop() as HTerm;
+          const a = results.pop() as HTerm;
+          results.push(Min(a, b, tm.s));
+          break;
+        }
+        case "App": {
+          const x = results.pop() as HTerm;
+          const f = results.pop() as HTerm;
+          results.push(f.$ === "Lam" ? f.f(x) : App(f, x, tm.s));
+          break;
+        }
+        case "ADT": results.push(ADT(tm.k, higher_kids(results, task.count), tm.s, tm.r)); break;
+        case "Ctr": results.push(term_higher_ctr(tm, higher_kids(results, task.count), cache)); break;
+        case "Mat": {
+          const m = results.pop() as HTerm;
+          const h = results.pop() as HTerm;
+          results.push(Mat(tm.k, h, m, tm.s));
+          break;
+        }
+        case "Eql": {
+          const T = results.pop() as HTerm;
+          const b = results.pop() as HTerm;
+          const a = results.pop() as HTerm;
+          results.push(Eql(a, b, T, tm.s));
+          break;
+        }
+        case "Rwt": {
+          const f = results.pop() as HTerm;
+          const p = results.pop() as HTerm;
+          const e = results.pop() as HTerm;
+          results.push(Rwt(e, p, f, tm.s));
+          break;
+        }
+        case "Ann": {
+          const T = results.pop() as HTerm;
+          const x = results.pop() as HTerm;
+          results.push(Ann(x, T, tm.s));
+          break;
+        }
+        default: throw new Error("term_higher build task for a leaf term");
       }
-      return Ctr(tm.k, xs, tm.s);
+      continue;
     }
-    case "Lit": {
-      return tm;
-    }
-    case "Mat": {
-      return Mat(tm.k, term_higher_inner(tm.h, env, cache), term_higher_inner(tm.m, env, cache), tm.s);
-    }
-    case "Efq": {
-      return Efq(tm.s);
-    }
-    case "Eql": {
-      return Eql(term_higher_inner(tm.a, env, cache), term_higher_inner(tm.b, env, cache), term_higher_inner(tm.T, env, cache), tm.s);
-    }
-    case "Rfl": {
-      return Rfl(tm.s);
-    }
-    case "Rwt": {
-      return Rwt(term_higher_inner(tm.e, env, cache), term_higher_inner(tm.p, env, cache), term_higher_inner(tm.f, env, cache), tm.s);
-    }
-    case "Hol": {
-      return Hol(tm.k, tm.s);
-    }
-    case "Ann": {
-      return Ann(term_higher_inner(tm.x, env, cache), term_higher_inner(tm.T, env, cache), tm.s);
+    const tm = task.visit;
+    const here = task.env;
+    // Children are pushed after their build task, last child first.
+    switch (tm.$) {
+      case "Var": {
+        if (tm.i < 0) {
+          results.push(tm);
+          break;
+        }
+        const v = list_get(here, tm.i);
+        if (v === null) {
+          results.push(tm.v ?? Ref(tm.k, tm.s));
+        } else if (typeof v === "function") {
+          results.push(v(tm.s));
+        } else {
+          results.push(v.s !== undefined || tm.s === undefined
+            || (v.$ === "Var" && v.i < 0) ? v : { ...v, s: tm.s });
+        }
+        break;
+      }
+      case "Ref": {
+        if (tm.k.lastIndexOf(".") === 0) {
+          const op = tm.s === undefined ? tm.k : tm.s.src.slice(tm.s.beg, tm.s.end);
+          throw Err(book_nil(), ctx_nil(), "a type for this operator (write (a " + op + " b : Nat))", undefined, tm.s, undefined,
+            "Note: we broke this after launch, sorry. Until 2.0.16 a bare operator meant Nat.\n"
+            + "That was a bug: operators demand annotation. Wrap the expression and it'll work again.");
+        }
+        results.push(Ref(tm.k, tm.s, tm.b));
+        break;
+      }
+      case "Sub": {
+        const x = tm.v;
+        if (x.$ === "PVar" || x.$ === "PCtr") {
+          tasks.push({
+            visit: tm.f,
+            env: list_set(here, tm.i, (s?: Span) => term_higher_inner(patt_term(x, s), here, cache)),
+          });
+        } else {
+          tasks.push({ sub: tm, env: here });
+          tasks.push({ visit: x, env: here });
+        }
+        break;
+      }
+      case "Let": case "ADT": case "Ctr": {
+        const kids = tm.$ === "Let" ? tm.v : tm.x;
+        tasks.push({ build: tm, env: here, count: kids.length });
+        for (let i = kids.length - 1; i >= 0; i--) tasks.push({ visit: kids[i], env: here });
+        break;
+      }
+      case "All": tasks.push({ build: tm, env: here, count: 1 }, { visit: tm.A, env: here }); break;
+      case "Lam": {
+        const b = tm;
+        results.push(Lam(b.k, b.i, (x: HTerm) =>
+          term_higher_inner(b.f, list_set(here, b.i, x), cache), b.s, b.q));
+        break;
+      }
+      case "Typ": tasks.push({ build: tm, env: here, count: 1 }, { visit: tm.g, env: here }); break;
+      case "Qnt": case "Qua": case "Lit": results.push(tm); break;
+      case "Min": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.b, env: here }, { visit: tm.a, env: here }); break;
+      case "App": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.x, env: here }, { visit: tm.f, env: here }); break;
+      case "Mat": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.m, env: here }, { visit: tm.h, env: here }); break;
+      case "Efq": results.push(Efq(tm.s)); break;
+      case "Eql":
+        tasks.push({ build: tm, env: here, count: 3 }, { visit: tm.T, env: here }, { visit: tm.b, env: here },
+          { visit: tm.a, env: here });
+        break;
+      case "Rfl": results.push(Rfl(tm.s)); break;
+      case "Rwt":
+        tasks.push({ build: tm, env: here, count: 3 }, { visit: tm.f, env: here }, { visit: tm.p, env: here },
+          { visit: tm.e, env: here });
+        break;
+      case "Hol": results.push(Hol(tm.k, tm.s)); break;
+      case "Ann": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.T, env: here }, { visit: tm.x, env: here }); break;
     }
   }
+  return results[0];
+}
+
+function term_higher_ctr(tm: Extract<LTerm, { $: "Ctr" }>, xs: HTerm[], cache: ClosedCtrCache): HTerm {
+  // String patterns expand to closed constructor chains. Pattern
+  // substitution can copy the same chain into each fallback branch;
+  // intern those closed subtrees while preserving their source spans.
+  if (tm.s !== undefined && STRING_LITERAL_CTRS.has(tm.k)) {
+    const child_ids = xs.map((x) => cache.ids.get(x));
+    if (child_ids.every((id) => id !== undefined)) {
+      let table = cache.spans.get(tm.s);
+      if (table === undefined) {
+        table = new Map();
+        cache.spans.set(tm.s, table);
+      }
+      const key = `${tm.k}|${tm.s.beg}:${tm.s.end}|${child_ids.join(",")}`;
+      const entry = table.get(key);
+      const prior = entry?.value.deref();
+      if (prior !== undefined) return prior;
+      const out = Ctr(tm.k, xs, tm.s);
+      const id = entry?.id ?? cache.next++;
+      cache.ids.set(out, id);
+      table.set(key, { id, value: new WeakRef(out) });
+      return out;
+    }
+  }
+  return Ctr(tm.k, xs, tm.s);
 }
 
 export function term_lower(term: HTerm, d: number = 0): LTerm {
@@ -1975,7 +2050,7 @@ export function parse_var(p: Parse, k: Name, s?: Span): LTerm {
   if (e !== null) {
     return Var(k, e[1], s);
   }
-  const q = parse_reso(p, k);
+  const q = parse_reso(p, k, false);
   if (k.includes(".")) {
     return Ref(q, s);
   }
@@ -1986,13 +2061,16 @@ export function parse_qual(p: Parse, k: Name): Name {
   return p.ns === "" ? k : p.ns + "." + k;
 }
 
-export function parse_reso(p: Parse, k: Name): Name {
+export function parse_reso(p: Parse, k: Name, ctr = true): Name {
   const dot = k.indexOf(".");
   let q = parse_qual(p, k);
   if (dot !== -1 && k.slice(0, dot) in p.al) {
     q = p.al[k.slice(0, dot)] + k.slice(dot);
   }
   if (q in p.book.tlds || q in p.book.ctrs) {
+    return q;
+  }
+  if (!ctr && !(k in p.book.tlds) && k in p.book.ctrs) {
     return q;
   }
   return k;
@@ -2345,7 +2423,7 @@ export function parse_term_ops(p: Parse, tm: LTerm, lvl: number): LTerm {
     }
     if (parse_at(p, "(") || parse_at(p, "!(")) {
       if (out.$ === "Var" && parse_lookup(p, out.k) === null) {
-        out = Ref(parse_reso(p, out.k), out.s);
+        out = Ref(parse_reso(p, out.k, false), out.s);
       }
       if (parse_at(p, "!")) {
         if (out.$ !== "Ref") {
@@ -2829,7 +2907,7 @@ export function parse_def(p: Parse, book: Book, u: Bool = false): void {
     // constructor chains. The lower/raise round trip that followed rebuilt the
     // same normalized term and held a second LTerm and HTerm during the load.
     def.v = term_higher(literal_chain(p, body, vars, def, k)
-      ?? body_flatten(body, vars, () => p.sc.frs++));
+      ?? literal_columns(p, def, k, vars, () => body_flatten(body, vars, () => p.sc.frs++)));
   }
   parse_close(p, n0);
   book.order.push(k);
@@ -2991,8 +3069,289 @@ export function body_sub(b: Body, i: number, v: Patt): Body {
   }
 }
 
+// Literal rows
+// ------------
+// A string literal match on an affine String parameter shares the parameter
+// between its String.eq tests (literal_chain_string). These checks keep the uses
+// that the character decision tree allowed.
+type LiteralNode = { $: string; [field: string]: any };
+
+// Uses of a value named by `names` in a row body, counted over the written body,
+// and whether the body matches the value again. A substitution left by body_sub
+// names the value when its pattern does.
+function literal_uses(b: Body, names: ReadonlySet<number>): { uses: number; matched: boolean } {
+  let uses = 0, matched = false;
+  const patt_names = (q: Patt, a: ReadonlySet<number>): boolean =>
+    q.$ === "PVar" ? a.has(q.i) : q.x.some((y) => patt_names(y, a));
+  const term = (t: LTerm, a: ReadonlySet<number>, count: boolean): boolean => {
+    let seen = false;
+    const stack: [LiteralNode, ReadonlySet<number>][] = [[t as LiteralNode, a]];
+    while (stack.length > 0 && uses < 2) {
+      const [u, s] = stack.pop()!;
+      switch (u.$) {
+        case "Var":
+          if (s.has(u.i)) { seen = true; if (count) uses += 1; else return true; }
+          break;
+        case "Sub": {
+          const v = u.v as LiteralNode;
+          const named = v.$ === "PVar" || v.$ === "PCtr" ? patt_names(v as Patt, s) : term(v as LTerm, s, false);
+          const next = new Set(s);
+          if (named) next.add(u.i); else next.delete(u.i);
+          stack.push([u.f, next]);
+          break;
+        }
+        case "Let": for (const v of u.v) stack.push([v, s]); stack.push([u.f, s]); break;
+        case "All": stack.push([u.A, s], [u.B, s]); break;
+        case "Lam": stack.push([u.f, s]); break;
+        case "Typ": stack.push([u.g, s]); break;
+        case "Min": stack.push([u.a, s], [u.b, s]); break;
+        case "App": stack.push([u.f, s], [u.x, s]); break;
+        case "ADT": case "Ctr": for (const y of u.x) stack.push([y, s]); break;
+        case "Mat": stack.push([u.h, s], [u.m, s]); break;
+        case "Eql": stack.push([u.a, s], [u.b, s], [u.T, s]); break;
+        case "Rwt": stack.push([u.e, s], [u.p, s], [u.f, s]); break;
+        case "Ann": stack.push([u.x, s], [u.T, s]); break;
+        default: break;
+      }
+    }
+    return seen;
+  };
+  const body = (x: Body): void => {
+    switch (x.$) {
+      case "Reply": term(x.x, names, true); break;
+      case "Local":
+        for (const v of x.v) term(v, names, true);
+        if (x.k.some((q) => q.$ === "PCtr") && x.v.some((v) => term(v, names, false))) matched = true;
+        body(x.f);
+        break;
+      case "Match":
+        for (const e of x.e) if (term(e, names, true)) matched = true;
+        for (const row of x.r) body(row.f);
+        break;
+    }
+  };
+  body(b);
+  return { uses, matched };
+}
+
+// The rows of a literal column under the String.eq tests: a literal row reads
+// the matched value as the literal it equals, and a binder row may use the value
+// at most once, unless a binder row of the column is written reusable (+), which
+// makes the column's fields reusable in the character decision tree (patt_mark).
+// No row may match the value again.
+function literal_rows_affine(rows: Rows, x: PVar): boolean {
+  const marked = rows.some((row) => row.p[0].$ === "PVar" && row.p[0].q.$ === "Many");
+  return rows.every((row) => {
+    const q = row.p[0];
+    if (q.$ === "PCtr") return q.lit !== undefined && !literal_uses(row.f, new Set([x.i])).matched;
+    const use = literal_uses(row.f, new Set([x.i, q.i]));
+    return !use.matched && (marked || use.uses <= 1);
+  });
+}
+
+// Literal columns
+// ---------------
+// A column of string literal patterns nested in a match (a literal inside a
+// List pattern, or a String parameter matched together with other columns)
+// becomes a binder column with deferred guards: the column's binder is bound
+// reusable, each literal row carries a String.eq guard on it, and every other
+// column is split at its binder's own position as before, so the checker still
+// reads a decreasing self-call from those splits. Where all columns are decided,
+// literal_leaf binds the remaining binders and tests the candidate rows' guards
+// in row order, each test an annotated match on a Bool of the definition's result
+// type, the shape literal_chain_string emits. No character decision tree is
+// built.
+//
+// LITERAL_COLUMNS holds, while one definition body is flattened, its name, its
+// result type (when it mentions no parameter; LITERAL_DEPTH numbers the binders
+// inside it apart from the definition's own binders), and the binders known to be
+// reusable for the checker: + parameters and the head and tail of a List split
+// from one (check-mat gives a plain field the scrutinee's quantity).
+type LiteralBinder = { q: Quant; list: boolean };
+type LiteralGuard = [PVar, PCtr];
+let LITERAL_COLUMNS: { book: Book; name: Name; binders: Map<number, LiteralBinder>; result: LTerm } | null = null;
+const LITERAL_DEPTH = 1 << 30;
+
+// Runs `flatten` with the context of `def` for literal_guards, when the
+// definition's result type mentions no parameter.
+function literal_columns<T>(p: Parse, def: Def, k: Name, vars: PVar[], flatten: () => T): T {
+  if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool.and"] === undefined
+    || p.book.tlds["Bool"] === undefined || p.book.ctrs["False"] === undefined
+    || p.book.ctrs["True"] === undefined) {
+    return flatten();
+  }
+  const opened = telescope_opened(p, def.T, vars);
+  if (opened === null) return flatten();
+  const params = new Set(vars.map((v) => v.i));
+  const result = term_lower_shared(opened.result, LITERAL_DEPTH);
+  let mentions = false;
+  lit_body_terms({ $: "Reply", x: result }, (t) => { if (t.$ === "Var" && params.has(t.i)) mentions = true; });
+  if (mentions) return flatten();
+  const binders = new Map<number, LiteralBinder>();
+  vars.forEach((v, j) => {
+    const A = opened.alls[j].A;
+    binders.set(v.i, { q: opened.alls[j].q, list: A.$ === "ADT" && A.k === "List" });
+  });
+  const outer = LITERAL_COLUMNS;
+  LITERAL_COLUMNS = { book: p.book, name: k, binders, result };
+  try { return flatten(); } finally { LITERAL_COLUMNS = outer; }
+}
+
+// The constructors of the datatype that declares constructor k.
+const LITERAL_SIBLINGS = new WeakMap<Book, Map<Name, Name[]>>();
+function literal_siblings(book: Book, k: Name): Name[] | undefined {
+  let map = LITERAL_SIBLINGS.get(book);
+  if (map === undefined || !map.has(k)) {
+    map = new Map();
+    for (const tld of Object.values(book.tlds)) {
+      if (tld.$ === "ADT") for (const c of tld.c) map.set(c.k, tld.c.map((d) => d.k));
+    }
+    LITERAL_SIBLINGS.set(book, map);
+  }
+  return map.get(k);
+}
+
+// The default branch after the constructors in `done` holds no value when they
+// are all of their datatype's constructors. Rows that carry guards reach such a
+// branch when a literal column was deferred past this split; the branch is then
+// a match with no cases (check-efq accepts it once every constructor is split),
+// so no guard selection is built where no value arrives.
+function literal_exhausted(done: Name[], rows: Rows): boolean {
+  if (LITERAL_COLUMNS === null || !rows.some((row) => row.g !== undefined && row.g.length > 0)) return false;
+  const all = literal_siblings(LITERAL_COLUMNS.book, done[done.length - 1]);
+  return all !== undefined && all.every((k) => done.includes(k));
+}
+
+// A List binder split by Con passes its quantity to its head and tail.
+function literal_fields(x: PVar, c: PCtr, xs: PVar[]): void {
+  const known = LITERAL_COLUMNS?.binders.get(x.i);
+  if (known === undefined || !known.list || c.k !== "Con" || xs.length !== 2) return;
+  LITERAL_COLUMNS!.binders.set(xs[0].i, { q: known.q, list: false });
+  LITERAL_COLUMNS!.binders.set(xs[1].i, { q: known.q, list: true });
+}
+
+// The pattern binders of the rows.
+function literal_binders(rows: Rows): PVar[] {
+  const binders: PVar[] = [];
+  const visit = (q: Patt): void => { if (q.$ === "PVar") binders.push(q); else q.x.forEach(visit); };
+  for (const row of rows) row.p.forEach(visit);
+  return binders;
+}
+
+// The binder i among the pattern q, and q with that binder replaced by r.
+function patt_binder(q: Patt, i: number): PVar | null {
+  if (q.$ === "PVar") return q.i === i ? q : null;
+  for (const x of q.x) {
+    const found = patt_binder(x, i);
+    if (found !== null) return found;
+  }
+  return null;
+}
+function patt_put(q: Patt, i: number, r: Patt): Patt {
+  if (q.$ === "PVar") return q.i === i ? r : q;
+  return patt_binder(q, i) === null ? q : { ...q, x: q.x.map((x) => patt_put(x, i, r)) };
+}
+
+// A row whose body is a match on one variable, with one pattern per row and a
+// binder row last, becomes one row per nested row, so that literal_leaf binds no
+// binder that a row body matches again. When the variable is a binder of the row's
+// own patterns, each nested row's pattern takes the binder's place and the nested
+// body reads the matched value as that pattern (a final binder row keeps the
+// binder, with the joined + mark). When it is a pending binder that no column of
+// the match holds, it gains a column after the first, in binder order, where the
+// nested rows put their patterns and every other row binds it. The nested rows
+// refine the row in order and the binder row ends them, so the first row that
+// matches a value selects the body the nested match selected.
+function literal_lift(m: Match, vars: PVar[]): Match {
+  let e = m.e;
+  const out: Rows = [], todo = [...m.r].reverse();
+  const widen = (rows: Rows, at: number, y: PVar): Rows => {
+    const bind: PVar = { $: "PVar", k: y.k, i: y.i, q: Lone(), s: y.s };
+    return rows.map((row): Case => ({ ...row, p: [...row.p.slice(0, at), bind, ...row.p.slice(at)] }));
+  };
+  while (todo.length > 0) {
+    const row = todo.pop()!, f = row.f;
+    const nested = f.$ === "Match" && f.e.length === 1 && f.e[0].$ === "Var" && f.r.length > 1
+      && f.r.every((n) => n.p.length === 1) && f.r[f.r.length - 1].p[0].$ === "PVar" ? f : null;
+    if (nested === null) { out.push(row); continue; }
+    const i = (nested.e[0] as Extract<LTerm, { $: "Var" }>).i;
+    const col = row.p.findIndex((q) => patt_binder(q, i) !== null);
+    let rows: Rows;
+    if (col >= 0) {
+      const x = patt_binder(row.p[col], i)!;
+      rows = nested.r.map((n): Case => {
+        const q = n.p[0];
+        const r: Patt = q.$ === "PVar" ? { ...x, q: quant_join(x.q, q.q) } : q;
+        return { p: row.p.map((p, j) => j === col ? patt_put(p, i, r) : p),
+          f: q.$ === "PVar" ? body_sub(n.f, q.i, r) : body_sub(n.f, i, r), g: row.g };
+      });
+    } else {
+      const y = vars.find((u) => u.i === i);
+      if (y === undefined || e.some((t) => t.$ === "Var" && t.i === i)) { out.push(row); continue; }
+      const rank = (t: LTerm): number => t.$ === "Var" ? vars.findIndex((u) => u.i === t.i) : -1;
+      let at = 1;
+      while (at < e.length && rank(e[at]) >= 0 && rank(e[at]) < vars.indexOf(y)) at += 1;
+      e = [...e.slice(0, at), Var(y.k, y.i, y.s), ...e.slice(at)];
+      out.splice(0, out.length, ...widen(out, at, y));
+      todo.splice(0, todo.length, ...widen(todo, at, y));
+      rows = nested.r.map((n): Case => ({ p: [...row.p.slice(0, at), n.p[0], ...row.p.slice(at)], f: n.f, g: row.g }));
+    }
+    for (let j = rows.length - 1; j >= 0; j--) todo.push(rows[j]);
+  }
+  return e === m.e && out.length === m.r.length && out.every((row, j) => row === m.r[j]) ? m : { ...m, e, r: out };
+}
+
+// v heads a column of string literal and binder patterns. Null keeps the
+// ordinary lowering: a row that matches a binder again (literal_leaf binds every
+// remaining binder before the row bodies, and literal_lift removes the matches it
+// can), a literal row that calls the definition itself and uses the matched value
+// (the value would stand where the character decision tree had the literal), or
+// an affine value that a binder row could use more than once.
+function literal_guards(m0: Match, v: PVar, vars: PVar[], fr: () => number): LTerm | null {
+  const known = LITERAL_COLUMNS;
+  if (known === null) return null;
+  const m = literal_lift(m0, vars);
+  if (m.r.some((row) => row.p[0].$ === "PCtr" && (row.p[0] as PCtr).lit === undefined)) return null;
+  const binders = literal_binders(m.r);
+  if (m.r.some((row) => body_matches(row.f, [...vars, ...binders]))) return null;
+  if (m.r.some((row) => row.p[0].$ === "PCtr" && lit_body_refs(row.f, known.name)
+    && literal_uses(row.f, new Set([v.i])).uses > 0)) return null;
+  if (known.binders.get(v.i)?.q.$ !== "Many" && !literal_rows_affine(m.r, v)) return null;
+  const w: PVar = { ...v, q: Many() };
+  const rows = m.r.map((row): Case => {
+    const q = row.p[0];
+    return q.$ === "PVar" ? { p: row.p.slice(1), f: body_sub(row.f, q.i, w), g: row.g }
+      : { p: row.p.slice(1), f: row.f, g: [...(row.g ?? []), [w, q]] };
+  });
+  return match_flatten({ $: "Match", e: m.e.slice(1), r: rows, s: m.s }, vars.map((u) => u === v ? w : u), fr);
+}
+
+// All columns are decided: bind the remaining binders and select the first row
+// whose guards hold. A row without guards ends the selection.
+function literal_leaf(m: Match, vars: PVar[], fr: () => number): LTerm {
+  const known = LITERAL_COLUMNS!;
+  const span = m.s;
+  const test = ([w, lit]: LiteralGuard): LTerm => Ann(App(App(Ref("String.eq", lit.s),
+    Var(w.k, w.i, lit.s), lit.s), patt_term(lit), lit.s), Ref("Bool"), lit.s);
+  const guard = (gs: LiteralGuard[]): LTerm => gs.slice(1).reduce((all, g) =>
+    Ann(App(App(Ref("Bool.and", span), all, span), test(g), span), Ref("Bool"), span), test(gs[0]));
+  const select = (at: number): LTerm => {
+    if (at === m.r.length) return Efq(span);
+    const row = m.r[at], body = body_flatten(row.f, [], fr);
+    if (row.g === undefined || row.g.length === 0) return body;
+    return App(Ann(Mat("False", select(at + 1), Mat("True", body, Efq(span), span), span),
+      All(Lone(), "c", fr(), Ref("Bool"), known.result, span), span), guard(row.g), span);
+  };
+  let out = select(0);
+  for (let j = vars.length - 1; j >= 0; j--) out = Lam(vars[j].k, vars[j].i, out, vars[j].s, vars[j].q);
+  return out;
+}
+
 export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
   if (m.e.length === 0 && m.r.length > 0) {
+    if (m.r[0].g !== undefined && m.r[0].g.length > 0) {
+      return literal_leaf(m, vars, fr);
+    }
     return body_flatten(m.r[0].f, vars, fr);
   } else if (m.e.length === 0) {
     throw Err(book_nil(), ctx_nil(), "a case (this match has no row to return)", undefined, m.s);
@@ -3020,6 +3379,10 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
     const scu = m.e[0];
     const c   = m.r.map((row) => row.p[0]).find((q): q is PCtr => q.$ === "PCtr") ?? null;
     const v   = vars.find((w) => scu.$ === "Var" && w.i === scu.i);
+    const guarded = v !== undefined && c !== null && c.lit !== undefined ? literal_guards(m, v, vars, fr) : null;
+    if (guarded !== null) {
+      return guarded;
+    }
     if (v !== undefined && c === null && m.r.length > 0) {
       const w  = { ...v, q: patt_mark(v, m.r) };
       const rs = m.r.map((row): Case => {
@@ -3027,7 +3390,7 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
         if (p0.$ !== "PVar") {
           throw Err(book_nil(), ctx_nil(), "a variable pattern (this column has no constructor row)", undefined, p0.s);
         }
-        return { p: row.p.slice(1), f: body_sub(row.f, p0.i, w) };
+        return { p: row.p.slice(1), f: body_sub(row.f, p0.i, w), g: row.g };
       });
       return match_flatten({ $: "Match", e: m.e.slice(1), r: rs, s: m.s }, vars.map((u) => u === v ? w : u), fr);
     } else if (v === x) {
@@ -3042,6 +3405,7 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
           const i = fr();
           return { $: "PVar", k: "_" + String(i), i, q: xq, s: q.s };
         });
+        literal_fields(x, c, xs);
         const kx: Patt = { $: "PCtr", k: c.k, x: xs, s: x.s };
         const ps = m.r.flatMap((row): Rows => {
           const p0 = row.p[0];
@@ -3051,12 +3415,12 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
                 return [];
               }
               const f = body_sub(row.f, x.i, kx);
-              return [{ p: [...p0.x, ...row.p.slice(1)], f }];
+              return [{ p: [...p0.x, ...row.p.slice(1)], f, g: row.g }];
             }
             case "PVar": {
               const g = body_sub(row.f, p0.i, x);
               const f = body_sub(g, x.i, kx);
-              return [{ p: [...xs, ...row.p.slice(1)], f }];
+              return [{ p: [...xs, ...row.p.slice(1)], f, g: row.g }];
             }
           }
         });
@@ -3064,7 +3428,9 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
         const pv = xs.concat(vars.slice(1));
         const pt = match_flatten({ $: "Match", e: pe, r: ps, s: m.s }, pv, fr);
         const ds = m.r.filter((row) => row.p[0].$ !== "PCtr" || row.p[0].k !== c.k);
-        const dt = match_flatten({ $: "Match", e: m.e, r: ds, s: m.s }, vars, fr);
+        const done = [...(m.done ?? []), c.k];
+        const dt = literal_exhausted(done, ds) ? Efq(m.s)
+          : match_flatten({ $: "Match", e: m.e, r: ds, s: m.s, done }, vars, fr);
         return Mat(c.k, pt, dt, c.s);
       }
     } else {
@@ -3125,32 +3491,73 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
   }
 }
 
-// A top-level match on a Many String parameter whose rows are string literal
+// A top-level match on a String parameter whose rows are string literal
 // patterns plus an optional final binder lowers to one String.eq test per row.
 // Each row body appears once; no character decision tree is built. The Mat on
 // the computed Bool is annotated with the branch type, so the checker and
-// emitter see the compiler-lowered case form.
+// emitter see the compiler-lowered case form. The lambda of the matched
+// parameter binds it reusable (+): String is Data, so check-lam accepts a +
+// lambda at an affine binder, as it does for a +x => e lambda.
 function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   k: Name): LTerm | null {
-  // The lowering binds only the matched first parameter. A definition with
-  // later top-level parameters stays on the ordinary lowering: its helpers
-  // would abstract those parameters without carrying them in the signatures.
-  if (b.$ !== "Match" || b.e.length !== 1 || vars.length !== 1) return null;
+  if (b.$ !== "Match" || b.e.length !== 1 || vars.length < 1) return null;
   const scrut = b.e[0];
-  if (scrut.$ !== "Var" || scrut.i !== vars[0].i) return null;
-  const all = def.T;
-  if (all.$ !== "All" || all.i !== vars[0].i || all.q.$ === "None") return null;
-  if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
-    return literal_chain_string(p, b, vars, all, scrut);
+  if (scrut.$ !== "Var") return null;
+  const at = vars.findIndex((v) => v.i === scrut.i);
+  if (at < 0) return null;
+  // The String.eq chain stays inline in the definition under the lambdas of all
+  // top-level parameters, so it takes any number of them and the matched one can
+  // stand at any position. Without it a String match with another parameter
+  // lowers to a character decision tree of millions of nodes.
+  const alls = telescope_opened(p, def.T, vars);
+  if (alls !== null) {
+    const all = alls.alls[at];
+    if (all.q.$ !== "None" && all.A.$ === "Ref" && all.A.k === "String") {
+      return literal_chain_string(p, b, vars, at, alls, scrut);
+    }
   }
-  if (all.q.$ === "Lone" && all.A.$ === "ADT" && all.A.k === "List") {
-    return literal_chain_list_helpers(p, b, vars, def, k, all, scrut);
+  // The list lowering binds only the matched first parameter. A definition with
+  // other top-level parameters stays on the ordinary lowering: its helpers
+  // would abstract those parameters without carrying them in the signatures.
+  const all = def.T;
+  if (at === 0 && vars.length === 1 && all.$ === "All" && all.i === vars[0].i && all.q.$ === "Lone"
+    && all.A.$ === "ADT" && all.A.k === "List") {
+    return literal_chain_list_helpers(p, b, vars, def, k, all, scrut)
+      ?? literal_list_rows(p, b, def, k, all, scrut);
   }
   return null;
 }
 
+// The telescope of a definition opened one parameter at a time, with the result
+// type that remains after all of them. Null when a binder does not match its parameter.
+function telescope_opened(p: Parse, T: HTerm, vars: PVar[]): { alls: Extract<HTerm, { $: "All" }>[]; result: HTerm } | null {
+  const alls: Extract<HTerm, { $: "All" }>[] = [];
+  let ty: HTerm = T;
+  for (const v of vars) {
+    const next = tele_open(p.book, ty);
+    if (next === null || next.i !== v.i) return null;
+    alls.push(next);
+    ty = next.B(Var(v.k, v.i)) as HTerm;
+  }
+  return { alls, result: ty };
+}
+
+// Does a match nested in the body scrutinize one of the variables?
+function body_matches(b: Body, vars: PVar[]): boolean {
+  const scrutinized = (e: LTerm): boolean => {
+    let x = e;
+    while (x.$ === "Sub") x = x.f;
+    return x.$ === "Var" && vars.some((v) => v.i === (x as { i: number }).i);
+  };
+  switch (b.$) {
+    case "Reply": return false;
+    case "Local": return (b.k.length === 1 && b.k[0].$ === "PCtr" && scrutinized(b.v[0])) || body_matches(b.f, vars);
+    case "Match": return b.e.some(scrutinized) || b.r.some((row) => body_matches(row.f, vars));
+  }
+}
+
 function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
-  vars: PVar[], all: Extract<HTerm, { $: "All" }>, scrut: LTerm): LTerm | null {
+  vars: PVar[], at: number, opened: { alls: Extract<HTerm, { $: "All" }>[]; result: HTerm }, scrut: LTerm): LTerm | null {
   if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool"] === undefined
     || p.book.ctrs["False"] === undefined || p.book.ctrs["True"] === undefined) {
     return null;
@@ -3171,14 +3578,23 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   }
   if (literals === 0) return null;
   const fr = () => p.sc.frs++;
-  const A = term_lower_shared(all.B(Var(all.k, all.i)) as HTerm);
+  // The chain sits under the lambdas of all parameters, so a row body is an
+  // ordinary term of the result type that remains after all of them.
+  const others = vars.filter((_, j) => j !== at);
+  // A row that matches another parameter needs that parameter among the binders
+  // being abstracted, which the lambdas above the chain no longer provide.
+  if (b.r.some((row) => body_matches(row.f, others))) return null;
+  // An affine parameter is shared by the String.eq tests. The final binder
+  // keeps the character decision tree when its row could use the value more
+  // than once or match it again, so the checker refuses what it refused.
+  if (opened.alls[at].q.$ === "Lone" && !literal_rows_affine(b.r, vars[at])) return null;
+  const A = term_lower_shared(opened.result);
   const boolIndex = p.sc.frs++;
   let tail: LTerm;
   if (fallback !== null) {
-    const binder: PVar = { $: "PVar", k: vars[0].k, i: vars[0].i,
-      q: Lone(), s: vars[0].s };
-    tail = body_flatten(body_sub(fallback.f, fallback.i, binder),
-      vars.slice(1), fr);
+    const binder: PVar = { $: "PVar", k: vars[at].k, i: vars[at].i,
+      q: Lone(), s: vars[at].s };
+    tail = body_flatten(body_sub(fallback.f, fallback.i, binder), [], fr);
   } else {
     tail = Efq(b.s);
   }
@@ -3187,7 +3603,7 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
     const row = b.r[j];
     const q = row.p[0];
     if (q.$ !== "PCtr" || q.lit === undefined) continue;
-    const hit = body_flatten(row.f, vars.slice(1), fr);
+    const hit = body_flatten(row.f, [], fr);
     const cond = App(App(Ref("String.eq", q.s), scrut, q.s),
       patt_term(q), q.s);
     const inner = Mat("True", hit, Efq(row.s ?? span), row.s ?? span);
@@ -3195,7 +3611,11 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
     tail = App(Ann(mat, All(Lone(), "c", boolIndex, Ref("Bool"), A), span),
       cond, span);
   }
-  return Lam(all.k, all.i, tail, all.s, all.q);
+  for (let j = vars.length - 1; j >= 0; j--) {
+    const all = opened.alls[j];
+    tail = j === at ? Lam(all.k, all.i, tail, all.s, Many()) : Lam(vars[j].k, vars[j].i, tail, vars[j].s, vars[j].q);
+  }
+  return tail;
 }
 // A top-level match on a Lone List<String> parameter whose leading rows are
 // `head0 <> "literal" <> fields.. <> Nil` frames lowers to a single-traversal
@@ -3266,6 +3686,8 @@ function literal_chain_list_helpers(p: Parse, b: Extract<Body, { $: "Match" }>,
     || p.book.ctrs["Con"] === undefined || p.book.ctrs["Nil"] === undefined) {
     return null;
   }
+  // A helper body is flattened with no pending binder, so it cannot match one.
+  if (b.r.some((row) => body_matches(row.f, literal_binders([row])))) return null;
   const frames = (q: Patt): { heads: Patt[]; rest: PVar | null } | null => {
     const heads: Patt[] = [];
     let cur: Patt = q;
@@ -3465,6 +3887,101 @@ function literal_chain_list_helpers(p: Parse, b: Extract<Body, { $: "Match" }>,
     p.book.order.push(helper.name);
   }
   return Lam(all.k, all.i, root, span, all.q);
+}
+
+// Each list row has one continuation. A failed shape or whole-string
+// comparison reconstructs the consumed prefix and calls the next row.
+function literal_list_rows(p: Parse, b: Match, def: Def, k: Name,
+  all: Extract<HTerm, { $: "All" }>, scrut: LTerm): LTerm | null {
+  const list = all.A;
+  if (list.$ !== "ADT" || list.k !== "List") return null;
+  const elem = list.x[list.x.length - 1];
+  if (elem?.$ !== "Ref" || elem.k !== "String") return null;
+  if (!p.book.tlds["String.eq"] || !p.book.ctrs.True || !p.book.ctrs.False) return null;
+  const result = term_lower_shared(all.B(Var(all.k, all.i)));
+  if (lit_body_uses({ $: "Reply", x: result }, all.i)) return null;
+  type Row = { heads: Patt[]; rest: PVar | null; body: Body };
+  const rows: Row[] = [];
+  let literals = 0;
+  for (const row of b.r) {
+    if (row.p.length !== 1 || lit_body_refs(row.f, k)
+      || lit_body_uses(row.f, all.i) || body_matches(row.f, literal_binders([row]))) return null;
+    const heads: Patt[] = [];
+    let tail = row.p[0];
+    while (tail.$ === "PCtr" && tail.k === "Con" && tail.x.length === 2) {
+      const head = tail.x[0];
+      if (head.$ === "PCtr") {
+        if (head.lit === undefined) return null;
+        literals++;
+      }
+      heads.push(head);
+      tail = tail.x[1];
+    }
+    if (tail.$ === "PCtr" && (tail.k !== "Nil" || tail.x.length !== 0)) return null;
+    rows.push({ heads, rest: tail.$ === "PVar" ? tail : null, body: row.f });
+  }
+  if (literals === 0) return null;
+  // Each helper checks its row independently. Its final fallback must accept
+  // every list because the checker cannot use coverage from earlier helpers.
+  const last = rows[rows.length - 1];
+  if (last.heads.length !== 0 || last.rest === null) return null;
+  const fr = () => p.sc.frs++;
+  const span = b.s;
+  const listType = term_lower_shared(list);
+  const helpers: LitHelper[] = [];
+  let next: string | null = null;
+  for (let r = rows.length - 1; r >= 0; r--) {
+    const row = rows[r];
+    const index = fr(), name = k + "$litcase" + index;
+    if (p.book.tlds[name] !== undefined) return null;
+    const whole = Var("_xs", index);
+    const fail = (prefix: LTerm[], tail: LTerm): LTerm => {
+      let xs = tail;
+      for (let i = prefix.length - 1; i >= 0; i--) xs = Ctr("Con", [prefix[i], xs], span);
+      return next === null ? Efq(span) : App(Ref(next), xs, span);
+    };
+    const matchList = (xs: LTerm, h: number, t: number, hit: LTerm,
+      miss: LTerm): LTerm => App(Ann(
+      Mat("Con", Lam("_h", h, Lam("_t", t, hit, span, Lone()), span, Many()),
+        Mat("Nil", miss, Efq(span), span), span),
+      All(Lone(), "_l", fr(), listType, result), span), xs, span);
+    const build = (column: number, xs: LTerm, prefix: LTerm[], body: Body): LTerm => {
+      if (column === row.heads.length) {
+        if (row.rest !== null) {
+          const variable = xs as Extract<LTerm, { $: "Var" }>;
+          return body_flatten(body_sub(body, row.rest.i,
+            { $: "PVar", k: variable.k, i: variable.i, q: row.rest.q }), [], fr);
+        }
+        const h = fr(), t = fr();
+        return matchList(xs, h, t,
+          fail([...prefix, Var("_h", h)], Var("_t", t)),
+          body_flatten(body, [], fr));
+      }
+      const h = fr(), t = fr();
+      const H = Var("_h", h), T = Var("_t", t);
+      const pattern = row.heads[column];
+      const substituted = pattern.$ === "PVar" ? body_sub(body, pattern.i,
+        { $: "PVar", k: "_h", i: h, q: pattern.q }) : body;
+      let hit = build(column + 1, T, [...prefix, H], substituted);
+      if (pattern.$ === "PCtr") {
+        hit = App(Ann(Mat("False", fail([...prefix, H], T),
+          Mat("True", hit, Efq(span), span), span),
+          All(Lone(), "_b", fr(), Ref("Bool"), result), span),
+          App(App(Ref("String.eq"), H, span), patt_term(pattern), span), span);
+      }
+      return matchList(xs, h, t, hit, fail(prefix, Ctr("Nil", [], span)));
+    };
+    helpers.push({ name, def: { $: "Def", n: 1, x: 0,
+      T: term_higher(All(Lone(), "_xs", index, listType, result)),
+      v: term_higher(Lam("_xs", index, build(0, whole, [], row.body), span, Lone())),
+      u: def.u } });
+    next = name;
+  }
+  for (const helper of helpers) {
+    p.book.tlds[helper.name] = helper.def;
+    p.book.order.push(helper.name);
+  }
+  return Lam(all.k, all.i, App(Ref(next!), scrut, span), span, all.q);
 }
 
 // WNF
@@ -3777,124 +4294,180 @@ export function term_snf(book: Book, term: HTerm): HTerm {
 // same walk, kinds exact, no swap (a swap under EQ is harmless, so
 // the All case swaps unconditionally).
 
+// The last child of a node is compared by the loop: a string or list in constructor
+// form, a chain of matches or a body under binders is compared at a fixed stack depth,
+// and only the earlier children recurse. The children are compared in the same order.
 export function term_compare(mode: "EQ" | "LE", book: Book, lhs: HTerm, rhs: HTerm, dep: number = 0): boolean {
-  if (lhs === rhs) {
-    return true;
-  }
-  let a = term_wnf(book, lhs);
-  let b = term_wnf(book, rhs);
-  if (a === b) {
-    return true;
-  }
-  if (a.$ === "Lam" || b.$ === "Lam") {
-    const k = a.$ === "Lam" ? a.k : (b as Extract<HTerm, { $: "Lam" }>).k;
-    const x: HTerm = Var(k, dep);
-    return term_compare(mode, book, term_apply(a, x), term_apply(b, x), dep + 1);
-  }
-  if (a.$ === "Lit" && b.$ === "Ctr") {
-    a = term_higher(lit_step(a));
-  }
-  if (b.$ === "Lit" && a.$ === "Ctr") {
-    b = term_higher(lit_step(b));
-  }
-  switch (a.$) {
-    case "Var": {
-      return b.$ === "Var" && a.i === b.i;
+  for (;;) {
+    if (lhs === rhs) {
+      return true;
     }
-    case "Ref": {
-      return b.$ === "Ref" && a.k === b.k;
+    let a = term_wnf(book, lhs);
+    let b = term_wnf(book, rhs);
+    if (a === b) {
+      return true;
     }
-    case "Typ": {
-      if (b.$ !== "Typ") {
+    if (a.$ === "Lam" || b.$ === "Lam") {
+      const k = a.$ === "Lam" ? a.k : (b as Extract<HTerm, { $: "Lam" }>).k;
+      const x: HTerm = Var(k, dep);
+      lhs = term_apply(a, x);
+      rhs = term_apply(b, x);
+      dep = dep + 1;
+      continue;
+    }
+    if (a.$ === "Lit" && b.$ === "Ctr") {
+      a = term_higher(lit_step(a));
+    }
+    if (b.$ === "Lit" && a.$ === "Ctr") {
+      b = term_higher(lit_step(b));
+    }
+    switch (a.$) {
+      case "Var": {
+        return b.$ === "Var" && a.i === b.i;
+      }
+      case "Ref": {
+        return b.$ === "Ref" && a.k === b.k;
+      }
+      case "Typ": {
+        if (b.$ !== "Typ") {
+          return false;
+        }
+        if (mode === "EQ") {
+          return term_compare("EQ", book, a.g, b.g, dep);
+        }
+        const g = term_wnf(book, a.g);
+        const h = term_wnf(book, b.g);
+        if ((g.$ === "Qua" && g.q.$ === "Many") || (h.$ === "Qua" && h.q.$ !== "Many")) {
+          return true;
+        }
+        if (g.$ === "Min") {
+          const fa = term_compare("LE", book, Typ(g.a), b, dep);
+          const fb = term_compare("LE", book, Typ(g.b), b, dep);
+          return fa && fb;
+        }
+        if (h.$ === "Min") {
+          const fa = term_compare("LE", book, a, Typ(h.a), dep);
+          const fb = term_compare("LE", book, a, Typ(h.b), dep);
+          return fa || fb;
+        }
+        return term_compare("LE", book, g, h, dep);
+      }
+      case "Qnt": {
+        return b.$ === "Qnt";
+      }
+      case "Qua": {
+        return b.$ === "Qua" && a.q.$ === b.q.$;
+      }
+      case "Min": {
+        if (b.$ !== "Min" || !term_compare("EQ", book, a.a, b.a, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.b;
+        rhs = b.b;
+        continue;
+      }
+      case "All": {
+        const x: HTerm = Var(a.k, dep);
+        if (b.$ !== "All" || a.q.$ !== b.q.$ || !term_compare(mode, book, b.A, a.A, dep)) {
+          return false;
+        }
+        lhs = a.B(x);
+        rhs = b.B(x);
+        dep = dep + 1;
+        continue;
+      }
+      case "App": {
+        if (b.$ !== "App" || !term_compare("EQ", book, a.f, b.f, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.x;
+        rhs = b.x;
+        continue;
+      }
+      case "ADT": {
+        if (b.$ !== "ADT" || a.k !== b.k || a.x.length !== b.x.length) {
+          return false;
+        }
+        if (mode === "EQ" && a.r.length !== b.r.length) {
+          return false;
+        }
+        if (!b.r.every((c) => a.r.includes(c))) {
+          return false;
+        }
+        if (a.x.length === 0) {
+          return true;
+        }
+        for (let j = 0; j < a.x.length - 1; j++) {
+          if (!term_compare("EQ", book, a.x[j], b.x[j], dep)) {
+            return false;
+          }
+        }
+        mode = "EQ";
+        lhs = a.x[a.x.length - 1];
+        rhs = b.x[b.x.length - 1];
+        continue;
+      }
+      case "Ctr": {
+        if (b.$ !== "Ctr" || a.k !== b.k || a.x.length !== b.x.length) {
+          return false;
+        }
+        if (a.x.length === 0) {
+          return true;
+        }
+        for (let j = 0; j < a.x.length - 1; j++) {
+          if (!term_compare("EQ", book, a.x[j], b.x[j], dep)) {
+            return false;
+          }
+        }
+        mode = "EQ";
+        lhs = a.x[a.x.length - 1];
+        rhs = b.x[b.x.length - 1];
+        continue;
+      }
+      case "Lit": {
+        return b.$ === "Lit" && a.v === b.v;
+      }
+      case "Mat": {
+        if (b.$ !== "Mat" || a.k !== b.k || !term_compare("EQ", book, a.h, b.h, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.m;
+        rhs = b.m;
+        continue;
+      }
+      case "Efq": {
+        return b.$ === "Efq";
+      }
+      case "Eql": {
+        if (b.$ !== "Eql" || !term_compare("EQ", book, a.a, b.a, dep) || !term_compare("EQ", book, a.b, b.b, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.T;
+        rhs = b.T;
+        continue;
+      }
+      case "Rfl": {
+        return b.$ === "Rfl";
+      }
+      case "Hol": {
+        return b.$ === "Hol" && a.k === b.k;
+      }
+      case "Rwt": {
+        if (b.$ !== "Rwt" || !term_compare("EQ", book, a.e, b.e, dep) || !term_compare("EQ", book, a.p, b.p, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.f;
+        rhs = b.f;
+        continue;
+      }
+      default: {
         return false;
       }
-      if (mode === "EQ") {
-        return term_compare("EQ", book, a.g, b.g, dep);
-      }
-      const g = term_wnf(book, a.g);
-      const h = term_wnf(book, b.g);
-      if ((g.$ === "Qua" && g.q.$ === "Many") || (h.$ === "Qua" && h.q.$ !== "Many")) {
-        return true;
-      }
-      if (g.$ === "Min") {
-        const fa = term_compare("LE", book, Typ(g.a), b, dep);
-        const fb = term_compare("LE", book, Typ(g.b), b, dep);
-        return fa && fb;
-      }
-      if (h.$ === "Min") {
-        const fa = term_compare("LE", book, a, Typ(h.a), dep);
-        const fb = term_compare("LE", book, a, Typ(h.b), dep);
-        return fa || fb;
-      }
-      return term_compare("LE", book, g, h, dep);
-    }
-    case "Qnt": {
-      return b.$ === "Qnt";
-    }
-    case "Qua": {
-      return b.$ === "Qua" && a.q.$ === b.q.$;
-    }
-    case "Min": {
-      return b.$ === "Min"
-          && term_compare("EQ", book, a.a, b.a, dep)
-          && term_compare("EQ", book, a.b, b.b, dep);
-    }
-    case "All": {
-      const x: HTerm = Var(a.k, dep);
-      return b.$ === "All" && a.q.$ === b.q.$
-          && term_compare(mode, book, b.A, a.A, dep)
-          && term_compare(mode, book, a.B(x), b.B(x), dep + 1);
-    }
-    case "App": {
-      return b.$ === "App"
-          && term_compare("EQ", book, a.f, b.f, dep)
-          && term_compare("EQ", book, a.x, b.x, dep);
-    }
-    case "ADT": {
-      if (b.$ !== "ADT" || a.k !== b.k || a.x.length !== b.x.length) {
-        return false;
-      }
-      if (mode === "EQ" && a.r.length !== b.r.length) {
-        return false;
-      }
-      return b.r.every((c) => a.r.includes(c))
-          && a.x.every((x, j) => term_compare("EQ", book, x, b.x[j], dep));
-    }
-    case "Ctr": {
-      return b.$ === "Ctr" && a.k === b.k && a.x.length === b.x.length
-          && a.x.every((x, j) => term_compare("EQ", book, x, b.x[j], dep));
-    }
-    case "Lit": {
-      return b.$ === "Lit" && a.v === b.v;
-    }
-    case "Mat": {
-      return b.$ === "Mat" && a.k === b.k
-          && term_compare("EQ", book, a.h, b.h, dep)
-          && term_compare("EQ", book, a.m, b.m, dep);
-    }
-    case "Efq": {
-      return b.$ === "Efq";
-    }
-    case "Eql": {
-      return b.$ === "Eql"
-          && term_compare("EQ", book, a.a, b.a, dep)
-          && term_compare("EQ", book, a.b, b.b, dep)
-          && term_compare("EQ", book, a.T, b.T, dep);
-    }
-    case "Rfl": {
-      return b.$ === "Rfl";
-    }
-    case "Hol": {
-      return b.$ === "Hol" && a.k === b.k;
-    }
-    case "Rwt": {
-      return b.$ === "Rwt"
-          && term_compare("EQ", book, a.e, b.e, dep)
-          && term_compare("EQ", book, a.p, b.p, dep)
-          && term_compare("EQ", book, a.f, b.f, dep);
-    }
-    default: {
-      return false;
     }
   }
 }
@@ -4443,7 +5016,8 @@ export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>,
 // (infer-ref) while the caller is declared; it stays outside the order
 // (a seeded book keeps it), so it is no claim.
 
-export function book_valid(book: Book, done: number = 0): void {
+export function book_valid(book: Book, done: number = 0,
+  observe?: (event: string, details: Record<string, unknown>) => void): void {
   const tlds = book.tlds;
   const last = new Map<Name, number>();
   for (let i = 0; i < book.order.length; i++) {
@@ -4526,7 +5100,11 @@ export function book_valid(book: Book, done: number = 0): void {
       }
     }
     if (def.v !== null) {
+      const started = observe === undefined ? 0 : performance.now();
+      observe?.("definition.check.begin", { name: k, index: i, definitions: book.order.length });
       def.e = def_check(book, k, def);
+      observe?.("definition.check.end", { name: k, index: i, definitions: book.order.length,
+        duration_ms: performance.now() - started });
     }
     book.tlds[k] = def;
   }

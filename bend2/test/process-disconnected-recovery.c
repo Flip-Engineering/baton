@@ -123,22 +123,23 @@ static int run_status_write_retry(const char *directory) {
   br_buffer_free(&keeper.outgoing,&keeper.outgoing_tail);
   BrKeeper fresh={.directory=keeper.directory};
   REQUIRE(br_file(directory,"released","",0,1)==0);
-  REQUIRE(!br_attempt_completed(&fresh));
+  REQUIRE(!br_attempt_retired(&fresh));
   char released_path[PATH_MAX];snprintf(released_path,sizeof(released_path),"%s/released",directory);
   REQUIRE(unlink(released_path)==0);
   REQUIRE(rmdir(status_path)==0);
   REQUIRE(br_file(directory,"status","",0,1)==0);
-  REQUIRE(!br_attempt_completed(&fresh));
+  REQUIRE(!br_attempt_retired(&fresh));
   REQUIRE(br_native_exit_event(&keeper)==0);
   int status=0;
   REQUIRE(br_status_read(directory,&status)==0 && status==keeper.status);
-  REQUIRE(br_attempt_completed(&fresh));
+  REQUIRE(!br_attempt_retired(&fresh));
   REQUIRE(keeper.outgoing && keeper.outgoing->length==sizeof(BrFrame));
   memcpy(&exit_frame,keeper.outgoing->data,sizeof(exit_frame));
   REQUIRE(exit_frame.op==BR_EXIT && exit_frame.value==keeper.status);
   br_buffer_free(&keeper.outgoing,&keeper.outgoing_tail);
   REQUIRE(br_command(&keeper,(BrFrame){.op=BR_RELEASE,.serial=2},"")==0);
   REQUIRE(keeper.released && br_marker_recorded(directory,"released","released\n",9));
+  REQUIRE(br_attempt_retired(&fresh));
   REQUIRE(br_command(&keeper,(BrFrame){.op=BR_ACK,.serial=3},"")==0);
   REQUIRE(keeper.finishing && br_marker_recorded(directory,"acknowledged","acknowledged\n",13));
   br_buffer_free(&keeper.outgoing,&keeper.outgoing_tail);
@@ -199,6 +200,25 @@ static int run_unknown_status_guards(const char *directory) {
   return 0;
 }
 
+static int run_retired(const char *directory) {
+  const char *names[]={"released","acknowledged"};
+  const char *values[]={"released\n","acknowledged\n"};
+  for(size_t i=0;i<2;i++) {
+    BrKeeper keeper={0};
+    REQUIRE(setup_recovery(&keeper,directory)==0);
+    keeper.native_pid=getpid();keeper.exited=1;keeper.client=-1;
+    REQUIRE(br_file(directory,names[i],values[i],strlen(values[i]),1)==0);
+    br_disconnected(&keeper);
+    REQUIRE(keeper.recovery_pid==0 && keeper.recovery_pending==0);
+    char marker[PATH_MAX];snprintf(marker,sizeof(marker),"%s/recovery-started",directory);
+    REQUIRE(access(marker,F_OK)<0 && errno==ENOENT);
+    char path[PATH_MAX];snprintf(path,sizeof(path),"%s/%s",directory,names[i]);
+    REQUIRE(unlink(path)==0);
+    br_manifest_free(&keeper.manifest);free(keeper.directory);
+  }
+  return 0;
+}
+
 int main(void) {
   char template[]="/tmp/baton-disconnected-recovery-XXXXXX";
   char *directory=mkdtemp(template);
@@ -213,8 +233,9 @@ int main(void) {
   REQUIRE(run_status_write_retry(directory)==0);
   unlink(marker);unlink(status_path);
   REQUIRE(run_unknown_status_guards(directory)==0);
+  REQUIRE(run_retired(directory)==0);
   unlink(marker);unlink(status_path);
   rmdir(directory);
-  puts("{\"liveDisconnectedRecoveredOnce\":true,\"exitedDisconnectRecoveredOnceNoRetry\":true,\"terminalStatusPreserved\":true,\"failedStatusWriteRetainedAndRetried\":true,\"unknownWaitStatusNeverReportedOrPersisted\":true,\"unknownStatusReleaseAckAndReconcileRejected\":true}");
+  puts("{\"liveDisconnectedRecoveredOnce\":true,\"exitedDisconnectRecoveredOnceNoRetry\":true,\"retiredAttemptsDoNotRecover\":true,\"terminalStatusPreserved\":true,\"failedStatusWriteRetainedAndRetried\":true,\"unknownWaitStatusNeverReportedOrPersisted\":true,\"unknownStatusReleaseAckAndReconcileRejected\":true}");
   return 0;
 }

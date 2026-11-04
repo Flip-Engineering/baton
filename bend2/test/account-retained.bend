@@ -27,7 +27,7 @@ def print_launch(launch: Turn.RetainedLaunch) -> IO(Unit):
 
 def prepared(result: Result<&1,&1,U32 & String,Turn.RetainedLaunch>) -> IO(Unit):
   match result:
-    case Fail{error}: IO.die(Unit,2,"retained prepare failed")
+    case Fail{(code,detail)}: IO.die(Unit,2,"retained prepare failed: " ++ detail)
     case Done{+launch}: print_launch(launch)
 
 def setup(+db: String, +directory: String) -> IO(Unit):

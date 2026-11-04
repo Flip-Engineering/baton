@@ -250,9 +250,7 @@ def reset_nonmonitor(db: String, +handle: U32) -> IO(State):
 def empty_checkpoint_outcome(db: String, +handle: U32, monitor: Bool) -> IO(RestoreOutcome):
   match monitor:
     case True{}: IO.pure(RestoreOutcome,Rejected{"Native observer checkpoint state is empty or invalid at its retained cursor."})
-    case False{}: do IO<RestoreOutcome>:
-      state : State <- reset_nonmonitor(db,handle)
-      IO.pure(RestoreOutcome,Restored{state})
+    case False{}: IO.pure(RestoreOutcome,Restored{empty()})
 
 def decode_valid_outcome(+db: String, +value: String) -> IO(RestoreOutcome):
   do IO<RestoreOutcome>:
@@ -262,7 +260,9 @@ def decode_valid_outcome(+db: String, +value: String) -> IO(RestoreOutcome):
 def decode_invalid(db: String, +handle: U32, monitor: Bool) -> IO(RestoreOutcome):
   match monitor:
     case True{}: IO.pure(RestoreOutcome,Rejected{"Native observer checkpoint state is invalid at its retained cursor."})
-    case False{}: empty_checkpoint_outcome(db,handle,monitor)
+    case False{}: do IO<RestoreOutcome>:
+      state : State <- reset_nonmonitor(db,handle)
+      IO.pure(RestoreOutcome,Restored{state})
 
 def decode_nonempty(+db: String, handle: U32, +value: String, monitor: Bool) -> IO(RestoreOutcome):
   do IO<RestoreOutcome>:

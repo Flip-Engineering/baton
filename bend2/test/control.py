@@ -59,7 +59,11 @@ if muse and resume:
               file=sys.stderr,flush=True)
         sys.exit(1)
 if omp:
-    json.loads(sys.stdin.readline())
+    print(json.dumps({'type':'ready','protocolVersion':1,'supported':[1,2],
+                      'maxFrameBytes':1048576,'maxReassembled':67108864}),flush=True)
+    filter_frame=sys.stdin.readline()
+    if not filter_frame.strip(): sys.exit(0)
+    json.loads(filter_frame)
     state=json.loads(sys.stdin.readline())
     prompt=json.loads(sys.stdin.readline())['message']
     storage=pathlib.Path(args[args.index('--session-dir')+1])
@@ -456,8 +460,12 @@ class Control(unittest.TestCase):
         self.db.touch()
         with tempfile.TemporaryDirectory(prefix='b758-', dir='/tmp') as runtime:
             self.environment['XDG_RUNTIME_DIR'] = runtime
-            ipc = pathlib.Path(runtime) / 'baton2'
-            ipc.mkdir(mode=0o700)
+            ipc = pathlib.Path('/tmp/baton2-%u' % os.geteuid())
+            ipc.mkdir(mode=0o700, exist_ok=True)
+            self.assertFalse(ipc.is_symlink())
+            self.assertTrue(ipc.is_dir())
+            self.assertEqual(ipc.stat().st_uid, os.geteuid())
+            ipc.chmod(0o700)
             info = self.db.stat()
             generation = ipc / f'owner-{info.st_dev:x}-{info.st_ino:x}.generation'
             record = generation.with_suffix('.record')
@@ -539,7 +547,9 @@ class Control(unittest.TestCase):
                 if harness == 'codex':
                     self.assertEqual(native['args'][:2], ['-c', 'forced_login_method="chatgpt"'])
                     configs = [native['args'][index + 1] for index, arg in enumerate(native['args']) if arg == '-c']
-                    self.assertEqual(configs, ['forced_login_method="chatgpt"', 'model_reasoning_effort="low"'])
+                    self.assertEqual(configs[:2], ['forced_login_method="chatgpt"', 'model_reasoning_effort="low"'])
+                    self.assertEqual([config.partition('=')[0] for config in configs[2:]], ['hooks.Stop', 'hooks.PostToolUse'])
+                    self.assertIn('--dangerously-bypass-hook-trust', native['args'])
                     self.assertEqual(native['apiKeyVariablesPresent'], [])
                 else:
                     self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'low')

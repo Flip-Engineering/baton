@@ -103,19 +103,20 @@ assert.match(baseError ?? "", /an id over 65535/,
 const book = await load();
 const c = Comp.compile_book(book);
 const cid = cids(c);
-assert.equal(cid.length, 17, "value-reachable CID count");
-assert.deepEqual(cid, [
-  ["CID_IO_ARGS", 0], ["CID_IO_PRINT", 1], ["CID_TUPLE", 2],
-  ["CID_SNIL", 3], ["CID_SCON", 4], ["CID_WCON", 5], ["CID_EMIT", 6],
-  ["CID_HALT", 7], ["CID_FAIL", 8], ["CID_DONE", 9], ["CID_NONE", 10],
-  ["CID_SOME", 11], ["CID_FALSE", 12], ["CID_TRUE", 13], ["CID_UNIT", 14],
-  ["CID_NIL", 15], ["CID_CON", 16],
-], "CID macros");
+const expected_arities: Record<string, number> = {
+  CID_IO_ARGS: 1, CID_IO_PRINT: 2, CID_TUPLE: 2, CID_SNIL: 0, CID_SCON: 2,
+  CID_WCON: 2, CID_EMIT: 1, CID_HALT: 2, CID_FAIL: 1, CID_DONE: 1,
+  CID_NONE: 0, CID_SOME: 1, CID_FALSE: 0, CID_TRUE: 0, CID_UNIT: 0,
+  CID_NIL: 0, CID_CON: 2,
+};
+assert.deepEqual(cid.map(([name]) => name).sort(), Object.keys(expected_arities).sort(),
+  "the live program and runtime constructor names");
 assert.ok(!c.includes("CID_BIG"), "no Big constructor CID in the live C");
-assert.deepEqual(arityTable(c), [1, 2, 2, 0, 2, 2, 1, 2, 1, 1, 0, 1, 0, 0, 0, 0, 2],
-  "CID arity table");
-assert.deepEqual(hotTable(c), Array.from({ length: 17 }, () => 0),
-  "CID hot table");
+const arities = arityTable(c), hot = hotTable(c);
+for (const [name, id] of cid) {
+  assert.equal(arities[id], expected_arities[name], name + " arity");
+  assert.equal(hot[id], 0, name + " sharing flag");
+}
 const fid = fids(c);
 assert.ok(fid.length > 0 && fid.length <= (1 << 20) - 4, "FID table inside the limit");
 

@@ -184,7 +184,7 @@ def stop_identity_sql(+target: String, force: Bool) -> String:
     case False{}: "SELECT '1'||char(9)||hex(coalesce((SELECT id FROM session_stops WHERE session=" ++ C.q(target) ++ "),'stop:'||lower(hex(randomblob(16)))))||char(9)||'end';"
 
 def reply_identity_sql(+session: String, +options: List<&2,D.Option>) -> String:
-  "SELECT count(*)||char(9)||hex(min(id))||char(9)||'end' FROM native_requests WHERE parent=" ++ C.q(session) ++ " AND reply IS NULL AND closed IS NULL" ++ Bool.pick(String,D.present(options,"--to")," AND worker=" ++ C.q(D.value(options,"--to","")),"") ++ ";"
+  "SELECT count(*)||char(9)||hex(min(id))||char(9)||'end' FROM native_requests WHERE (parent=" ++ C.q(session) ++ " OR " ++ C.coordinator_authority_sql("native_requests.worker",C.q(session)) ++ ") AND reply IS NULL AND closed IS NULL" ++ Bool.pick(String,D.present(options,"--to")," AND worker=" ++ C.q(D.value(options,"--to","")),"") ++ ";"
 
 def query_identity_sql(session: String) -> String:
   "SELECT count(*)||char(9)||hex(min(id))||char(9)||'end' FROM (SELECT id FROM semantic_queries WHERE owner=" ++ C.q(session) ++ " ORDER BY rowid DESC LIMIT 1);"
@@ -292,7 +292,9 @@ def contextual_args(+session: String, verb: String, +options: List<&2,D.Option>)
     case "completion-confirmed":
       request = optional_arg(["agent-contextual-input",session,"completion-confirmed"],"--request",D.value(options,"--request",""),D.present(options,"--request"))
       args = optional_arg(request,"--to",D.value(options,"--to",""),D.present(options,"--to"))
-      optional_arg(args,"--id",D.value(options,"--id",""),D.present(options,"--id"))
+      identified = optional_arg(args,"--id",D.value(options,"--id",""),D.present(options,"--id"))
+      assignment = optional_arg(identified,"--next",D.value(options,"--next",""),D.present(options,"--next"))
+      optional_arg(assignment,"--next-file",D.value(options,"--next-file",""),D.present(options,"--next-file"))
     case "guide":
       optional_arg(["agent-contextual-input",session,"guide","--to",D.value(options,"--to",""),"--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
     case other: Nil{}
@@ -330,6 +332,7 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "clear-stop": ["clear-stop",target]
     case "recover-observer": ["recover-observer",target,D.value(options,"--observer","")]
     case "continue-task": ["continue-task",target,D.value(options,"--id","")]
+    case "succeed": ["succeed",target,D.value(options,"--from","")]
     case "turn": Bool.pick(List<String>,D.present(options,"--text"),
       ["turn-text",target,D.value(options,"--id",""),actual(options,saved,"--command"),actual(options,saved,"--model"),actual(options,saved,"--effort"),actual(options,saved,"--cwd"),D.value(options,"--text",""),actual(options,saved,"--output-log"),actual(options,saved,"--native")],
       ["turn",target,D.value(options,"--id",""),actual(options,saved,"--command"),actual(options,saved,"--model"),actual(options,saved,"--effort"),actual(options,saved,"--cwd"),D.value(options,"--file",""),actual(options,saved,"--output-log"),actual(options,saved,"--native")])

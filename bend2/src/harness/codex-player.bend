@@ -1,12 +1,25 @@
 import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
+import ./claude-player.bend as Claude
 
 def models_args(cmd: String) -> List<String>:
   [cmd,"debug","models"]
 
+# Codex runs the retained Baton entry at Stop and after each successful tool, the same
+# entry Claude Code runs (#1212). PostToolUse adds complete owed input to the running
+# turn and Stop continues the turn while input is owed or the coordinator has not
+# confirmed the completion request. additionalContextLimit=0 passes the complete context to
+# the model; the default limit saves context over about 2500 tokens to a file and shows
+# a preview. The hook trust bypass runs these inline hooks without a persisted review.
+def hook_handler(extra: String) -> String:
+  "{type=\"command\",command=" ++ J.string_literal(Claude.stop_hook_command()) ++ extra ++ "}"
+
+def hook_configs() -> List<String>:
+  ["-c","hooks.Stop=[{hooks=[" ++ hook_handler("") ++ "]}]","-c","hooks.PostToolUse=[{matcher=\"*\",hooks=[" ++ hook_handler(",additionalContextLimit=0") ++ "]}]"]
+
 def arguments(model: String, effort: String) -> List<String>:
-  ["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort),"--dangerously-bypass-approvals-and-sandbox","-"]
+  List.append(&1,String,["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort)],List.append(&1,String,hook_configs(),["--dangerously-bypass-hook-trust","--dangerously-bypass-approvals-and-sandbox","-"]))
 
 def argv(cmd: String, model: String, effort: String, session: String, fresh: Bool) -> String:
   match fresh:

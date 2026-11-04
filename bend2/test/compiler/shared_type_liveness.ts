@@ -104,7 +104,8 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-shared-type-liveness-")
 const previousDiagnostics = process.env.BEND_COMPILER_DIAGNOSTICS;
 process.env.BEND_COMPILER_DIAGNOSTICS = "1";
 try {
-  for (const name of ["bend.ts", "base.bend"]) {
+  for (const name of fs.readdirSync(upstream).filter(name =>
+    name.endsWith(".ts") || name === "base.bend")) {
     fs.copyFileSync(path.join(upstream, name), path.join(temp, name));
   }
   const source = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");
@@ -137,9 +138,8 @@ try {
     ctrs: { TestCtor: { k: "TestCtor", n: 0, T: right } },
   } as unknown as { tlds: Record<string, Bend.TLD & { h?: Bend.HTerm }>; ctrs: Record<string, Bend.Ctr> };
   const expected = new Set([
-    "main", "C", "SharedLeaf", "DistinctLeft", "DistinctRight", "DistinctClosure",
-    "SigClosureA", "SigClosureB", "ClosureA", "ClosureB", "ClosureNameA",
-    "ClosureNameB", ...Array.from({ length: depth }, (_, i) => `Domain${i}`),
+    "C", "SharedLeaf", "DistinctLeft", "DistinctRight", "DistinctClosure",
+    "SigClosureA", "SigClosureB", ...Array.from({ length: depth }, (_, i) => `Domain${i}`),
   ]);
   const results: Set<string>[] = [];
   const states: Module["test_counts"][] = [];

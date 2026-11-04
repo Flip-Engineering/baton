@@ -79,12 +79,12 @@ law message_descendants_follow_transitive_parentage:
 def message_descendants_follow_transitive_parentage(ancestor,session):
   {==}
 
-law peer_routes_require_shared_tight_membership:
+law peer_routes_require_shared_tight_ensemble_participation:
   for +sender: String
   for +recipient: String
-  {C.tight_peers(sender,recipient) == "(" ++ C.peers(sender,recipient) ++ " AND " ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight'))" : String}
+  {C.tight_peers(sender,recipient) == "(" ++ C.peers(sender,recipient) ++ " AND " ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensembles e WHERE e.coupling='tight' AND (e.owner=" ++ sender ++ " OR EXISTS(SELECT 1 FROM ensemble_members a WHERE a.ensemble=e.id AND a.session=" ++ sender ++ ")) AND (e.owner=" ++ recipient ++ " OR EXISTS(SELECT 1 FROM ensemble_members b WHERE b.ensemble=e.id AND b.session=" ++ recipient ++ "))))" : String}
 
-def peer_routes_require_shared_tight_membership(sender,recipient):
+def peer_routes_require_shared_tight_ensemble_participation(sender,recipient):
   {==}
 
 law operator_routes_admit_immediate_children_and_top_level_conductors:
@@ -98,7 +98,7 @@ def operator_routes_admit_immediate_children_and_top_level_conductors(sender,rec
 law message_routes_require_registered_distinct_sessions_and_a_permitted_relation:
   for +sender: String
   for +recipient: String
-  {C.message_route(sender,recipient) == "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ C.assigned_role(sender) ++ "='conductor' AND " ++ C.descendant(sender,recipient) ++ ") OR " ++ C.tight_peers(sender,recipient) ++ ")) OR " ++ C.operator_route(sender,recipient) ++ "))" : String}
+  {C.message_route(sender,recipient) == "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ C.assigned_role(sender) ++ "='conductor' AND " ++ C.descendant(sender,recipient) ++ ") OR " ++ C.tight_peers(sender,recipient) ++ ")) OR " ++ C.operator_route(sender,recipient) ++ " OR " ++ C.coordinated_route(sender,recipient) ++ "))" : String}
 
 def message_routes_require_registered_distinct_sessions_and_a_permitted_relation(sender,recipient):
   {==}

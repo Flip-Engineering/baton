@@ -67,6 +67,17 @@ def retained_lines(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), line: May
       next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       retained_lines(handle,lock,sender,next)
 
+@unsafe
+def retained_spans(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), span: Maybe<String> & String) -> IO(Unit):
+  match span:
+    case (offset,length):
+      match offset:
+        case None{}: retained_finish(handle,lock,sender)
+        case Some{start}: do IO<Unit>:
+          printed : Unit <- IO.print(start ++ "\t" ++ length)
+          next : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+          retained_spans(handle,lock,sender,next)
+
 def observer_close(handle: U32, close: Bool) -> IO(Unit):
   match close:
     case False{}: IO.pure(Unit,Unit{})
@@ -89,6 +100,59 @@ def retained_started(start: P.RetainedStart, lock: U32, payload: String, close: 
     case P.Unstarted{error}: IO.die(Unit,1,error)
     case P.Retained{handle}: observe_retained(handle,Some{lock},payload,close)
 
+def span_present(label: String, span: Maybe<String> & String) -> IO(Unit):
+  match span:
+    case (offset,length):
+      match offset:
+        case None{}: IO.die(Unit,1,label ++ "-line-missing")
+        case Some{start}: IO.print(label ++ ":" ++ start ++ "\t" ++ length)
+
+def checkpoint_saved(saved: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match saved:
+    case Fail{(code,text)}: IO.die(Unit,1,"checkpoint-commit:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{unit}: IO.pure(Unit,Unit{})
+
+def checkpoint_restored(restored: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match restored:
+    case Fail{(code,text)}: IO.die(Unit,1,"checkpoint-restore:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{state}: IO.print("restored:" ++ state)
+
+# The span children do not read stdin, so these modes write no payload.
+def observe_spans(+handle: U32, lock: Maybe<U32>) -> IO(Unit):
+  do IO<Unit>:
+    sender : Chan(Unit) <- IO.fork(Unit,IO.pure(Unit,Unit{}))
+    first : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    retained_spans(handle,lock,sender,first)
+
+# Commits a checkpoint after the first line, reads the next line without
+# committing it, restores the checkpoint, and expects the next line again.
+def observe_checkpoint_spans(+handle: U32, lock: Maybe<U32>) -> IO(Unit):
+  do IO<Unit>:
+    sender : Chan(Unit) <- IO.fork(Unit,IO.pure(Unit,Unit{}))
+    first : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    durable : Unit <- span_present("durable",first)
+    saved : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit(handle,1,"durable")
+    committed : Unit <- checkpoint_saved(saved)
+    pending : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    uncommitted : Unit <- span_present("uncommitted",pending)
+    restored : Result<&1,&1,U32 & String,String> <- Custody.Instance.restore(handle,1)
+    shown : Unit <- checkpoint_restored(restored)
+    replay : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    replayed : Unit <- span_present("replay",replay)
+    next : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    retained_spans(handle,lock,sender,next)
+
+def spans_started(start: P.RetainedStart, +lock: U32, +checkpoint: Bool) -> IO(Unit):
+  match start:
+    case P.Unstarted{error}: IO.die(Unit,1,error)
+    case P.Retained{+handle}: Bool.pick(IO(Unit),checkpoint,observe_checkpoint_spans(handle,Some{lock}),observe_spans(handle,Some{lock}))
+
+def retained_choose(+start: P.RetainedStart, +lock: U32, payload: String, +mode: String) -> IO(Unit):
+  +checkpoint=String.eq(mode,"checkpoint-span")
+  Bool.pick(IO(Unit),Bool.or(String.eq(mode,"span"),checkpoint),
+    spans_started(start,lock,checkpoint),
+    retained_started(start,lock,payload,String.eq(mode,"close")))
+
 def recovery_program(mode: String, executable: String, directory: String) -> String:
   P.argv([executable,
     Bool.pick(String,String.eq(mode,"recovery-fails"),"recover-retained-fail","recover-retained"),
@@ -102,7 +166,7 @@ def retained_locked(database: String, +directory: String, +cwd: String, payload:
       bytes : String <- IO.try(String,Text.Text.read(payload))
       stderr : String = Bool.pick(String,String.eq(mode,"setup-failure"),cwd ++ "/setup.stderr",directory ++ "/native.stderr")
       start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,stderr,"",1,Some{handle},recovery_program(mode,executable,directory)))
-      retained_started(start,handle,bytes,String.eq(mode,"close"))
+      retained_choose(start,handle,bytes,mode)
 
 def retained_cli(args: List<String>) -> IO(Unit):
   match args:

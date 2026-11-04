@@ -12,6 +12,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import focused_command_supervisor as CommandSupervisor
+
 
 def digest(path):
     value = hashlib.sha256()
@@ -63,68 +66,59 @@ def tracked_manifest(root):
             for path in paths if path and (pathlib.Path(root) / path).is_file()}
 
 
-def process_group_exists(pgid):
+def supervisor_record(path):
     try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def terminate_process_group(process, evidence, reason, poll_seconds=0.1, attempts=50):
-    pgid = process.pid
-    record = {'pid': process.pid, 'pgid': pgid, 'term_sent': False,
-              'kill_sent': False, 'group_exists': None, 'exit_code': None}
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-        record['term_sent'] = True
-    except ProcessLookupError:
-        pass
-    for _ in range(attempts):
-        process.poll()
-        if not process_group_exists(pgid):
-            break
-        time.sleep(poll_seconds)
-    process.poll()
-    if process_group_exists(pgid):
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-            record['kill_sent'] = True
-        except ProcessLookupError:
-            pass
-        while process_group_exists(pgid):
-            process.poll()
-            time.sleep(poll_seconds)
-    record['exit_code'] = process.wait()
-    record['group_exists'] = process_group_exists(pgid)
-    write_json(pathlib.Path(evidence) / (reason + '.json'), record)
-    return record
+        return json.loads(pathlib.Path(path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def run_command(label, argv, cwd, env, evidence, records):
     stdout_path = evidence / (label + '.stdout')
     stderr_path = evidence / (label + '.stderr')
+    supervisor_path = evidence / (label + '-process-supervisor.json')
+    supervisor_script = pathlib.Path(__file__).with_name('focused_command_supervisor.py')
+    queue_handoff_dir = evidence / (label + '-queue-handoffs')
+    queue_handoff_dir.mkdir(parents=True, exist_ok=True)
+    command_env = dict(env)
+    command_env['BATON2_FOCUSED_QUEUE_HANDOFF_DIR'] = str(queue_handoff_dir)
     started = time.time()
+    CommandSupervisor.require_linux_process_control()
+    process = None
+    pidfd = None
     with stdout_path.open('wb') as stdout, stderr_path.open('wb') as stderr:
-        process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=stdout, stderr=stderr,
-                                   start_new_session=True)
         try:
+            process = subprocess.Popen(
+                [sys.executable, str(supervisor_script), '--result', str(supervisor_path),
+                 '--cwd', str(cwd), '--queue-handoff-dir', str(queue_handoff_dir),
+                 '--', *argv], cwd=cwd, env=command_env,
+                stdout=stdout, stderr=stderr, start_new_session=True)
+            pidfd, identity = CommandSupervisor.open_verified_pidfd(
+                process.pid, expected_parent=os.getpid())
             code = process.wait()
         except BaseException:
-            cleanup = terminate_process_group(process, evidence,
-                                              label + '-launcher-cancel')
+            if process is not None:
+                if pidfd is not None:
+                    try:
+                        CommandSupervisor.signal_pidfd(pidfd, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                process.wait()
             row = {'label': label, 'argv': argv, 'cwd': str(cwd), 'started_at': started,
-                   'ended_at': time.time(), 'exit_code': cleanup['exit_code'],
-                   'cancelled': True, 'process_group_cleanup': cleanup,
+                   'ended_at': time.time(), 'exit_code': process.returncode if process else None,
+                   'cancelled': True, 'process_supervisor': supervisor_record(supervisor_path),
                    'stdout': stdout_path.name, 'stdout_sha256': digest(stdout_path),
                    'stderr': stderr_path.name, 'stderr_sha256': digest(stderr_path)}
             records.append(row)
             write_json(evidence / 'commands.json', records)
             raise
+        finally:
+            if pidfd is not None:
+                os.close(pidfd)
+    supervisor = supervisor_record(supervisor_path)
     row = {'label': label, 'argv': argv, 'cwd': str(cwd), 'started_at': started,
            'ended_at': time.time(), 'exit_code': code,
+           'process_supervisor': supervisor,
            'stdout': stdout_path.name, 'stdout_sha256': digest(stdout_path),
            'stderr': stderr_path.name, 'stderr_sha256': digest(stderr_path)}
     records.append(row)
@@ -132,7 +126,6 @@ def run_command(label, argv, cwd, env, evidence, records):
     if code:
         raise subprocess.CalledProcessError(code, argv)
     return row
-
 
 def safe_environment():
     names = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG',
