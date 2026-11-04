@@ -72,7 +72,8 @@ reads. `baton report --text TEXT` sends a
 result to the recorded coordinator. A worker uses `baton completion-request --text
 SUMMARY` to request review of its completed assignment. A coordinator uses `baton
 completion-confirmed --to PLAYER` or `baton guide --to PLAYER --text TEXT` for its
-decision. Baton resolves the current project, actor, request and handling state.
+decision. Confirmation ends the Player's assignment; `completion-confirmed --to PLAYER
+--next TEXT` confirms and dispatches the Player's next assignment in one transaction. Baton resolves the current project, actor, request and handling state.
 Named arguments and independent batch clauses also cover receiver controls,
 worktrees, knowledge and project settings. The [agent command
 guide](docs/bend2/agent-commands.md) describes context selection, optional selected

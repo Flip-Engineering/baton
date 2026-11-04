@@ -15,7 +15,7 @@ loopback, prints the URL, tries `open`/`xdg-open`, and serves until the command 
 
 The page shows the reporting hierarchy with Ensemble and Section memberships, configured
 harness/model/effort, observed provider identity when recorded, worktree/branch/base,
-recorded execution state, pending and unacknowledged input counts, stop records, and the
+recorded execution state, pending and unread input counts, stop records, and the
 most recent committed transitions with their recorded times.
 
 ## State and event boundary
@@ -23,7 +23,7 @@ most recent committed transitions with their recorded times.
 The server reads the same coordinator database as the CLI. It never writes to it.
 
 - A SQLite trigger set (`native_changes`) appends one row per committed mutation of
-  sessions, roles, executions, stops, messages (including receipts), turns, ensembles,
+  sessions, roles, executions, stops, messages (including reads), turns, ensembles,
   memberships, sections, and native requests, inside the same transaction as the
   mutation. `recorded_at` is the trigger record time. The triggers are installed by
   `Sql.ensure_projection`, called from the native-request commit paths and, once the

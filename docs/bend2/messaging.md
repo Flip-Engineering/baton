@@ -1,7 +1,8 @@
 # Messaging
 
 Messages address logical session IDs. A message retains its ID, sender,
-recipient, kind, complete body and acceptance receipt. The coordinator checks
+recipient, kind and complete body. Baton records delivery and each complete
+recipient-owned read internally. The coordinator checks
 the route before admitting a new public message. `message-file` uses the same
 admission path as `message`.
 
@@ -117,10 +118,10 @@ and membership or send through its immediate Conductor.
 A pending committed message to a non-stopped recipient invokes its endpoint
 when one is registered. Reports and questions for a stopped recipient record
 a handoff to its parent when it has one; unavailable parent delivery returns
-a refusal. Already receipted messages require no further delivery. Active
-retained receive leaves unaccepted input pending; after native exit it checks
+a refusal. Already read messages require no further delivery. Active
+retained receive leaves unread input pending; after native exit it checks
 for input to start the next turn. Pending input remains in the inbox until
-acceptance is recorded.
+the read is recorded.
 
 The OMP Player turn path accepts guidance during a native turn at response,
 completed-message and tool-event boundaries. Guidance during a silent operation

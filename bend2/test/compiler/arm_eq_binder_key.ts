@@ -29,8 +29,16 @@ if (dirArg === undefined || caseArg === undefined) {
 }
 
 const dir = path.resolve(dirArg);
-const source = path.join(dir, "bend2/comp.ts");
-const testModule = path.join(dir, "bend2/comp.arm_eq_test.ts");
+const candidates = [
+  path.join(dir, "bend2/compiler/upstream/comp.ts"),
+  path.join(dir, "bend2/comp.ts"),
+];
+const source = candidates.find((p) => fs.existsSync(p));
+if (source === undefined) {
+  console.error("no comp.ts under " + dir);
+  process.exit(2);
+}
+const testModule = path.join(path.dirname(source), "comp.arm_eq_test.ts");
 fs.writeFileSync(testModule, fs.readFileSync(source, "utf8") + "\nexport { arm_eq };\n");
 let mod: TestModule;
 try {

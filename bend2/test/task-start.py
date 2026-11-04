@@ -26,6 +26,7 @@ fixed = fixture_module('task_fixed_fixture', 'fixed-coordinator.py')
 class TaskStart(unittest.TestCase):
     git = identity.ControlIdentity.git
     call = identity.ControlIdentity.call
+    read_count = identity.ControlIdentity.read_count
     root = identity.ControlIdentity.root
     accept = identity.ControlIdentity.accept
     accept_any = identity.ControlIdentity.accept_any
@@ -226,7 +227,7 @@ class TaskStart(unittest.TestCase):
                 self.assertEqual(native['cwd'], str(self.repo.resolve()))
                 self.failed_turn(session, stream, 'Retained provider error λ🙂\n' + source)
                 self.assertTrue(self.output_log(session).is_file())
-                self.assertEqual(self.call('delivery', result['task'])['receipt'], 'fixture-native-reviewed')
+                self.assertGreater(self.read_count(result['task']), 0)
 
     def test_muse_file_and_claude_stdin_receive_complete_seeded_initial_input(self):
         for harness in ('muse', 'claude-code'):
@@ -447,7 +448,7 @@ class TaskStart(unittest.TestCase):
         self.assertEqual(self.rows('SELECT event FROM turns WHERE id=? AND worker=?',
                                   (execution['id'], session))[0]['event'], retained['body'])
         self.eventually(lambda: self.call('session', session)['blockedCause'] == 'provider-failure')
-        self.assertEqual(self.call('delivery', result['task'])['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count(result['task']), 0)
         refused = self.task_call('--stdin', stdin=body.encode(), project=self.directory,
                                  environment=environment, ok=False)
         self.assertEqual(refused['error']['reason'], 'ENOTDIR')
@@ -646,6 +647,38 @@ class TaskStart(unittest.TestCase):
         self.assertTrue(completion['confirmed'])
         self.assertFalse(completion['open'])
 
+    def test_missing_recorded_receiver_is_reported_before_admission_and_can_be_repaired(self):
+        session = 'repaired-receiver'
+        self.route(session)
+        assignment = self.call('recruit', session, 'root', 'codex', 'gpt-6-astra', 'low',
+                               self.repo, 'repaired-receiver-branch', self.checkouts / session, self.base)
+        old = self.directory / 'removed-client'
+        shutil.copy2(self.fixture, old)
+        log = self.directory / 'repaired-receiver.jsonl'
+        self.call('receiver', session, old, log)
+        with self.held_session(session):
+            self.pending_input('repaired-receiver-assignment', 'root', session, 'task', 'Original receiver task.')
+            old.unlink()
+            body = 'Keep this input available while the recorded receiver is repaired.'
+            refused = self.task_call('--sender', 'root', '--session', session, '--continue',
+                                     '--text', body, ok=False)
+            self.assertEqual(refused['error']['reason'], 'taskCommandMissing')
+            self.assertIn(str(old), refused['error']['detail'])
+            self.assertIn('baton receiver', refused['error']['next'])
+            self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (refused['task'],)), [])
+            self.assertEqual(self.call('delivery', 'repaired-receiver-assignment')['body'], 'Original receiver task.')
+            self.call('receiver', session, self.fixture, log)
+        result = self.task_call('--sender', 'root', '--session', session, '--continue', '--text', body)
+        self.assertEqual(result['status'], 'admitted')
+        self.assertEqual(result['currentSession']['workspace'], assignment['workspace'])
+        self.assert_retained_input(result, body)
+        stream, native = self.accept(session)
+        self.assertEqual(native['cwd'], assignment['workspace'])
+        self.assertIn(body, native['prompt'])
+        self.eventually(lambda: self.call('session', session)['native'] == native['native'])
+        self.finish(stream, 'The repaired receiver delivered the continued task.')
+        self.exited(session)
+
     def test_stopped_session_and_explicit_new_assignment_leave_owned_state_unchanged(self):
         self.call('join', 'stopped', 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
         self.pending_input('owed-original', 'root', 'stopped', 'task', 'Retain the stopped task.')
@@ -719,6 +752,44 @@ class TaskStart(unittest.TestCase):
         stream, native = self.accept('literal-paths')
         self.assertEqual(native['cwd'], str(self.repo.resolve()))
         self.failed_turn('literal-paths', stream, 'Retain the literal-path provider result.')
+
+    def test_dispatch_from_outside_project_resolves_explicit_or_recorded_workspace_before_input(self):
+        body = 'Resolve dispatch setup from the selected repository workspace.'
+        explicit_session = 'explicit-workspace-dispatch'
+        self.route(explicit_session)
+        explicit = self.task_call('--new', '--session', explicit_session, '--workspace', self.repo, '--harness', 'codex',
+                                  '--model', 'gpt-6-astra', '--effort', 'low', '--command', self.fixture,
+                                  '--text', body, database=True, project=self.directory)
+        self.assertEqual(explicit['status'], 'admitted')
+        self.assertEqual(explicit['projectKey'], str(self.repo.joinpath('.git').resolve()))
+        self.assertEqual(explicit['currentSession']['workspace'], str(self.repo.resolve()))
+        self.assert_retained_input(explicit, body)
+        stream, native = self.accept(explicit['session'])
+        self.assertEqual(native['cwd'], str(self.repo.resolve()))
+        self.eventually(lambda: self.call('session', explicit['session'])['native'] == native['native'])
+        self.finish(stream, 'Explicit workspace dispatch completed.')
+        self.exited(explicit['session'])
+
+        session = 'recorded-workspace-dispatch'
+        self.route(session)
+        assignment = self.call('recruit', session, 'root', 'codex', 'gpt-6-astra', 'low',
+                               self.repo, 'recorded-workspace-branch', self.checkouts / session, self.base)
+        self.call('receiver', session, self.fixture, self.directory / 'recorded-workspace.jsonl')
+        with self.held_session(session):
+            self.pending_input('recorded-workspace-assignment', 'root', session, 'task', 'Original task.')
+        result = self.task_call('--sender', 'root', '--session', session, '--continue',
+                                '--harness', 'codex', '--model', 'gpt-6-astra', '--effort', 'low',
+                                '--command', self.fixture, '--text', body,
+                                database=True, project=self.directory)
+        self.assertEqual(result['status'], 'admitted')
+        self.assertEqual(result['projectKey'], str(self.repo.joinpath('.git').resolve()))
+        self.assertEqual(result['currentSession']['workspace'], assignment['workspace'])
+        self.assert_retained_input(result, body)
+        stream, native = self.accept(session)
+        self.assertEqual(native['cwd'], assignment['workspace'])
+        self.eventually(lambda: self.call('session', session)['native'] == native['native'])
+        self.finish(stream, 'Recorded workspace dispatch completed.')
+        self.exited(session)
 
     def test_non_git_nested_workspace_uses_native_prefix_membership_and_rejects_adjacent_path(self):
         self.environment['GIT_CEILING_DIRECTORIES'] = str(self.directory)
@@ -877,13 +948,7 @@ class TaskStart(unittest.TestCase):
                 self.assertEqual((owned['recipient'], owned['native']), ('root', 'saved-root'))
                 self.assertTrue(owned['attempt'].startswith('claude-mcp:'), owned)
                 self.assertIsNone(owned['handled'])
-                handled = invoke('baton2_ack', {})
-                acknowledged = next(row for row in handled if row['id'] == reports[0]['id'])
-                receipt = 'native-turn:' + owned['attempt']
-                self.assertEqual(acknowledged['acknowledgement']['receipt'], receipt)
-                self.assertEqual(self.call('delivery', reports[0]['id'])['receipt'], receipt)
-                invoke('baton2_ack', {})
-                self.assertEqual(self.call('delivery', reports[0]['id'])['receipt'], receipt)
+                self.assertIsNone(self.call('delivery', reports[0]['id'])['receipt'])
                 child.stdin.close()
                 child.stdin = None
                 graceful = True

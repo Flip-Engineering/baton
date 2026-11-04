@@ -133,7 +133,7 @@ def main():
                 raise RuntimeError('Native receiver exited early')
             time.sleep(.01)
     wait_marker('native-ready')
-    coord('ack','initial','root','probe input accepted')
+    coord('as','root','read','initial')
     measures=[]
     start_cpu=cpu(child.pid)
     start=time.monotonic()

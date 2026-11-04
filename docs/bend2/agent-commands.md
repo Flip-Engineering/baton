@@ -6,27 +6,32 @@ database and native conversation ID.
 
 ```sh
 baton inbox
+baton report 'The checks passed.'
+baton ask 'Which target should receive the change?'
+baton send reviewer 'The change is ready for review.'
+baton guide worker 'Check the remaining failure.'
+baton finish 'The assigned work is complete.'
+baton confirm worker
 baton read message-one message-two
-baton acknowledge
 ```
 
-`read` returns complete stored deliveries in argument order, including messages
-that already have receipts. Each ID has its own result. `acknowledge` selects the
-current actor's completely read inputs and derives receipts from native handling
-evidence. Optional message selectors and `--receipt` retain explicit compatibility.
-Each owned message returns its retained receipt. The first receipt
-remains stored. Reading preserves pending receipts.
+`inbox` returns complete pending bodies. `read` returns complete stored
+deliveries in argument order, including messages that were already read. Each ID
+has its own result. Baton records a real read event internally when the recipient
+reads the input; the read persists even if the turn later fails or is
+interrupted. Pending input means delivered but not yet read.
 
-Send several independent messages with `and` or `--and` between complete clauses:
+`report` and `ask` address the recorded coordinator. `send PLAYER TEXT` sends a
+report; `guide PLAYER TEXT` sends guidance. Baton creates the action identities.
+The named forms retain explicit kinds and independent message clauses:
 
 ```sh
-baton send parent --kind report --text 'Result.' \
-  and parent --kind report --file result.txt
+baton send parent --text 'Result.' and reviewer --kind guidance --text 'Review this result.'
 ```
 
 Each clause has a recipient, kind and text or file body. `--id` applies to that
 clause; an omitted ID is generated and returned. Explicit IDs use Baton's existing
-exact retry and conflict rules. Each item reports admission, wake and receipt
+exact retry and conflict rules. Each item reports admission, wake and read state
 separately. File, admission and wake failures retain their individual causes and
 the results of other items. A malformed command returns before message admission.
 `--file -` reads standard input.
@@ -65,20 +70,80 @@ Workers send a completion request with a complete report body. A coordinator
 confirms the selected worker's current owned request:
 
 ```sh
-baton completion-request --text 'The assigned work is complete.'
-baton completion-confirmed --to worker
-baton guide --to worker --text 'Continue the assigned work and report the result.'
+baton finish 'The assigned work is complete.'
+baton confirm worker
+baton guide worker 'Continue the assigned work and report the result.'
 ```
 
-The completion request uses the current session's recorded parent. A parentless
-session receives a structured refusal. The coordinator can use `guide` to send
+The completion request goes to the current session's coordinator, which is its
+recorded parent while that parent is not over (see the succession section below). A
+parentless conductor sends it to the registered operator. A parentless Player, and a
+parentless conductor with no registered operator, receive a structured refusal. Baton generates the request
+identity. An explicit `--id` must name the session's own current completion request
+for its open assignment, and the request replays to the recipient it recorded; an
+unrecorded identity, another message's identity or an older request is refused with its
+cause and stores nothing. The coordinator can use `guide` to send
 further work. Each decision action uses the ordinary message admission result,
 wake result and retained delivery. Baton selects the current request addressed
-to the coordinator and constructs its confirmation. Use `--to PLAYER` when
-selecting a worker; an explicit `--request ID` must name a retained completion request
-from that worker addressed to the current coordinator. An omitted recipient selects the current eligible owned request scope.
-Use `--file PATH` for a complete report body. Mutation IDs are generated internally;
-explicit `--id ID` retains exact retry and conflict compatibility.
+to the coordinator and constructs its confirmation. The compatibility command
+`completion-confirmed --request ID --to PLAYER` selects an exact retained request
+from that worker addressed to the current coordinator. `confirm` without a Player
+selects the sole current request.
+The named completion commands retain explicit body and identity options.
+
+A confirmation ends the Player's assignment unless the same decision dispatches the
+next assignment. `taskCompletion.ended` in the session, player and assignment reads
+is true when the Player's current completion request has a stored
+`completion-confirmed` and the session has no explicit stop; a newer assignment from
+the coordinator makes it false again. The state derives from the stored messages, so
+the `message ... completion-confirmed` low-level form produces it as well. Baton
+signals no native process and records no stop.
+
+An ended assignment admits no new native attempt and starts no wake. The session
+projection reports `blockedCause` `assignment-ended` and a pending count of zero.
+An attempt that is already running keeps its identity and finishes normally. Input
+from an operator and a newer coordinator assignment reopen the same native
+conversation. An explicit stop keeps its effect: the Player is not ended while it is
+stopped, and a stopped Player refuses every new confirmation and task. Owed input
+stays unread in the inbox; Baton records no read for it.
+
+`completion-confirmed --next TEXT` and `--next-file PATH` read the text or file
+content first (UTF-8, no NUL, nonempty), then store the confirmation and a `task`
+for the same Player in one transaction. Delivery wakes follow the committed outcome.
+The task identity is the confirmation identity followed by `:next-assignment`, so
+repeating the decision with the same `--id` stores no second task. The result array
+holds the admitted confirmation and the admitted task. An explicit stop, a refused
+route or an identity conflict stores neither message. The confirmation is written
+only when the request is the Player's current request, or when both rows of the same
+decision are already stored; a stored confirmation never admits a new task after a
+newer assignment replaced its request. The MCP `baton2_guide` and
+`baton2_message_batch` tools accept `next` on a `completion-confirmed` item and pass
+it as `--next`; the legacy `body` field names the request, as `request` does.
+
+## Teams and branching
+
+A Principal Conductor coordinates the whole assignment; an Associate Conductor
+coordinates a delegated subtask. An Ensemble records a team owner and members.
+Configure loose coupling for parent-child and Conductor-descendant messaging.
+Tight coupling additionally permits non-operator peers sharing the Ensemble to
+exchange messages, including peers with different parents. Peers have no ancestor
+relationship; operators use the top-level Conductor route. The recorded Ensemble
+owner manages membership. A Section supplies capability labels and member subsets
+for work organization; routing, knowledge visibility and branching use Ensemble
+and session records.
+
+Branching compares alternatives on a team with either coupling: snapshot a
+settled agent's workspace, start fresh conversations in separate worktrees, evaluate,
+select, then continue the selected conversation. Omit `--ensemble` only for a
+Conductor's sole owned Ensemble. `--from SESSION` defaults to the latest selected
+Player in that Ensemble, or the current Conductor before any selection; the
+source needs a recorded Git workspace and settled native custody. `evaluate`
+records evidence; `select` without `--player` chooses the unique accepted best
+score after every branch settles successfully. Direction defaults to `max`.
+
+Use `baton help role`, `baton help ensemble`, `baton help section` and
+`baton help branch` for usage. `baton branch --help` also shows branch usage.
+The [branching guide](branching-ensembles.md) describes selection and recovery.
 
 ## Named action batches
 
@@ -99,7 +164,7 @@ baton attempt --and attempts --and outbox
 ```
 
 Inspections, completion decisions, guidance and the native operations below
-can share one batch, including bare `acknowledge`. Session, Player and assignment clauses use `--session` or
+can share one batch. Session, Player and assignment clauses use `--session` or
 `--id` to select a recorded target; omission selects the current actor. Each
 item retains complete `stdout`, `stderr`, actual `waitStatus` and command
 arguments. Its process status reports `completed`, `failed` or `refused`.
@@ -112,7 +177,13 @@ single forms. They resolve the recorded parent or retained request author and
 enforce the current coordinator and explicit recipient checks. Complete bodies
 travel to the child command through UTF-8 JSON standard input. Multiple explicit
 stdin file references share the invocation's complete captured text. MCP contextual
-arguments travel directly as a complete JSON array over standard input.
+arguments travel directly as a complete JSON array over standard input. One
+`baton2_action` call names one top-level contextual CLI action. Its `arguments`
+can contain the named batch grammar above; compact positional forms use their
+own grammar. A branch operation uses one `branch` call with subcommand arguments.
+The tool supports contextual inspections, dispatch, knowledge and team controls
+as well as messaging. `action: "help", arguments: []` discovers the surface;
+`action: "help", arguments: ["branch"]` reads complete branch usage.
 
 ## Native operations
 
@@ -127,7 +198,7 @@ baton continue-task --session worker
 `attempt` reads the selected session's execution and assignment state.
 `attempt --id INPUT_ID` reads the stored input and its related attempt. `attempts`
 reads complete turn history, and `outbox` reads authored messages and their
-recipient receipts. These reads retain the existing task and receipt state.
+recipient read state. These reads retain the existing task and read state.
 
 `status` and `orchestra` read their existing database projections. `pending`
 reads complete pending input. `pending --index` enables native metadata filters:
@@ -143,6 +214,20 @@ the selected recorded session. An omitted command and log use its recorded
 native receiver. Explicit fields take precedence. The native configuration
 operation enforces the expected route, current attempt and explicit stop rules.
 
+For an OMP session, `receiver` runs the harness command before the endpoint is
+recorded. The command starts in rpc mode with the recorded model and effort and
+a fresh token-named session directory beside the database, so the recorded
+session store is never an input to the probe. Its first stdout line must be a
+JSON object with `"type":"ready"`; that line, read to its natural end, decides
+admission and refusal, and no deadline or output-size limit gates the answer.
+After the outcome the probe stops only its own child — stdin ends, then the
+terminate signal, then the wait that reaps it — and removes its scratch files.
+A refused command answers `receiver-refused` with the offending line as
+`stdout` and the captured `stderr`. A refusal leaves the endpoint, workspace,
+model, native identity and pending input as recorded, and creates no execution
+row and no output log. A wrapper script is accepted when it delivers the
+frame.
+
 `resume --lift-stop` explicitly lifts an existing stop and resumes its recorded
 conversation. `resume --clear-stop` (also `clear-stop`) removes a terminal stop
 only: it preserves the native identity, conversation history, workspace and
@@ -155,6 +240,82 @@ exact compatibility.
 `recover-observer --observer PID` uses the existing observer recovery path.
 `continue-task` sends an explicit continuation through the existing assignment
 operation. Each action accepts `--session SESSION`.
+
+## Conductor succession and ended conductors (#1257)
+
+A session is over when it has an explicit stop, or when a coordinator of the session
+confirmed its current completion request and nothing newer followed. The coordinators
+that may confirm are those that hold authority over the assignment: the recorded
+parent, every ancestor of the parent, every recorded successor of any of them, and the
+registered operator. One authority set decides `taskCompletion.confirmed`, the exact
+and inferred completion-confirmed selectors, the assignments that count as a newer
+task, and native replies, so a session is over exactly when its assignment is confirmed
+or it is stopped. A session outside the set, such as an unrelated tight Ensemble peer
+or an unregistered name, is refused. The operator holds this authority over every
+Player, including a parentless conductor; it can send a Player a task only as the
+Player's parent or, when every ancestor is over, as its coordinator.
+
+A Player's current coordinator is the nearest of those coordinators that is not over.
+Distance counts recorded-parent steps; a recorded successor stands at its
+predecessor's distance and is preferred. When every one of them is over, the
+coordinator is the registered operator. Turn-end reports, failure reports,
+`completion-request`, `report`, `ask`, native questions, knowledge notices and the
+blocked owner use the current coordinator, and the Player and its current coordinator
+may message each other. A Player with no coordinator that is not over and no
+registered operator receives a structured refusal (`report-recipient-missing` for a
+report or question).
+
+A parentless conductor's coordinator is the registered operator. Its assignment from
+the operator is open until confirmed, its task state names the operator as the
+coordinator, and its completion requests, native questions and knowledge notices go
+to the operator. A parentless conductor with no registered operator, and a parentless
+Player, have no coordinator: their assignment is not open, their completion requests
+and native questions are refused, and their findings send no notice.
+
+A message that Baton admitted under a retained identity keeps its recorded recipient.
+Repeating `report`, `ask`, a knowledge record, a turn-end report or a native question
+with the same identity after a succession or an ending replays the original admitted
+row; the same identity with different content is a `message-id-conflict` naming the
+stored recipient. A new identity takes the coordinator at that time. A native question
+records its coordinator when it is raised; that coordinator, any successor and any
+ancestor in the Player's authority can reply to it.
+
+`succeed --from PREDECESSOR [--session SUCCESSOR]` runs as the successor (omitted
+`--session` selects the current actor) and records that the successor replaces a
+predecessor that is over. The successor must not be over and must share the
+predecessor's parent or be an ancestor of the predecessor. A second successor of the
+same predecessor is refused. Baton records a message of kind `succession`, ID
+`succession:PREDECESSOR:SUCCESSOR`, sent by the successor to the predecessor. Only
+this action writes that kind; an ordinary message with kind `succession` is refused.
+The record exists whether or not the predecessor has children or a report recipient.
+
+The predecessor's children, their assignments, completion requests, confirmations,
+messages and read states stay as recorded, and no session parent changes. The
+successor and every ancestor of a Player hold coordinator authority over its
+assignment, request and confirmation. A confirmation that the predecessor recorded
+keeps ending the Player's assignment, and the successor can confirm a request that
+was addressed to the predecessor without the Player sending it again.
+
+`succeed` also forwards the predecessor's unresolved input to the successor. That
+input is every message addressed to the predecessor with no recorded read, except
+confirmations, task continuations and succession records, the current completion
+request of each Player that the predecessor read but did not confirm, and each native
+question that the predecessor read whose request has no stored reply and is not
+closed. Each item
+becomes a new message of kind `forwarded-input` sent to the successor. It keeps the
+original sender, names the original message ID and kind, and carries the complete
+original text. The forwarded copy has its own kind, so the Player's assignment and
+current completion request stay as the Player recorded them. Repeating the
+action forwards only input that arrived after the previous run. Baton wakes the
+successor after the record commits.
+
+When a session with live children, or with unresolved input from its children,
+becomes over, by an explicit stop or by a confirmation of its completion, Baton
+records a `session-ended` report in the same transaction and wakes its recipient: the
+session's current coordinator. The report lists the live children and the unresolved
+input IDs. The coordinator can
+run `succeed --from SESSION` from a replacement conductor, adopt the children as an
+ancestor with the same action, or assign or stop the children.
 
 ```sh
 printf '%s\n' 'Review the assigned source and report the result.' |
@@ -272,9 +433,12 @@ baton section-member --ensemble review-team --id review --player worker --action
 baton ensemble --id review-team --and orchestra
 ```
 
-`role` reads the selected session role; `--role` invokes native role assignment.
-`ensemble --id ID` reads a group. `--owner SESSION` ensures it for the named
-owner, and `--coupling loose|tight` creates or configures its coupling. An omitted
+`role` reads the selected session role; `--role` assigns an existing session.
+Principal Conductor and operator require no parent; Associate Conductor requires
+a parent. Assignment updates the responsibility used by message routing and
+Conductor operations. Parentage, Ensemble ownership, live work and accepted input
+remain retained. `ensemble --id ID` reads a group. `--owner SESSION` ensures it
+for the named owner, and `--coupling loose|tight` creates or configures its coupling. An omitted
 configuration owner selects the current actor. `section` reads the named Section;
 `--capability TEXT` creates or configures it for `--owner`, which also defaults
 to the current actor. Membership actions require `--player` and `--action add|remove`.

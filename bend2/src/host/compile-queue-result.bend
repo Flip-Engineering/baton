@@ -35,6 +35,8 @@ import ./compile-queue-lifecycle.bend as L
 #
 # The directory value is the artifact binding's tree hash, not an existence
 # test.
+# Failure results may include a `stage` field identifying the operation that
+# failed; existing results without that field remain valid.
 
 def CompileQueueResult.schema() -> String:
   "baton-compile-queue-result-v2"
@@ -89,7 +91,9 @@ def CompileQueueResult.read_rows(+path: String) -> IO(Result<&1,&1,U32 & String,
     CompileQueueResult.read_rows_result(read)
 
 def CompileQueueResult.completed(+result: String) -> Bool:
-  Bool.and(String.eq(CompileQueueResult.field(result, "status"), "completed"), Bool.not(String.is_empty(CompileQueueResult.artifact_rows(result))))
+  Bool.and(String.eq(CompileQueueResult.field(result, "status"), "completed"),
+    Bool.or(String.eq(CompileQueueResult.field(result, "kind"), "check"),
+      Bool.not(String.is_empty(CompileQueueResult.artifact_rows(result)))))
 
 def CompileQueueResult.base_verified(+result: String, +key: String) -> Bool:
   Bool.and(String.eq(CompileQueueResult.field(result, "schema"), CompileQueueResult.schema()),
@@ -174,11 +178,20 @@ def CompileQueueResult.verify_rows(+rows: List<&2,String>, +keydir: String) -> I
           ok : Bool <- CompileQueueResult.verify_row(row, keydir)
           Bool.pick(IO(Bool), ok, CompileQueueResult.verify_rows(rest, keydir), IO.pure(Bool, False{})))
 
+# State inspection reads the persisted record only: schema, identity,
+# key, verified flag, status and artifact membership. It never hashes
+# the artifact tree. Content qualification stays with verify and
+# reusable, which compare the recorded artifact rows against the
+# actual files before any reuse or adoption.
 def CompileQueueResult.acceptable(+result: String, +key: String, +rows: String) -> Bool:
   Bool.and(String.eq(CompileQueueResult.field(result, "external"), "0"),
     Bool.and(CompileQueueResult.base_verified(result, key),
       Bool.and(CompileQueueResult.completed(result),
-        Bool.not(String.is_empty(rows)))))
+        Bool.pick(Bool, String.eq(CompileQueueResult.field(result, "kind"), "check"),
+          String.is_empty(rows), Bool.not(String.is_empty(rows))))))
+
+def CompileQueueResult.recorded_completed(+result: String, +key: String) -> Bool:
+  CompileQueueResult.acceptable(result, key, CompileQueueResult.artifact_rows(result))
 
 def CompileQueueResult.verify_result_read(read: Result<&1,&1,U32 & String,String>, +keydir: String, +key: String) -> IO(Bool):
   match read:
@@ -210,6 +223,11 @@ def CompileQueueResult.write_text_result(written: Result<&1,&1,U32 & String,Unit
 def CompileQueueResult.write_text(+path: String, +text: String, +temporary: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     written : Result<&1,&1,U32 & String,Unit> <- F.Files.write_private(temporary, text)
+    CompileQueueResult.write_text_result(written, path, temporary)
+
+def CompileQueueResult.write_result_text(+path: String, +text: String, +temporary: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    written : Result<&1,&1,U32 & String,Unit> <- F.Files.write_group_read(temporary, text)
     CompileQueueResult.write_text_result(written, path, temporary)
 
 def CompileQueueResult.install(+source: String, +destination: String, +staging: String) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -313,7 +331,13 @@ def CompileQueueResult.work_rows(+work: String, +names: List<&2,String>, +acc: C
           one : CompileQueueRow <- IO.try(CompileQueueRow, CompileQueueResult.work_row(work, name))
           CompileQueueResult.work_rows(work, rest, CompileQueueResult.combine_rows(acc, one)))
 
-def CompileQueueResult.write_rows(+path: String, +status: String, +code: String, +kind: String, +key: String, +started: String, +finished: String, +attempt: String, +work: String, +stdout_row: String, +stderr_row: String, +row_result: CompileQueueRow, +detail: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def CompileQueueResult.stage_line(+stage: String) -> String:
+  Bool.pick(String, String.is_empty(stage), "", "stage=" ++ stage ++ "\n")
+
+def CompileQueueResult.report_stage_line(+stage: String) -> String:
+  Bool.pick(String, String.is_empty(stage), "", "compile-queue: " ++ CompileQueueResult.stage_line(stage))
+
+def CompileQueueResult.write_rows(+path: String, +status: String, +code: String, +kind: String, +key: String, +started: String, +finished: String, +attempt: String, +work: String, +stdout_row: String, +stderr_row: String, +row_result: CompileQueueRow, +detail: String, +stage: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match row_result:
     case CompileQueueRow{artifact_text, artifact_ok}:
       verified = Bool.pick(String, Bool.and(String.eq(status, "completed"), String.eq(artifact_ok, "1")), "1", "0")
@@ -325,15 +349,19 @@ def CompileQueueResult.write_rows(+path: String, +status: String, +code: String,
         ++ "attempt=" ++ attempt ++ "\n"
         ++ "work=" ++ work ++ "\n"
         ++ "detail=" ++ detail ++ "\n"
+        ++ CompileQueueResult.stage_line(stage)
         ++ stdout_row ++ stderr_row ++ artifact_text
-      CompileQueueResult.write_text(path, text, path ++ ".tmp")
+      CompileQueueResult.write_result_text(path, text, path ++ ".tmp")
 
-def CompileQueueResult.write(+path: String, +status: String, +code: String, +kind: String, +key: String, +started: String, +finished: String, +attempt: String, +work: String, +stdout: String, +stderr: String, +detail: String, +names: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def CompileQueueResult.write_with_stage(+path: String, +status: String, +code: String, +kind: String, +key: String, +started: String, +finished: String, +attempt: String, +work: String, +stdout: String, +stderr: String, +detail: String, +stage: String, +names: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     stdout_row : String <- IO.try(String, CompileQueueResult.log_text("stdout", stdout))
     stderr_row : String <- IO.try(String, CompileQueueResult.log_text("stderr", stderr))
     row_result : CompileQueueRow <- IO.try(CompileQueueRow, CompileQueueResult.work_rows(work, String.lines(names), CompileQueueRow{"", "1"}))
-    CompileQueueResult.write_rows(path, status, code, kind, key, started, finished, attempt, work, stdout_row, stderr_row, row_result, detail)
+    CompileQueueResult.write_rows(path, status, code, kind, key, started, finished, attempt, work, stdout_row, stderr_row, row_result, detail, stage)
+
+def CompileQueueResult.write(+path: String, +status: String, +code: String, +kind: String, +key: String, +started: String, +finished: String, +attempt: String, +work: String, +stdout: String, +stderr: String, +detail: String, +names: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  CompileQueueResult.write_with_stage(path, status, code, kind, key, started, finished, attempt, work, stdout, stderr, detail, "", names)
 
 def CompileQueueResult.retain_rows(+work: String, +destination: String, +names: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match names:
@@ -427,7 +455,7 @@ def CompileQueueResult.write_adoption(+path: String, +key: String, +started: Str
       ++ adoption
       ++ "external-name=" ++ name ++ "\n"
       ++ "artifact=" ++ name ++ "\t" ++ kind ++ "\t" ++ digest ++ "\n")
-    CompileQueueResult.write_text(path, text, path ++ ".tmp")
+    CompileQueueResult.write_result_text(path, text, path ++ ".tmp")
 
 def CompileQueueResult.verify_adoption_read(read: Result<&1,&1,U32 & String,String>, +keydir: String, +adoption: String) -> IO(Result<&1,&1,U32 & String,Bool>):
   match read:
@@ -526,6 +554,45 @@ def CompileQueueResult.receipt_write(+receipt: String, +status: String, +key: St
   +missing = String.is_empty(receipt)
   CompileQueueResult.receipt_write_missing(missing, receipt, status, key, reused, owner, rows)
 
+def CompileQueueResult.receipt_failure_text(status: String, key: String, owner: String,
+                                            exit: String, detail: String, stage: String) -> String:
+  "status=" ++ status ++ "\n"
+    ++ "key=" ++ key ++ "\n"
+    ++ "reused=0\n"
+    ++ "owner=" ++ owner ++ "\n"
+    ++ "exit=" ++ exit ++ "\n"
+    ++ "detail=" ++ detail ++ "\n"
+    ++ CompileQueueResult.stage_line(stage)
+
+def CompileQueueResult.receipt_failure_missing(missing: Bool, +receipt: String,
+                                               status: String, key: String,
+                                               owner: String, exit: String,
+                                               detail: String, stage: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match missing:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
+    case False{}:
+      CompileQueueResult.write_text(receipt,
+        CompileQueueResult.receipt_failure_text(status, key, owner, exit, detail, stage),
+        receipt ++ ".tmp")
+
+def CompileQueueResult.receipt_failure_result(read: Result<&1,&1,U32 & String,String>,
+                                              +receipt: String, owner: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match read:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
+    case Done{+result}:
+      CompileQueueResult.receipt_failure_missing(String.is_empty(receipt), receipt,
+        CompileQueueResult.field(result, "status"),
+        CompileQueueResult.field(result, "key"), owner,
+        CompileQueueResult.field(result, "exit"),
+        CompileQueueResult.field(result, "detail"),
+        CompileQueueResult.field(result, "stage"))
+
+def CompileQueueResult.receipt_write_failure(+receipt: String, +result_path: String,
+                                             owner: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(result_path)
+    CompileQueueResult.receipt_failure_result(read, receipt, owner)
+
 def CompileQueueResult.run_name_parts(parts: List<&2,String>) -> String:
   match parts:
     case kind <> name <> tail:
@@ -622,7 +689,9 @@ def CompileQueueResult.report_failure_result(read: Result<&1,&1,U32 & String,Str
       do IO<Unit>:
         tail : String <- CompileQueueResult.read_or_empty(CompileQueueResult.dirname(path) ++ "/stderr")
         code : U32 <- IO.pure(U32, CompileQueueResult.failure_exit(U32.read(CompileQueueResult.field(result, "exit"))))
-        IO.die(Unit, code, "compile-queue: " ++ CompileQueueResult.field(result, "kind") ++ " execution " ++ CompileQueueResult.field(result, "status") ++ " key=" ++ CompileQueueResult.field(result, "key") ++ " exit=" ++ CompileQueueResult.field(result, "exit") ++ "\ncompile-queue: " ++ CompileQueueResult.field(result, "detail") ++ "\n" ++ tail)
+        stage : String <- IO.pure(String, CompileQueueResult.field(result, "stage"))
+        stage_line : String <- IO.pure(String, CompileQueueResult.report_stage_line(stage))
+        IO.die(Unit, code, "compile-queue: " ++ CompileQueueResult.field(result, "kind") ++ " execution " ++ CompileQueueResult.field(result, "status") ++ " key=" ++ CompileQueueResult.field(result, "key") ++ " exit=" ++ CompileQueueResult.field(result, "exit") ++ "\n" ++ stage_line ++ "compile-queue: " ++ CompileQueueResult.field(result, "detail") ++ "\n" ++ tail)
 
 def CompileQueueResult.report_failure(+path: String) -> IO(Unit):
   do IO<Unit>:

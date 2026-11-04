@@ -17,11 +17,7 @@ case "${BATON_COMPILE_QUEUE_ROOT:-}" in
 esac
 
 T=$(mktemp -d "${TMPDIR:-/tmp}/compile-queue-test.XXXXXX") || exit 2
-if [ -n "${BATON_COMPILE_QUEUE_TEST_EVIDENCE:-}" ]; then
-  trap 'printf "evidence=%s\n" "$T"' EXIT
-else
-  trap 'rm -rf -- "$T"' EXIT
-fi
+trap 'rm -rf -- "$T"' EXIT
 STATE=$BATON_COMPILE_QUEUE_ROOT
 if [ ! -e "$STATE" ]; then
   (umask 0007; mkdir -p -m 2770 "$STATE") || exit 2
@@ -45,7 +41,6 @@ tag=fake
 log=''
 out=''
 sleep_s=0
-alloc=0
 fail=0
 gpu=0
 suffix_sensitive=0
@@ -55,7 +50,6 @@ for arg in "$@"; do
     --tag) tag=$arg ;;
     --log) log=$arg ;;
     --sleep) sleep_s=$arg ;;
-    --alloc-mb) alloc=$arg ;;
   esac
   case $arg in
     --fail) fail=1 ;;
@@ -67,7 +61,6 @@ for arg in "$@"; do
 done
 now() { python3 -c 'import time;print(time.time_ns())'; }
 [ -n "$log" ] && printf 'start %s %s %s\n' "$(now)" "$$" "$tag" >> "$log"
-[ "$alloc" = 0 ] || python3 -c "b = b'x' * ($alloc * 1048576)"
 if [ "$fail" = 1 ]; then
   printf 'synthetic compiler failure %s\n' "$tag" >&2
   [ -n "$log" ] && printf 'end %s %s %s 3\n' "$(now)" "$$" "$tag" >> "$log"
@@ -93,19 +86,6 @@ mkdir -p "$T/src/bend2/src"
 printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"fixture")\n' > "$T/src/bend2/src/fixture.bend"
 printf 'int main(void){return 0;}\n' > "$T/input.c"
 
-# A queue job whose key, entry and compiler have no recorded peak runs only when
-# no other such job runs. A compiler of its own gives a test a group of its own.
-# A state root of its own for a test that needs nothing recorded.
-fresh_state() {
-  (umask 0007; mkdir -p -m 2770 "$T/state-$1")
-  printf '%s\n' "$T/state-$1"
-}
-
-fresh_fake() {
-  [ -x "$T/fake-$1" ] || { cp "$FAKE" "$T/fake-$1"; printf '# %s\n' "$1" >> "$T/fake-$1"; chmod +x "$T/fake-$1"; }
-  printf '%s\n' "$T/fake-$1"
-}
-
 fail=0
 pass() { printf 'PASS %s\n' "$1"; }
 bad() { printf 'FAIL %s\n' "$1" >&2; fail=1; }
@@ -115,41 +95,51 @@ run_cc() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  BATON_COMPILE_QUEUE_ROOT="${CQ_STATE:-$STATE}" sh "$QUEUE" run --kind cc --source-root "$T" --state-root "${CQ_STATE:-$STATE}" --cwd "$T" --compiler "${CQ_FAKE:-$FAKE}" --linker "${CQ_FAKE:-$FAKE}" --version fake-version \
+  sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
     --input "$T/input.c" --artifact "binary=$out" --receipt "$out.receipt" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
-    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
+    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
 }
 
 cc_key() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  BATON_COMPILE_QUEUE_ROOT="${CQ_STATE:-$STATE}" sh "$QUEUE" key --kind cc --source-root "$T" --state-root "${CQ_STATE:-$STATE}" --cwd "$T" --compiler "${CQ_FAKE:-$FAKE}" --linker "${CQ_FAKE:-$FAKE}" --version fake-version \
+  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
     --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
-    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@"
+    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@"
 }
 
 run_cgen() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  BATON_COMPILE_QUEUE_ROOT="${CQ_STATE:-$STATE}" sh "$QUEUE" run --kind cgen --state-root "${CQ_STATE:-$STATE}" --cwd "$T/src" --root "$T/src" \
-    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "${CQ_FAKE:-$FAKE}" \
+  sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
     --artifact "c.c=$out" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
-    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" --log "$LOG" -o "$out" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
+    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
+}
+
+run_check() { # tag receipt extra...
+  tag=$1
+  receipt=$2
+  shift 2
+  sh "$QUEUE" run --kind check --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" --receipt "$receipt" \
+    --option "test=$tag" --token "tok-$tag" \
+    -- "$FAKE" --tag "$tag" --log "$LOG" --check-only "$@" >"$T/$tag.out" 2>"$T/$tag.err"
 }
 
 cgen_key() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  BATON_COMPILE_QUEUE_ROOT="${CQ_STATE:-$STATE}" sh "$QUEUE" key --kind cgen --state-root "${CQ_STATE:-$STATE}" --cwd "$T/src" --root "$T/src" \
-    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "${CQ_FAKE:-$FAKE}" \
+  sh "$QUEUE" key --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
     --artifact "c.c=$out" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
-    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" --log "$LOG" -o "$out" "$@"
+    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$@"
 }
 
 # A quoted include that names a directory fails during closure reads before execution.
@@ -163,6 +153,64 @@ else
 fi
 [ "$(count_starts)" = 0 ] && pass 'failed source closure did not start the fake compiler' || bad 'failed source closure started the fake compiler'
 printf 'int main(void){return 0;}\n' > "$T/input.c"
+
+# A check request uses source identity and queue custody without declaring an artifact.
+CHECK_RECEIPT="$T/check.receipt"
+run_check check-success "$CHECK_RECEIPT" \
+  && grep -q '^status=completed$' "$CHECK_RECEIPT" \
+  && ! grep -q '^artifact-' "$CHECK_RECEIPT" \
+  && pass 'check phase completed and recorded no artifacts' \
+  || bad 'check phase did not complete without artifacts'
+if run_check check-failure "$T/check-failure.receipt" --fail; then
+  bad 'check phase accepted a failing compiler'
+else
+  grep -q '^status=failed$' "$T/check-failure.receipt" \
+    && grep -q '^exit=3$' "$T/check-failure.receipt" \
+    && pass 'check phase preserved compiler failure status' \
+    || bad 'check phase lost compiler failure status'
+fi
+
+# A check waiting for the shared lock revalidates the compiler before execution.
+CHECK_COMPILER="$T/check-compiler"
+cp "$FAKE" "$CHECK_COMPILER"
+chmod +x "$CHECK_COMPILER"
+CHECK_KEY=$(sh "$QUEUE" key --kind check --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+  --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$CHECK_COMPILER" \
+  --option test=identity-change -- \
+  "$CHECK_COMPILER" --tag identity-change --log "$LOG" --check-only)
+: > "$LOG"
+(
+  flock -x "$STATE/heavy.lock" sh -c 'touch "$1"; sleep 1' sh "$T/heavy-lock-held"
+) &
+BLOCKER=$!
+i=0
+while [ ! -e "$T/heavy-lock-held" ] && [ "$i" -lt 200 ]; do i=$((i + 1)); sleep 0.01; done
+if [ ! -e "$T/heavy-lock-held" ]; then
+  bad 'heavy lock fixture did not acquire the queue lock'
+else
+  sh "$QUEUE" run --kind check --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$CHECK_COMPILER" \
+    --receipt "$T/identity-change.receipt" --option test=identity-change --token tok-identity-change \
+    -- "$CHECK_COMPILER" --tag identity-change --log "$LOG" --check-only \
+    >"$T/identity-change.out" 2>"$T/identity-change.err" &
+  CHECK_REQUEST=$!
+  i=0
+  while [ ! -e "$STATE/keys/$CHECK_KEY/active" ] && [ "$i" -lt 200 ]; do i=$((i + 1)); sleep 0.01; done
+  if [ ! -e "$STATE/keys/$CHECK_KEY/active" ]; then
+    bad 'check request did not publish active custody while queued'
+  else
+    printf '\n# compiler changed while the check waited for admission\n' >> "$CHECK_COMPILER"
+  fi
+  wait "$BLOCKER" || bad 'heavy lock fixture failed'
+  check_rc=0
+  wait "$CHECK_REQUEST" || check_rc=$?
+  [ "$check_rc" != 0 ] \
+    && grep -q '^status=failed$' "$T/identity-change.receipt" \
+    && grep -q 'request identity changed before execution' "$T/identity-change.err" \
+    && [ "$(grep -c '^start' "$LOG" 2>/dev/null || true)" = 0 ] \
+    && pass 'changed compiler identity failed before check execution' \
+    || bad 'queued check ran after compiler identity changed'
+fi
 
 # A release-root compiler identity walks nested release files. Host list_dir
 # returns newline-terminated rows, so this checks the terminal empty row too.
@@ -268,6 +316,29 @@ after=$(count_starts)
 grep -Fx "artifact-binary=$T/reuse" "$T/reuse.receipt" \
   && pass 'reused receipt records the bare artifact binding' || bad 'reused receipt artifact binding differs'
 
+# Same-length corruption in an internal completed artifact triggers a fresh
+# execution, restores the verified cache bytes, and leaves the new result reusable.
+reuse_key=$(cc_key ident "$T/reuse")
+cached="$STATE/keys/$reuse_key/completed/artifacts/binary"
+python3 - "$cached" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+data = path.read_bytes()
+corrupt = bytes(byte ^ 0xff for byte in data)
+if len(corrupt) != len(data):
+    raise SystemExit("corruption changed the cached artifact length")
+path.write_bytes(corrupt)
+PY
+corrupt_before=$(count_starts)
+run_cc ident "$T/recovered" || bad 'corrupt cache recovery request failed'
+corrupt_after=$(count_starts)
+[ "$corrupt_after" -gt "$corrupt_before" ] && pass 'corrupt internal result recompiled' || bad "corrupt cache starts $corrupt_before -> $corrupt_after"
+[ "$(cat "$T/recovered")" = "artifact-ident" ] && pass 'recovered artifact bytes match' || bad 'recovered artifact differs'
+[ "$(cat "$cached")" = "artifact-ident" ] && pass 'recovered cache artifact restored' || bad 'recovered cache artifact differs'
+reuse_before=$(count_starts)
+run_cc ident "$T/recovered-again" || bad 'post-recovery reuse request failed'
+[ "$(count_starts)" = "$reuse_before" ] && pass 'recovered result reused' || bad "post-recovery starts $(count_starts)"
+
 # Copying an artifact must work under an ordinary pre-existing output parent.
 mkdir -p "$T/ordinary-output"
 chmod 755 "$T/ordinary-output"
@@ -322,13 +393,13 @@ wait "$c2" || bad 'identical cgen second requester failed'
 [ "$(count_starts)" = 1 ] && pass 'identical cgen shared one execution' || bad "identical cgen starts=$(count_starts)"
 [ "$(cat "$T/cgen1")" = "$(cat "$T/cgen2")" ] && pass 'identical cgen artifacts match' || bad 'identical cgen artifacts differ'
 
-# Distinct cgen requests without a recorded peak run one at a time.
+# Distinct cgen requests serialize.
 : > "$LOG"
-( CQ_STATE=$(fresh_state serial); run_cgen serial1 "$T/serial1" --sleep 1 ) & s1=$!
-( CQ_STATE=$(fresh_state serial); run_cgen serial2 "$T/serial2" --sleep 1 ) & s2=$!
+run_cgen serial1 "$T/serial1" --sleep 1 & s1=$!
+run_cgen serial2 "$T/serial2" --sleep 1 & s2=$!
 wait "$s1" || bad 'serial first requester failed'
 wait "$s2" || bad 'serial second requester failed'
-python3 - "$LOG" <<'PY' && pass 'distinct cgen without history serialized' || bad 'distinct cgen intervals overlap'
+python3 - "$LOG" <<'PY' && pass 'distinct cgen serialized' || bad 'distinct cgen intervals overlap'
 import sys
 rows=[]
 for line in open(sys.argv[1]):
@@ -366,40 +437,37 @@ for i in range(len(values)):
 PY
 }
 
-# Distinct cc requests without a recorded peak run one at a time.
+# Distinct cc requests serialize under the host lock.
 : > "$LOG"
-( CQ_STATE=$(fresh_state cc-serial); run_cc cc1 "$T/cc1" --sleep 1 ) & q1=$!
-( CQ_STATE=$(fresh_state cc-serial); run_cc cc2 "$T/cc2" --sleep 1 ) & q2=$!
+run_cc cc1 "$T/cc1" --sleep 1 & q1=$!
+run_cc cc2 "$T/cc2" --sleep 1 & q2=$!
 wait "$q1" || bad 'first cc requester failed'
 wait "$q2" || bad 'second cc requester failed'
-assert_serialized && pass 'distinct cc without history serialized' || bad 'distinct cc intervals overlap'
+assert_serialized && pass 'distinct cc serialized' || bad 'distinct cc intervals overlap'
 
-# A cgen job and a cc job without a recorded peak share the one slot for jobs
-# without history.
+# C generation and native C compilation share the same host lock.
 : > "$LOG"
-( CQ_STATE=$(fresh_state mixed); run_cgen mixed-cgen "$T/mixed.c" --sleep 1 ) & m1=$!
-( CQ_STATE=$(fresh_state mixed); run_cc mixed-cc "$T/mixed-bin" --sleep 1 ) & m2=$!
+run_cgen mixed-cgen "$T/mixed.c" --sleep 1 & m1=$!
+run_cc mixed-cc "$T/mixed-bin" --sleep 1 & m2=$!
 wait "$m1" || bad 'mixed cgen requester failed'
 wait "$m2" || bad 'mixed cc requester failed'
 assert_serialized && pass 'cgen and cc serialized together' || bad 'cgen and cc intervals overlap'
 
 # The retained reference launcher and the installed native queue share the
-# admission rule. Run their distinct cgen requests, which have no recorded
-# peak, concurrently and assert the compiler intervals do not overlap.
+# heavy execution custody. Run their distinct cgen requests concurrently and
+# assert the compiler intervals do not overlap.
 REFERENCE=${BATON_COMPILE_QUEUE_REFERENCE:-}
 if [ -n "$REFERENCE" ] && [ -x "$REFERENCE" ]; then
   : > "$LOG"
-  CROSS_FAKE=$(fresh_fake cross)
-  CROSS_STATE=$(fresh_state cross)
-  ( CQ_FAKE=$CROSS_FAKE; CQ_STATE=$CROSS_STATE; run_cgen cross-native "$T/cross-native.c" --sleep 1 ) & n1=$!
-  BATON_COMPILE_QUEUE_ROOT="$CROSS_STATE" "$REFERENCE" run --kind cgen --state-root "$CROSS_STATE" --cwd "$T/src" --root "$T/src" \
-    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$CROSS_FAKE" \
-    --artifact "c.c=$T/cross-reference.c" --option test=cross-reference \
-    -- "$CROSS_FAKE" --tag cross-reference --log "$LOG" -o "$T/cross-reference.c" --sleep 1 \
+  run_cgen cross-native "$T/cross-native.c" --sleep 1 & n1=$!
+  "$REFERENCE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
+    --artifact "c=$T/cross-reference.c" --option test=cross-reference \
+    -- "$FAKE" --tag cross-reference --log "$LOG" -o "$T/cross-reference.c" --sleep 1 \
     >"$T/cross-reference.out" 2>"$T/cross-reference.err" & n2=$!
   wait "$n1" || bad 'native cross-launcher requester failed'
   wait "$n2" || bad 'reference cross-launcher requester failed'
-  assert_serialized && pass 'native and reference jobs without history serialized' \
+  assert_serialized && pass 'native and reference heavy custody serialized' \
     || bad 'native and reference compiler intervals overlap'
 else
   printf 'SKIP reference launcher not configured: set BATON_COMPILE_QUEUE_REFERENCE\n'
@@ -495,27 +563,25 @@ wait "$k" || krc=$?
 # Cancel the final requester while its supervisor waits behind another key.
 # The supervisor must publish a terminal result without starting the command.
 : > "$LOG"
-CANCEL_FAKE=$(fresh_fake queued-cancel)
-CANCEL_STATE=$(fresh_state queued-cancel)
-( CQ_FAKE=$CANCEL_FAKE; CQ_STATE=$CANCEL_STATE; run_cc occupies-queue "$T/occupies-queue" --sleep 3 ) & blocker=$!
+run_cc occupies-queue "$T/occupies-queue" --sleep 3 & blocker=$!
 i=0
 while [ "$i" -lt 200 ]; do
   (grep -q '^start' "$LOG" 2>/dev/null) && break
   i=$((i + 1))
   sleep 0.05
 done
-qkey=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$CANCEL_FAKE" --linker "$CANCEL_FAKE" --version fake-version \
+qkey=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/queued-cancel" --option 'test=queued-cancel' \
-  -- "$CANCEL_FAKE" --tag queued-cancel --log "$LOG" -o "$T/queued-cancel" "$T/input.c")
-( CQ_FAKE=$CANCEL_FAKE; CQ_STATE=$CANCEL_STATE; run_cc queued-cancel "$T/queued-cancel" ) & queued=$!
+  -- "$FAKE" --tag queued-cancel --log "$LOG" -o "$T/queued-cancel" "$T/input.c")
+run_cc queued-cancel "$T/queued-cancel" & queued=$!
 i=0
 while [ "$i" -lt 200 ]; do
-  [ -f "$CANCEL_STATE/keys/$qkey/active" ] && break
+  [ -f "$STATE/keys/$qkey/active" ] && break
   i=$((i + 1))
   sleep 0.05
 done
-[ -f "$CANCEL_STATE/keys/$qkey/active" ] && pass 'queued supervisor published cancellable ownership' || bad 'queued supervisor never became visible'
-BATON_COMPILE_QUEUE_ROOT="$CANCEL_STATE" sh "$QUEUE" cancel --state-root "$CANCEL_STATE" --key "$qkey" --token tok-queued-cancel >"$T/queued-cancel.cancel" 2>&1 || bad 'queued cancellation command failed'
+[ -f "$STATE/keys/$qkey/active" ] && pass 'queued supervisor published cancellable ownership' || bad 'queued supervisor never became visible'
+sh "$QUEUE" cancel --state-root "$STATE" --key "$qkey" --token tok-queued-cancel >"$T/queued-cancel.cancel" 2>&1 || bad 'queued cancellation command failed'
 wait "$blocker" || bad 'queue blocker failed'
 qrc=0
 wait "$queued" || qrc=$?
@@ -711,7 +777,7 @@ cmp -s "$expected" "$T/runtime-argv.tail" \
   && pass 'argv recorder published its declared binary' || bad 'argv recorder output missing'
 
 # Adoption spawns the guard through the runtime delimiter. A run request is
-# held at its key lock while the external process is adopted. The external fake
+# held at its key lock so the heavy lane is free for adopt. The external fake
 # compiler stays alive briefly; the guard must dispatch with its argv intact
 # and publish the adopted result and artifact.
 adopt_artifact="$T/adopt-artifact"
@@ -805,658 +871,5 @@ else
   bad 'guard did not publish the adopted result'
 fi
 wait "$adopt_run_pid" 2>/dev/null || true
-
-# Memory admission. Peaks are recorded for every run and history is seeded
-# relative to the memory the host has now: a large job needs more than half of
-# what the rule can grant, so a second large job waits while a small job fits
-# beside the first one.
-ident_peak=$(sed -n 's/^peak_kb=//p' "$STATE/keys/$ident_key/peak" 2>/dev/null || true)
-[ -n "$ident_peak" ] && [ "$ident_peak" -gt 0 ] 2>/dev/null \
-  && pass 'run recorded the peak memory of its key' || bad 'run did not record the peak memory of its key'
-ls "$STATE"/peaks/* >/dev/null 2>&1 \
-  && pass 'run recorded the peak of its compiler and entry group' || bad 'run did not record the group peak'
-if [ -r /proc/meminfo ]; then
-  sh "$QUEUE" status --state-root "$STATE" > "$T/status.out"
-  grep -q '^memory total_kb=' "$T/status.out" \
-    && pass 'status reports the memory the rule works from' || bad 'status omits memory'
-  mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
-  room=$((mem_avail - 1024))
-  if [ "$room" -lt 131072 ]; then
-    printf 'SKIP memory admission: %s kB available beyond the reserve\n' "$room"
-  else
-    large=$((room * 7 / 10))
-    ADMIT_FAKE=$(fresh_fake admission)
-    for tag in adm-large1 adm-large2 adm-small; do
-      case $tag in adm-small) kb=64 ;; *) kb=$large ;; esac
-      case $tag in adm-large1) sleep_for=8 ;; *) sleep_for=1 ;; esac
-      k=$(CQ_FAKE=$ADMIT_FAKE; cc_key "$tag" "$T/$tag" --sleep "$sleep_for")
-      (umask 0007; mkdir -p -m 2770 "$STATE/keys/$k")
-      printf 'peak_kb=%s\n' "$kb" > "$STATE/keys/$k/peak"
-    done
-    : > "$LOG"
-    ( CQ_FAKE=$ADMIT_FAKE; run_cc adm-large1 "$T/adm-large1" --sleep 8 ) & a1=$!
-    i=0
-    while [ "$i" -lt 200 ] && ! grep -q 'adm-large1' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-    ( CQ_FAKE=$ADMIT_FAKE; run_cc adm-large2 "$T/adm-large2" --sleep 1 ) & a2=$!
-    i=0
-    while [ "$i" -lt 200 ]; do
-      sh "$QUEUE" status --state-root "$STATE" > "$T/status.out"
-      grep -q '^waiting ' "$T/status.out" && break
-      i=$((i + 1)); sleep 0.05
-    done
-    ( CQ_FAKE=$ADMIT_FAKE; run_cc adm-small "$T/adm-small" --sleep 1 ) & a3=$!
-    wait "$a1" || bad 'first large requester failed'
-    wait "$a2" || bad 'second large requester failed'
-    wait "$a3" || bad 'small requester failed'
-    python3 - "$LOG" <<'PY' && pass 'small job ran beside a large job and a second large job waited' || bad 'admission order is wrong'
-import sys
-at = {}
-for line in open(sys.argv[1]):
-    parts = line.split()
-    if len(parts) >= 4 and parts[0] in ('start', 'end'):
-        at[(parts[3], parts[0])] = int(parts[1])
-if not (at[('adm-small', 'start')] < at[('adm-large1', 'end')]):
-    sys.exit('the small job did not start while the first large job ran')
-if not (at[('adm-large2', 'start')] >= at[('adm-large1', 'end')]):
-    sys.exit('the second large job started while the first large job ran')
-PY
-  fi
-else
-  printf 'SKIP memory admission: no /proc/meminfo\n'
-fi
-
-# A running job publishes the memory of its session. Another user's process that
-# cannot see the job in /proc reads this value instead of measuring zero.
-USAGE_FAKE=$(fresh_fake usage)
-USAGE_STATE=$(fresh_state usage)
-( CQ_FAKE=$USAGE_FAKE; CQ_STATE=$USAGE_STATE; run_cc usage-job "$T/usage-job" --sleep 6 ) & usage_pid=$!
-i=0
-while [ "$i" -lt 200 ] && [ -z "$(ls "$USAGE_STATE/admission/usage" 2>/dev/null)" ]; do i=$((i + 1)); sleep 0.1; done
-usage_file=$(ls "$USAGE_STATE/admission/usage" 2>/dev/null | head -1)
-usage_kb=$(sed -n 's/^kb=//p' "$USAGE_STATE/admission/usage/$usage_file" 2>/dev/null)
-[ -n "$usage_kb" ] && [ "$usage_kb" -gt 0 ] 2>/dev/null \
-  && pass 'a running job publishes the memory of its session' || bad 'a running job published no usage'
-wait "$usage_pid" || bad 'usage requester failed'
-[ -z "$(ls "$USAGE_STATE/admission/usage" 2>/dev/null)" ] || sh "$QUEUE" status --state-root "$USAGE_STATE" > /dev/null
-[ -z "$(ls "$USAGE_STATE/admission/usage" 2>/dev/null)" ] \
-  && pass 'the usage record of a finished job is removed' || bad 'the usage record of a finished job remained'
-
-# The waiting directory is sticky and setgid: a user removes only own tickets, and
-# a loader that cannot see another user's process cannot remove its ticket.
-python3 - "$STATE/admission/waiting" <<'PY_MODE' && pass 'the waiting directory is sticky and setgid' || bad 'the waiting directory lacks the sticky or setgid bit'
-import os, stat, sys
-mode = os.stat(sys.argv[1]).st_mode
-sys.exit(0 if (mode & stat.S_ISVTX) and (mode & stat.S_ISGID) else 1)
-PY_MODE
-
-# One compiler and entry with different commands, such as a type check and a full
-# C generation, need different memory and record peaks in different groups. The
-# same command with a different option and output path shares a group.
-GROUP_FAKE=$(fresh_fake group)
-group_run() { # name extra...
-  name=$1
-  shift
-  sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
-    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$GROUP_FAKE" \
-    --artifact "c.c=$T/group-$name.c" --option "test=group-$name" \
-    -- "$GROUP_FAKE" "$@" -o "$T/group-$name.c" >"$T/group-$name.out" 2>"$T/group-$name.err"
-}
-group_files() { ls "$STATE/peaks" | grep -c -E '^[0-9a-f]{64}$' || true; }
-groups_before=$(group_files)
-group_run same-one || bad 'group request one failed'
-group_run same-two || bad 'group request two failed'
-group_run other --check-only || bad 'group request three failed'
-groups_after=$(group_files)
-[ $((groups_after - groups_before)) = 2 ] \
-  && pass 'commands that differ record separate group peaks; the same command shares one' \
-  || bad "group peaks added: $((groups_after - groups_before)), expected 2"
-
-# The reserve is the growth of outside memory use that the running supervisors
-# measure now. A value that an earlier executable left in outside-growth is not
-# read: two jobs with recorded peaks run together although the file holds four
-# times the memory of the host.
-if [ -r /proc/meminfo ]; then
-  STATE_OG=$T/state-outside-growth
-  (umask 0007; mkdir -m 2770 "$STATE_OG")
-  OG_FAKE=$(fresh_fake outside-growth)
-  og_run() { # tag sleep
-    BATON_COMPILE_QUEUE_ROOT=$STATE_OG sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE_OG" --cwd "$T" \
-      --compiler "$OG_FAKE" --linker "$OG_FAKE" --version fake-version --input "$T/input.c" \
-      --artifact "binary=$T/$1" --option "test=$1" \
-      -- "$OG_FAKE" --tag "$1" --log "$LOG" -o "$T/$1" "$T/input.c" --sleep "$2" >"$T/$1.out" 2>"$T/$1.err"
-  }
-  og_key() {
-    BATON_COMPILE_QUEUE_ROOT=$STATE_OG sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE_OG" --cwd "$T" \
-      --compiler "$OG_FAKE" --linker "$OG_FAKE" --version fake-version --input "$T/input.c" \
-      --artifact "binary=$T/$1" --option "test=$1" \
-      -- "$OG_FAKE" --tag "$1" --log "$LOG" -o "$T/$1" "$T/input.c" --sleep "$2"
-  }
-  for tag in og-a og-b; do
-    case $tag in og-a) og_sleep=6 ;; *) og_sleep=1 ;; esac
-    k=$(og_key "$tag" "$og_sleep")
-    (umask 0007; mkdir -p -m 2770 "$STATE_OG/keys/$k")
-    printf 'peak_kb=64\n' > "$STATE_OG/keys/$k/peak"
-  done
-  printf 'growth_kb=%s\n' "$((room * 4))" > "$STATE_OG/outside-growth"
-  : > "$LOG"
-  og_run og-a 6 & o1=$!
-  i=0
-  while [ "$i" -lt 200 ] && ! grep -q 'og-a' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-  og_run og-b 1 & o2=$!
-  wait "$o1" || bad 'outside growth: first requester failed'
-  wait "$o2" || bad 'outside growth: second requester failed'
-  assert_serialized && bad 'a value left in the outside-growth file held an entry in admission' \
-    || pass 'a stale value in the outside-growth file does not hold an entry'
-  grep -q '^memory .*outside_growth_kb=[0-9]' "$T/status.out" \
-    && pass 'status reports the growth of outside use measured now' || bad 'status omits the measured growth'
-
-  # Growth that a running supervisor measures reduces admission while it lasts: a
-  # helper holds a claim and publishes a growth of 60% of the memory available now,
-  # and an entry that needs half of it waits until the claim ends.
-  RS_STATE=$(fresh_state reserve)
-  RS_FAKE=$(fresh_fake reserve)
-  sh "$QUEUE" status --state-root "$RS_STATE" > /dev/null
-  rs_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
-  rs_args() { printf '%s\n' --kind cc --source-root "$T" --state-root "$RS_STATE" --cwd "$T" \
-    --compiler "$RS_FAKE" --linker "$RS_FAKE" --version fake-version --input "$T/input.c" \
-    --artifact "binary=$T/reserve-wait" --option "test=reserve-wait"; }
-  rs_key=$(BATON_COMPILE_QUEUE_ROOT=$RS_STATE sh "$QUEUE" key $(rs_args) \
-    -- "$RS_FAKE" --tag reserve-wait --log "$LOG" -o "$T/reserve-wait" "$T/input.c" --sleep 0)
-  (umask 0007; mkdir -p -m 2770 "$RS_STATE/keys/$rs_key")
-  printf 'peak_kb=%s\n' "$((rs_room * 50 / 100))" > "$RS_STATE/keys/$rs_key/peak"
-  cat > "$T/reserve-claim.py" <<'PY'
-import fcntl, os, sys, time
-state, seconds, growth = sys.argv[1], float(sys.argv[2]), sys.argv[3]
-stat = open('/proc/self/stat').read().rsplit(')', 1)[1].split()
-name = '%020d-%010d' % (time.time_ns(), os.getpid())
-path = state + '/admission/running/' + name
-usage = state + '/admission/usage/' + name
-handle = open(path, 'w')
-handle.write('pid=%d\nstarttime=%s\nroot=%d\nmeasure=tree\nkey=%064x\ngroup=\nentry=\nexpected_kb=1\nhistory=1\nbackfill=0\nadmitted_ns=%d\n'
-             % (os.getpid(), stat[19], os.getpid(), os.getpid(), time.time_ns()))
-handle.flush()
-fcntl.flock(handle, fcntl.LOCK_EX)
-end = time.monotonic() + seconds
-while time.monotonic() < end:
-    with open(usage + '.tmp', 'w') as record:
-        record.write('kb=1000\ngrowth_kb=%s\n' % growth)
-    os.rename(usage + '.tmp', usage)
-    time.sleep(0.5)
-os.unlink(path)
-os.unlink(usage)
-PY
-  : > "$LOG"
-  python3 -I "$T/reserve-claim.py" "$RS_STATE" 9 "$((rs_room * 60 / 100))" & rs_claim=$!
-  sleep 2
-  BATON_COMPILE_QUEUE_ROOT=$RS_STATE sh "$QUEUE" run $(rs_args) \
-    -- "$RS_FAKE" --tag reserve-wait --log "$LOG" -o "$T/reserve-wait" "$T/input.c" --sleep 0 >"$T/reserve-wait.out" 2>"$T/reserve-wait.err" & rs_wait=$!
-  sleep 4
-  sh "$QUEUE" status --state-root "$RS_STATE" > "$T/reserve-status.out"
-  ! grep -q ' reserve-wait$' "$LOG" && grep -q "outside_growth_kb=$((rs_room * 60 / 100))" "$T/reserve-status.out" \
-    && pass 'a growth measured by a running supervisor holds an entry that no longer fits' \
-    || bad 'an entry started in spite of the growth measured by a running supervisor'
-  wait "$rs_claim" 2>/dev/null
-  wait "$rs_wait" || bad 'reserve: the entry did not run after the claim ended'
-  grep -q ' reserve-wait$' "$LOG" \
-    && pass 'the entry started when the supervisor that measured the growth ended' \
-    || bad 'the entry did not start after the claim ended'
-fi
-
-# A supervisor publishes the growth of outside memory use only from samples in which every
-# running claim has a measured value above zero and the set of running claims
-# does not change. A claim that cannot be measured, or one that starts or ends
-# between two samples, would otherwise count its memory as outside use. The test
-# allocates memory outside the queue while a job runs: with no other claim the run
-# records the rise, with a claim of value zero or with claims that change at every
-# sample it records none.
-if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 8388608 ]; then
-  cat > "$T/claims.py" <<'PY'
-import fcntl, os, sys, time
-mode, state, seconds = sys.argv[1], sys.argv[2], float(sys.argv[3])
-stat = open('/proc/self/stat').read().rsplit(')', 1)[1].split()
-directory = state + '/admission/running'
-os.makedirs(directory, exist_ok=True)
-
-def claim(root, measure):
-    name = '%020d-%010d' % (time.time_ns(), os.getpid())
-    path = directory + '/' + name
-    handle = open(path, 'w')
-    handle.write('pid=%d\nstarttime=%s\nroot=%d\nmeasure=%s\nkey=%064x\ngroup=\nentry=\nexpected_kb=1\nhistory=1\nbackfill=0\nadmitted_ns=%d\n'
-                 % (os.getpid(), stat[19], root, measure, time.time_ns(), time.time_ns()))
-    handle.flush()
-    fcntl.flock(handle, fcntl.LOCK_EX)
-    return path, handle
-
-end = time.monotonic() + seconds
-if mode == 'zero':
-    gone = 4194303
-    while os.path.exists('/proc/%d' % gone):
-        gone -= 1
-    path, handle = claim(gone, 'tree')
-    time.sleep(seconds)
-    os.unlink(path)
-elif mode == 'rotate':
-    while time.monotonic() < end:
-        path, handle = claim(os.getpid(), 'tree')
-        time.sleep(0.3)
-        os.unlink(path)
-        handle.close()
-PY
-  cat > "$T/ballast.py" <<'PY'
-import os, sys, time
-go, seconds = sys.argv[1], float(sys.argv[2])
-while not os.path.exists(go):
-    time.sleep(0.05)
-block = b'x' * (3 << 30)
-time.sleep(seconds)
-PY
-  gr_fake=$(fresh_fake growth)
-  gr_args() { printf '%s\n' --kind cc --source-root "$T" --state-root "$gr_state" --cwd "$T" \
-    --compiler "$gr_fake" --linker "$gr_fake" --version fake-version --input "$T/input.c" \
-    --artifact "binary=$T/growth-$gr_name" --option "test=growth-$gr_name"; }
-  gr_case() { # name mode; leaves the recorded growth in gr_value
-    gr_name=$1
-    gr_state=$(fresh_state "growth-$1")
-    gr_key=$(BATON_COMPILE_QUEUE_ROOT=$gr_state sh "$QUEUE" key $(gr_args) \
-      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 14)
-    (umask 0007; mkdir -p -m 2770 "$gr_state/keys/$gr_key")
-    printf 'peak_kb=64\n' > "$gr_state/keys/$gr_key/peak"
-    : > "$LOG"; rm -f "$T/go-$1"
-    python3 -I "$T/ballast.py" "$T/go-$1" 12 & gr_ballast=$!
-    BATON_COMPILE_QUEUE_ROOT=$gr_state sh "$QUEUE" run $(gr_args) \
-      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 14 >"$T/growth-$1.out" 2>"$T/growth-$1.err" & gr_job=$!
-    i=0
-    while [ "$i" -lt 200 ] && ! grep -q "growth-$1" "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-    gr_claims=
-    if [ "$2" != none ]; then python3 -I "$T/claims.py" "$2" "$gr_state" 14 & gr_claims=$!; fi
-    sleep 3
-    : > "$T/go-$1"
-    sleep 6
-    gr_value=$(cat "$gr_state"/admission/usage/* 2>/dev/null | sed -n 's/^growth_kb=//p' | sort -n | tail -1)
-    wait "$gr_job" || bad "growth $1: requester failed"
-    kill "$gr_ballast" 2>/dev/null; wait "$gr_ballast" 2>/dev/null
-    [ -z "$gr_claims" ] || { wait "$gr_claims" 2>/dev/null; }
-  }
-  gr_case none none; growth_none=$gr_value
-  [ "${growth_none:-0}" -ge 2000000 ] \
-    && pass 'a supervisor publishes the rise of memory used outside the queue' \
-    || bad "no growth published with memory allocated outside the queue: ${growth_none:-none}"
-  gr_case zero zero; growth_zero=$gr_value
-  [ "${growth_zero:-x}" = 0 ] \
-    && pass 'a claim measured at zero keeps the growth at zero' \
-    || bad "outside growth published beside a claim measured at zero: ${growth_zero:-none}"
-  gr_case rotate rotate; growth_rotate=$gr_value
-  [ "${growth_rotate:-x}" = 0 ] \
-    && pass 'claims that change between samples keep the growth at zero' \
-    || bad "outside growth published while claims changed: ${growth_rotate:-none}"
-else
-  printf 'SKIP outside growth samples: less than 8 GB available\n'
-fi
-
-# A command that exits without writing a declared artifact ends with a failure
-# record that names the artifact.
-: > "$LOG"
-missing_status=0
-sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" \
-  --version fake-version --artifact "binary=$T/missing-output" --option test=missing-artifact \
-  -- "$FAKE" --tag missing-artifact >"$T/missing.out" 2>"$T/missing.err" || missing_status=$?
-[ "$missing_status" != 0 ] && grep -q 'artifact binary was not written' "$T/missing.err" \
-  && pass 'a missing artifact is reported with a terminal failure' \
-  || { cat "$T/missing.err" >&2; bad 'a missing artifact ended without a named failure'; }
-
-# An argument that contains newlines reaches the command as one argument.
-multi_script='printf "first line\n" > /dev/null
-printf "artifact" > "$1"'
-multi_status=0
-sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" \
-  --version fake-version --artifact "binary=$T/multiline-output" --option test=multiline-argument \
-  -- /bin/sh -c "$multi_script" _ "$T/multiline-output" >"$T/multiline.out" 2>"$T/multiline.err" || multi_status=$?
-[ "$multi_status" = 0 ] && [ "$(cat "$T/multiline-output" 2>/dev/null)" = artifact ] \
-  && pass 'a multi-line argument stayed one argument' \
-  || { cat "$T/multiline.err" >&2; bad 'a multi-line argument was split'; }
-
-# The same job in two checkouts has one group: checkout paths are replaced by a
-# placeholder in the command, whether they start an argument or sit inside it.
-for wt in wt-one wt-two; do
-  mkdir -p "$T/$wt/bend2/src"
-  cp "$T/src/bend2/src/fixture.bend" "$T/$wt/bend2/src/fixture.bend"
-done
-WT_FAKE=$(fresh_fake worktree)
-wt_run() { # checkout
-  sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/$1" --root "$T/$1" \
-    --source-root "$T/$1" --entry bend2/src/fixture.bend --compiler "$WT_FAKE" \
-    --artifact "c.c=$T/$1-output.c" --option "test=$1" \
-    -- "$WT_FAKE" --tag worktree --note "--path=$T/$1/sub" "$T/$1/bend2/src/fixture.bend" -o "$T/$1-output.c" \
-    >"$T/$1.out" 2>"$T/$1.err"
-}
-groups_before=$(group_files)
-wt_run wt-one || bad 'checkout one request failed'
-wt_run wt-two || bad 'checkout two request failed'
-groups_after=$(group_files)
-[ $((groups_after - groups_before)) = 1 ] \
-  && pass 'the same job in two checkouts records one group peak' \
-  || bad "checkouts added $((groups_after - groups_before)) group peaks, expected 1"
-
-# A job in a group with no recorded peak is bounded by the recorded peaks of its
-# kind, so it runs beside others when memory allows. Nothing recorded for its
-# kind means one job at a time.
-if [ -r /proc/meminfo ]; then
-  KIND_FAKE=$(fresh_fake kind-bound)
-  kind_run() { # state tag sleep
-    BATON_COMPILE_QUEUE_ROOT=$1 sh "$QUEUE" run --kind cgen --state-root "$1" --cwd "$T/src" --root "$T/src" \
-      --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$KIND_FAKE" \
-      --artifact "c.c=$T/$2.c" --option "test=$2" \
-      -- "$KIND_FAKE" --tag "$2" --log "$LOG" -o "$T/$2.c" --sleep "$3" >"$T/$2.out" 2>"$T/$2.err"
-  }
-  for variant in recorded unrecorded; do
-    eval "STATE_$variant=\$T/state-kind-$variant"
-    (umask 0007; mkdir -m 2770 "$T/state-kind-$variant" "$T/state-kind-$variant/peaks")
-  done
-  printf 'peak_kb=64\n' > "$STATE_recorded/peaks/k.cgen"
-  : > "$LOG"
-  kind_run "$STATE_recorded" kind-a 8 & k1=$!
-  i=0
-  while [ "$i" -lt 200 ] && ! grep -q 'kind-a' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-  kind_run "$STATE_recorded" kind-b 8 & k2=$!
-  wait "$k1" || bad 'kind bound: first requester failed'
-  wait "$k2" || bad 'kind bound: second requester failed'
-  assert_serialized && bad 'jobs bounded by the peak of their kind ran one at a time' \
-    || pass 'jobs in new groups run together when the peak recorded for their kind fits'
-  : > "$LOG"
-  kind_run "$STATE_unrecorded" kind-c 3 & k3=$!
-  i=0
-  while [ "$i" -lt 200 ] && ! grep -q 'kind-c' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-  kind_run "$STATE_unrecorded" kind-d 3 & k4=$!
-  wait "$k3" || bad 'no kind record: first requester failed'
-  wait "$k4" || bad 'no kind record: second requester failed'
-  assert_serialized && pass 'jobs run one at a time while nothing is recorded for their kind' \
-    || bad 'jobs ran together with nothing recorded for their kind'
-fi
-
-# A job whose group has no record is bounded by the peak recorded for the same
-# entry and command shape on any compiler, then by the peak recorded for the same
-# entry with any command, before the peaks of its kind. The check of an entry and
-# a full generation of it have different shapes, so a small check does not lower
-# the bound of the large generation and a large generation does not raise the
-# bound of the check.
-if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
-  STATE_SHAPE=$(fresh_state shape)
-  (umask 0007; mkdir -p -m 2770 "$STATE_SHAPE/peaks")
-  # Memory that other work on the host frees during the test would let two jobs
-  # of the bound run together, so the bound is taken from the memory available now.
-  room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
-  printf 'peak_kb=%s\n' "$((room * 9 / 10))" > "$STATE_SHAPE/peaks/k.cgen"
-  printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"other")\n' > "$T/src/bend2/src/other.bend"
-  for compiler_dir in shape-one shape-two shape-three shape-four; do
-    mkdir -p "$T/$compiler_dir"
-    cp "$FAKE" "$T/$compiler_dir/compiler"
-    printf '# %s\n' "$compiler_dir" >> "$T/$compiler_dir/compiler"
-    chmod +x "$T/$compiler_dir/compiler"
-  done
-  shape_run() { # compiler_dir tag command_tag [entry]
-    BATON_COMPILE_QUEUE_ROOT="$STATE_SHAPE" sh "$QUEUE" run --kind cgen --state-root "$STATE_SHAPE" --cwd "$T/src" --root "$T/src" \
-      --source-root "$T/src" --entry "${4:-bend2/src/fixture.bend}" --compiler "$T/$1/compiler" \
-      --artifact "c.c=$T/$2.c" --option "test=$2" \
-      -- "$T/$1/compiler" --tag "$3" --log "$LOG" -o "$T/$2.c" --sleep 8 >"$T/$2.out" 2>"$T/$2.err"
-  }
-  # The first run on the first compiler records a small peak for its shape; the
-  # large kind peak bounds it, so it runs alone.
-  shape_run shape-one shape-first shape || bad 'shape: first request failed'
-  ls "$STATE_SHAPE/peaks" | grep -q '^sh\.cgen\.' \
-    && pass 'a run records the peak of its kind, entry and command shape' || bad 'no shape peak was recorded'
-  # The same command on a second compiler, twice at once: the small shape peak
-  # bounds both and they run together. A command of another shape on a compiler
-  # without a record is bounded by the large kind peak, so two of those run one
-  # at a time.
-  : > "$LOG"
-  shape_run shape-two shape-a shape & sa=$!
-  shape_run shape-two shape-b shape & sb=$!
-  wait "$sa" || bad 'shape: second request failed'
-  wait "$sb" || bad 'shape: third request failed'
-  assert_serialized && bad 'the same command on a new compiler was bounded by the peak of the kind' \
-    || pass 'a job on a new compiler is bounded by the peak of its entry and command shape'
-  # A command of another shape on the same entry and a new compiler is bounded by
-  # the small peak recorded for the entry, so two of those run together.
-  : > "$LOG"
-  shape_run shape-four shape-e control & se=$!
-  shape_run shape-four shape-f control & sf=$!
-  wait "$se" || bad 'shape: entry request failed'
-  wait "$sf" || bad 'shape: second entry request failed'
-  assert_serialized && bad 'a command of another shape on a recorded entry was bounded by the peak of the kind' \
-    || pass 'a command of another shape is bounded by the peak recorded for its entry'
-  # An entry with no record is bounded by the large peak of its kind.
-  : > "$LOG"
-  shape_run shape-three shape-c control bend2/src/other.bend & sc=$!
-  shape_run shape-three shape-d control bend2/src/other.bend & sd=$!
-  wait "$sc" || bad 'shape: fourth request failed'
-  wait "$sd" || bad 'shape: fifth request failed'
-  assert_serialized && pass 'an entry with no record is bounded by the peak of its kind' \
-    || bad 'an entry with no record ran together with its peers'
-fi
-
-# A check and a full generation of one entry have separate records. A new command
-# that has no record of its own is bounded by the peak recorded for its entry in
-# the same mode, so a new wrapper of a check of a large entry is not bounded by the
-# generation of the entry.
-if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
-  STATE_MODE=$(fresh_state mode)
-  printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"mode")\n' > "$T/src/bend2/src/mode.bend"
-  mode_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
-  mode_key=$(python3 -I - <<'PY'
-h = 14695981039346656037
-for c in b'bend2/src/mode.bend':
-    h ^= c
-    h = (h * 1099511628211) & 0xFFFFFFFFFFFFFFFF
-print('%016x' % h)
-PY
-)
-  (umask 0007; mkdir -p -m 2770 "$STATE_MODE/peaks")
-  printf 'peak_kb=%s\n' "$((mode_room * 9 / 10))" > "$STATE_MODE/peaks/k.cgen"
-  printf 'peak_kb=%s\n' "$((mode_room * 7 / 10))" > "$STATE_MODE/peaks/en.cgen.$mode_key"
-  printf 'peak_kb=%s\n' "$((mode_room * 7 / 10))" > "$STATE_MODE/peaks/em.cgen.$mode_key.full"
-  printf 'peak_kb=64\n' > "$STATE_MODE/peaks/em.cgen.$mode_key.check"
-  for compiler_dir in mode-one mode-two mode-three mode-four; do
-    mkdir -p "$T/$compiler_dir"
-    cp "$FAKE" "$T/$compiler_dir/compiler"
-    printf '# %s\n' "$compiler_dir" >> "$T/$compiler_dir/compiler"
-    chmod +x "$T/$compiler_dir/compiler"
-  done
-  mode_run() { # compiler_dir tag option
-    BATON_COMPILE_QUEUE_ROOT="$STATE_MODE" sh "$QUEUE" run --kind cgen --state-root "$STATE_MODE" --cwd "$T/src" --root "$T/src" \
-      --source-root "$T/src" --entry bend2/src/mode.bend --compiler "$T/$1/compiler" \
-      --artifact "c.c=$T/$2.c" --option "test=$2" \
-      -- "$T/$1/compiler" --tag "$2" --log "$LOG" -o "$T/$2.c" --sleep 6 $3 >"$T/$2.out" 2>"$T/$2.err"
-  }
-  : > "$LOG"
-  mode_run mode-one mode-check-a --check-only & ma=$!
-  mode_run mode-two mode-check-b --check-only & mb=$!
-  wait "$ma" || bad 'mode: first check failed'
-  wait "$mb" || bad 'mode: second check failed'
-  assert_serialized && bad 'new checks of an entry were bounded by the generation of the entry' \
-    || pass 'a new check of an entry is bounded by the peak recorded for checks of the entry'
-  : > "$LOG"
-  mode_run mode-three mode-full-a "" & mc=$!
-  mode_run mode-four mode-full-b "" & md=$!
-  wait "$mc" || bad 'mode: first generation failed'
-  wait "$md" || bad 'mode: second generation failed'
-  assert_serialized && pass 'a new generation of an entry is bounded by the peak recorded for generations of the entry' \
-    || bad 'new generations of an entry ran together although each needs most of the memory'
-else
-  printf 'SKIP check and generation records: no /proc/meminfo or too little memory\n'
-fi
-
-# The peak of a run that did not succeed belongs to its key only. A build that died
-# after it used 512 MB does not raise the records that predict other builds, and a
-# successful build of the same compiler records its own, smaller peak.
-STATE_FH=$(fresh_state failed-history)
-FH_FAKE=$(fresh_fake failed-history)
-( CQ_STATE=$STATE_FH; CQ_FAKE=$FH_FAKE; run_cc fh-fail "$T/fh-fail" --fail --alloc-mb 512 ) >/dev/null 2>&1
-fh_key_peak=$(cat "$STATE_FH"/keys/*/peak 2>/dev/null | sed -n 's/^peak_kb=//p' | sort -n | tail -1)
-[ "${fh_key_peak:-0}" -ge 400000 ] && [ -z "$(ls "$STATE_FH/peaks" 2>/dev/null)" ] \
-  && pass 'a failed run records its peak for its key and raises no other record' \
-  || bad "a failed run raised the tier records: key peak ${fh_key_peak:-none}, records: $(ls "$STATE_FH/peaks" 2>/dev/null | tr '\n' ' ')"
-( CQ_STATE=$STATE_FH; CQ_FAKE=$FH_FAKE; run_cc fh-ok "$T/fh-ok" --alloc-mb 0 ) >/dev/null 2>&1 || bad 'failed history: the successful run failed'
-fh_kind_peak=$(sed -n 's/^peak_kb=//p' "$STATE_FH/peaks/k.cc" 2>/dev/null)
-[ -n "$fh_kind_peak" ] && [ "$fh_kind_peak" -lt 400000 ] \
-  && pass 'a successful run records its own peak beside the failed run of the same compiler' \
-  || bad "the kind record is ${fh_kind_peak:-missing} kB after a successful run beside a failed run of 512 MB"
-# Records written by an earlier executable hold the peaks of runs that failed; backfill
-# derives the tier records again from the successful runs.
-printf 'peak_kb=900000000\n' > "$STATE_FH/peaks/k.cc"
-BATON_COMPILE_QUEUE_ROOT="$STATE_FH" sh "$QUEUE" backfill --state-root "$STATE_FH" > "$T/fh-backfill.out" 2>&1 || bad 'failed history: backfill failed'
-fh_kind_peak=$(sed -n 's/^peak_kb=//p' "$STATE_FH/peaks/k.cc" 2>/dev/null)
-[ -n "$fh_kind_peak" ] && [ "$fh_kind_peak" -lt 400000 ] \
-  && pass 'backfill derives the tier records again from the successful runs' \
-  || bad "backfill kept the kind record at ${fh_kind_peak:-missing} kB"
-
-# backfill raises the kind and key records from the runs already recorded.
-rm -f "$STATE/peaks/k.cgen" "$STATE/peaks/k.cc"
-sh "$QUEUE" backfill --state-root "$STATE" > "$T/backfill.out" 2>"$T/backfill.err" || bad 'backfill failed'
-grep -q '^backfilled runs=[1-9]' "$T/backfill.out" && [ -s "$STATE/peaks/k.cgen" ] && [ -s "$STATE/peaks/k.cc" ] \
-  && pass 'backfill restored the kind peaks from recorded runs' \
-  || { cat "$T/backfill.out" "$T/backfill.err" >&2; bad 'backfill did not restore the kind peaks'; }
-
-# Jobs without a recorded peak start in the order of their requests.
-waiting_count() {
-  sh "$QUEUE" status --state-root "$STATE" > "$T/status.out"
-  grep -c '^waiting ' "$T/status.out" || true
-}
-if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
-  FIFO_FAKE=$(fresh_fake fifo)
-  fifo_sleep() { if [ "$1" = 1 ]; then printf 2; else printf 0; fi; }
-  room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
-  for n in 1 2 3 4 5; do
-    k=$(CQ_FAKE=$FIFO_FAKE; cc_key "fifo-$n" "$T/fifo-$n" --sleep "$(fifo_sleep $n)")
-    (umask 0007; mkdir -p -m 2770 "$STATE/keys/$k")
-    printf 'peak_kb=%s\n' "$((room * 9 / 10))" > "$STATE/keys/$k/peak"
-  done
-  : > "$LOG"
-  ( CQ_FAKE=$FIFO_FAKE; run_cc fifo-1 "$T/fifo-1" --sleep 2 ) & fifo_pids=$!
-  i=0
-  while [ "$i" -lt 200 ] && ! grep -q 'fifo-1' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-  for n in 2 3 4 5; do
-    ( CQ_FAKE=$FIFO_FAKE; run_cc "fifo-$n" "$T/fifo-$n" --sleep 0 ) & fifo_pids="$fifo_pids $!"
-    i=0
-    while [ "$i" -lt 400 ] && [ "$(waiting_count)" -lt $((n - 1)) ]; do i=$((i + 1)); sleep 0.05; done
-  done
-  for pid in $fifo_pids; do wait "$pid" || bad 'fifo requester failed'; done
-  fifo_order=$(awk '$1 == "start" {print $4}' "$LOG" | tr '\n' ' ')
-  [ "$fifo_order" = 'fifo-1 fifo-2 fifo-3 fifo-4 fifo-5 ' ] \
-    && pass 'jobs that cannot run together started in request order' || bad "start order was: $fifo_order"
-else
-  printf 'SKIP start order: no /proc/meminfo or too little memory\n'
-fi
-
-# Waiting entries start by priority class (extreme, high, rest), then by arrival.
-# A running entry is never stopped, and an entry of a lower class starts only when
-# it does not delay a waiting entry of a higher class. The tests use a private
-# state root, recorded key peaks that are fractions of the memory available now, and
-# a fake compiler that sleeps.
-if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
-  STATE_PR=$(fresh_state priority)
-  PR_FAKE=$(fresh_fake priority)
-  pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
-  pr_args() { # tag class [output suffix]
-    printf '%s\n' --kind cc --source-root "$T" --state-root "$STATE_PR" --cwd "$T" \
-      --compiler "$PR_FAKE" --linker "$PR_FAKE" --version fake-version --input "$T/input.c" \
-      --artifact "binary=$T/pr-$1${3:-}" --option "test=pr-$1"
-    [ -z "$2" ] || printf '%s\n' --priority "$2"
-  }
-  pr_run() { # tag class sleep requester; the key is the one of the tag, a second requester has its own output
-    suffix=; [ "$4" = a ] || suffix=-$4
-    BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" run $(pr_args "$1" "$2" "$suffix") \
-      -- "$PR_FAKE" --tag "$1" --log "$LOG" -o "$T/pr-$1$suffix" "$T/input.c" --sleep "$3" >"$T/pr-$1.$4.out" 2>"$T/pr-$1.$4.err"
-  }
-  pr_seed() { # tag percent sleep
-    pr_key=$(BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" key $(pr_args "$1" "") \
-      -- "$PR_FAKE" --tag "$1" --log "$LOG" -o "$T/pr-$1" "$T/input.c" --sleep "$3")
-    (umask 0007; mkdir -p -m 2770 "$STATE_PR/keys/$pr_key")
-    printf 'peak_kb=%s\n' "$((pr_room * $2 / 100))" > "$STATE_PR/keys/$pr_key/peak"
-  }
-  pr_waiting() {
-    BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" status --state-root "$STATE_PR" > "$T/pr-status.out"
-    grep -c '^waiting ' "$T/pr-status.out" || true
-  }
-  pr_submit() { # tag class sleep n: starts a requester and waits until the n-th ticket exists
-    pr_run "$1" "$2" "$3" a & pr_pids="$pr_pids $!"
-    i=0
-    while [ "$i" -lt 600 ] && [ "$(pr_waiting)" -lt "$4" ]; do i=$((i + 1)); sleep 0.05; done
-  }
-  pr_started() { # tag: waits for the start of the tag
-    i=0
-    while [ "$i" -lt 400 ] && ! grep -q " $1\$" "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-  }
-  pr_order() { awk '$1 == "start" {print $4}' "$LOG" | tr '\n' ' '; }
-
-  # Classes: the holder runs while a rest, a high, an extreme, a second high and a
-  # second rest entry arrive in that order; each needs most of the memory.
-  for tag in hold rest-one high-one extreme-one high-two rest-two; do
-    case $tag in hold) pr_seed hold 70 12 ;; *) pr_seed "$tag" 70 0 ;; esac
-  done
-  : > "$LOG"; pr_pids=
-  pr_run hold "" 12 a & hold_pid=$!
-  pr_started hold
-  pr_submit rest-one rest 0 1
-  pr_submit high-one high 0 2
-  pr_submit extreme-one extreme 0 3
-  pr_submit high-two high 0 4
-  pr_submit rest-two "" 0 5
-  grep -q 'priority=extreme' "$T/pr-status.out" && grep -q 'priority=high' "$T/pr-status.out" \
-    && pass 'status lists the priority class of waiting entries' || bad 'status does not list the priority classes'
-  wait "$hold_pid" || bad 'priority: the running entry did not finish'
-  for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
-  [ "$(pr_order)" = 'hold extreme-one high-one high-two rest-one rest-two ' ] \
-    && pass 'waiting entries started by class, then by arrival' || bad "start order was: $(pr_order)"
-  grep -q "^end [0-9]* [0-9]* hold 0\$" "$LOG" && [ -s "$T/pr-hold" ] \
-    && pass 'the running entry was not stopped by a waiting entry of a higher class' || bad 'the running entry did not finish'
-
-  # An entry of a lower class that fits now does not start when it would take the
-  # memory of a waiting entry of a higher class that fits beside the running entry.
-  pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
-  pr_seed hold2 45 10; pr_seed extreme-two 63 2; pr_seed high-three 45 2; pr_seed rest-three 30 0
-  : > "$LOG"; pr_pids=
-  pr_run hold2 "" 10 a & hold_pid=$!
-  pr_started hold2
-  pr_submit extreme-two extreme 2 1
-  pr_submit high-three high 2 2
-  pr_submit rest-three rest 0 3
-  sleep 1
-  pr_after=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
-  # The sizes leave a margin of 7 percent of the memory available; when other work on
-  # the host changed the available memory by more than 5 percent, the check does not apply.
-  if [ $(( (pr_after - pr_room - 1024 > 0 ? pr_after - pr_room - 1024 : pr_room + 1024 - pr_after) * 100 )) -gt $((pr_room * 5)) ]; then
-    printf 'SKIP lower entry beside a waiting higher entry: available memory changed by more than 5 percent\n'
-  else
-    [ "$(pr_order)" = 'hold2 ' ] && pass 'a lower entry that fits waits while a higher entry would lose its memory' \
-      || bad "an entry started ahead of its class: $(pr_order)"
-  fi
-  wait "$hold_pid" || bad 'priority: second holder failed'
-  for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
-  # After the holder ended the extreme entry starts first, whatever starts beside it.
-  case "$(pr_order)" in
-    'hold2 extreme-two '*) pass 'the extreme entry started first after the holder ended' ;;
-    *) bad "start order was: $(pr_order)" ;;
-  esac
-
-  # A requester of a higher class that joins a waiting key raises the entry.
-  pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
-  pr_seed hold3 70 8; pr_seed shared 70 0; pr_seed high-four 70 0
-  : > "$LOG"; pr_pids=
-  pr_run hold3 "" 8 a & hold_pid=$!
-  pr_started hold3
-  pr_submit shared rest 0 1
-  pr_submit high-four high 0 2
-  pr_run shared extreme 0 b & pr_pids="$pr_pids $!"
-  i=0
-  while [ "$i" -lt 200 ] && ! grep -q 'priority=extreme' "$T/pr-status.out" 2>/dev/null; do
-    i=$((i + 1)); sleep 0.1; pr_waiting >/dev/null
-  done
-  wait "$hold_pid" || bad 'priority: third holder failed'
-  for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
-  [ "$(pr_order)" = 'hold3 shared high-four ' ] \
-    && pass 'a joining requester of a higher class raised the waiting entry' || bad "start order was: $(pr_order)"
-else
-  printf 'SKIP priority classes: no /proc/meminfo or too little memory\n'
-fi
 
 exit "$fail"

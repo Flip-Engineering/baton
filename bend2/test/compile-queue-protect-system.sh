@@ -15,12 +15,6 @@ esac
   printf 'The disposable queue root must exist and be writable\n' >&2
   exit 2
 }
-for part in admission/running admission/waiting admission/usage peaks keys; do
-  [ -d "$BATON_COMPILE_QUEUE_ROOT/$part" ] || {
-    printf 'Preinitialize the disposable queue directory: %s\n' "$part" >&2
-    exit 2
-  }
-done
 python3 - <<'PY_CHECK'
 import os
 if not os.statvfs('/var').f_flag & getattr(os, 'ST_RDONLY', 1):

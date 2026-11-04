@@ -10,7 +10,9 @@ import sys
 import tarfile
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -20,6 +22,12 @@ SPEC.loader.exec_module(PACKAGE)
 SMOKE_SPEC = importlib.util.spec_from_file_location('smoke_native_artifact', ROOT / 'bend2/scripts/smoke-native-artifact.py')
 SMOKE = importlib.util.module_from_spec(SMOKE_SPEC)
 SMOKE_SPEC.loader.exec_module(SMOKE)
+CHECK_SPEC = importlib.util.spec_from_file_location('check_install', ROOT / 'bend2/scripts/check-install.py')
+CHECK = importlib.util.module_from_spec(CHECK_SPEC)
+CHECK_SPEC.loader.exec_module(CHECK)
+LAYOUT_SPEC = importlib.util.spec_from_file_location('package_receiver_fixture', ROOT / 'bend2/test/package-receiver-layout.py')
+LAYOUT = importlib.util.module_from_spec(LAYOUT_SPEC)
+LAYOUT_SPEC.loader.exec_module(LAYOUT)
 
 
 class PackageLicenses(unittest.TestCase):
@@ -31,6 +39,9 @@ class PackageLicenses(unittest.TestCase):
         reference = self.source / 'docs/bend2/reference/upstream/LICENSE'
         reference.parent.mkdir(parents=True)
         shutil.copyfile(ROOT / 'docs/bend2/reference/upstream/LICENSE', reference)
+        preload_license = self.source / 'docs/bend2/reference/third-party/no-agent-summary-LICENSE'
+        preload_license.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / 'docs/bend2/reference/third-party/no-agent-summary-LICENSE', preload_license)
         self.payload = self.home / 'artifact'
         self.payload.mkdir()
         previous = PACKAGE.ROOT
@@ -45,7 +56,39 @@ class PackageLicenses(unittest.TestCase):
         self.assertEqual(terms[field], expected)
         self.assertEqual((self.payload / expected['path']).read_bytes(), data)
 
-    def archive_fixture(self, release_version=None):
+    def repl_fixture(self):
+        directory = self.payload / 'libexec/baton2/repl'
+        contents = {'compiler': b'#!/bin/sh\nexit 1\n', 'bun': b'File-only Bun fixture\n',
+                    'upstream/repl.ts': b'File-only frontend fixture\n',
+                    'upstream/base.bend': b'File-only Base fixture\n',
+                    'notices/Bend-LICENSE': b'Bend license fixture\n',
+                    'notices/Bun-NOTICES': b'Bun distribution notices fixture\n'}
+        lock = {'upstream': 'file-only compiler fixture', 'compiler_archive_sha256': '1' * 64,
+                'license': {'sha256': hashlib.sha256(contents['notices/Bend-LICENSE']).hexdigest()},
+                'files': [{'path': 'base.bend'}]}
+        contents['upstream.lock.json'] = (json.dumps(lock) + '\n').encode()
+        provenance = {'schema': 'baton2-repl-vendored-source-v1',
+                      'lock_sha256': hashlib.sha256(contents['upstream.lock.json']).hexdigest(),
+                      **{key: lock[key] for key in ('compiler_archive_sha256', 'files', 'license')}}
+        contents['upstream.provenance.json'] = (json.dumps(provenance) + '\n').encode()
+        files = []
+        for name, data in sorted(contents.items()):
+            path = directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(0o755 if name in ('compiler', 'bun') else 0o644)
+            files.append({'path': name, 'sha256': hashlib.sha256(data).hexdigest(),
+                          'bytes': len(data), 'mode': oct(path.stat().st_mode & 0o777)})
+        compiler = {'protocol': 1, 'language': 'Bend2', 'upstream': lock['upstream'],
+                    'compilerArchiveSha256': lock['compiler_archive_sha256'],
+                    'runtimeSha256': hashlib.sha256(contents['bun']).hexdigest(),
+                    'frontend': 'upstream/repl.ts', 'nativeLibraries': ['sqlite3'], 'files': files}
+        manifest = directory / 'upstream/compiler.json'
+        manifest.write_text(json.dumps(compiler) + '\n')
+        return {'id': 'bend2-repl-compiler', 'required': True, 'path': 'libexec/baton2/repl',
+                'manifest': 'upstream/compiler.json', 'sha256': PACKAGE.sha256(manifest), 'files': files}
+
+    def archive_fixture(self, release_version=None, include_repl=True, changed_runtime=False):
         self.document('LICENSE', b'Project license fixture\r\n')
         self.document('NOTICE', b'Project notice fixture\n')
         identity = PACKAGE.artifact_identity(release_version)
@@ -53,14 +96,17 @@ class PackageLicenses(unittest.TestCase):
         (self.payload / 'bin').mkdir()
         binaries = []
         for role, name, alias, entry, mode in (
-                ('focused-facade', 'baton', 'baton2',
+                ('focused-facade', 'baton-focused', None,
                  'bend2/src/coordinator/receive-focused.bend', 'focused-native-entry'),
-                ('full-cli', 'baton-full', None,
-                 'bend2/src/coordinator/main.bend', 'full-native-receiver-router')):
+                ('full-cli', 'baton', 'baton2',
+                 'bend2/src/coordinator/main.bend', 'full-native-receiver-router'),
+                ('recovery-helper', 'baton-recovery', None,
+                 'bend2/src/coordinator/receive-recovery-focused.bend', 'recovery-native-entry')):
             path = self.payload / 'bin' / name
             path.write_bytes(('File-only ' + role + ' fixture; never run.\n').encode())
             path.chmod(0o755)
             record = {'role': role, 'path': 'bin/' + name,
+                      'alias': None,
                       'sha256': PACKAGE.sha256(path),
                       'source': {'directory': str(self.source), 'commit': 'a' * 40,
                                  'tree': 'b' * 40, 'status': ''},
@@ -73,15 +119,24 @@ class PackageLicenses(unittest.TestCase):
                 shutil.copyfile(path, alias_path)
                 alias_path.chmod(0o755)
                 record['alias'] = 'bin/' + alias
+                if role == 'full-cli':
+                    extra_path = self.payload / 'bin/baton-full'
+                    shutil.copyfile(path, extra_path)
+                    extra_path.chmod(0o755)
+                    record['aliases'] = ['bin/baton2', 'bin/baton-full']
             binaries.append(record)
-        focused = binaries[0]
+        focused = next(record for record in binaries if record['role'] == 'full-cli')
         manifest = {'schema': 'baton2-native-artifact-v2', **identity,
                     'source': {'directory': str(self.source), 'commit': 'a' * 40,
                                'tree': 'b' * 40, 'status': ''},
                     'binaries': binaries,
-                    'binary': {'path': focused['path'], 'alias': focused['alias'],
+                    'binary': {'path': focused['path'], 'alias': focused.get('alias'),
                                'sha256': focused['sha256'], 'source': focused['source']},
                     'terms': terms}
+        if include_repl:
+            manifest['selected_dependencies'] = [self.repl_fixture()]
+        if changed_runtime:
+            (self.payload / 'libexec/baton2/repl/bun').write_bytes(b'Changed runtime fixture\n')
         provenance = self.home / 'manifest.json'
         provenance.write_text(json.dumps(manifest) + '\n')
         shutil.copyfile(provenance, self.payload / 'manifest.json')
@@ -89,6 +144,65 @@ class PackageLicenses(unittest.TestCase):
         with tarfile.open(archive, 'x:gz') as packed:
             packed.add(self.payload, arcname=identity['archive_root'])
         return archive, provenance
+
+    def test_native_package_refuses_missing_repl_inputs(self):
+        args = SimpleNamespace(repl_compiler_source=None, repl_runtime=None,
+                               repl_runtime_sha256=None, repl_runtime_notices=None)
+        with self.assertRaisesRegex(RuntimeError, 'Native packages require the REPL compiler'):
+            PACKAGE.stage_repl(self.payload, args)
+
+    def test_archive_without_required_repl_dependency_refuses(self):
+        archive, provenance = self.archive_fixture(include_repl=False)
+        prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'incomplete-extraction')
+        with self.assertRaisesRegex(RuntimeError, 'requires one bundled Bend2 REPL compiler'):
+            CHECK.verify_repl(prefix, manifest)
+
+    def test_archive_with_changed_bundled_runtime_refuses(self):
+        archive, provenance = self.archive_fixture(changed_runtime=True)
+        prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'changed-runtime-extraction')
+        with self.assertRaisesRegex(RuntimeError, 'file differs from its manifest: bun'):
+            CHECK.verify_repl(prefix, manifest)
+
+    def test_installation_refuses_unusable_bundled_runtime(self):
+        layout = LAYOUT.ReceiverLayout(methodName='runTest')
+        layout.setUp()
+        self.addCleanup(layout.doCleanups)
+        with mock.patch.object(LAYOUT.PACKAGE, 'source_identity',
+                               return_value={'commit': LAYOUT.COMMIT, 'status': ''}):
+            prefix, manifest, _ = layout.staged()
+        self.payload = prefix
+        manifest['selected_dependencies'] = [self.repl_fixture()]
+        manifest['required_system_dependencies'] = CHECK.system_dependencies(CHECK.platform.system())
+        PACKAGE.write_json(prefix / 'manifest.json', manifest)
+        helper = prefix / 'libexec/baton2/task-start.mjs'
+        shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', helper)
+        LAYOUT.FINALIZE.finalize(prefix)
+        output = self.home / 'unusable-runtime-check'
+        output.mkdir()
+        help_commands = [[str(prefix / 'bin' / name), '--help']
+                         for name in ('baton', 'baton-focused')]
+        guide_command = [str(prefix / 'bin/baton'), str(output / 'guide-check.sqlite'),
+                         'help', 'guide']
+        runtime_command = [str(prefix / 'libexec/baton2/repl/bun'), '--version']
+        actual_run = subprocess.run
+
+        def run(argv, **kwargs):
+            if argv in help_commands:
+                return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
+            if argv == guide_command:
+                return subprocess.CompletedProcess(argv, 0,
+                                                    stdout='guide --to PLAYER\n', stderr='')
+            self.assertEqual(argv, runtime_command)
+            return actual_run(argv, **kwargs)
+
+        with mock.patch.object(CHECK.subprocess, 'run', side_effect=run):
+            with self.assertRaisesRegex(RuntimeError, 'command could not start'):
+                CHECK.check(prefix, output)
+        records = json.loads((output / 'commands.json').read_text())
+        self.assertEqual([record['argv'] for record in records],
+                         help_commands + [guide_command, runtime_command])
+        self.assertIsNone(records[-1]['returncode'])
+        self.assertTrue(records[-1]['error'])
 
     def test_project_and_upstream_documents_keep_separate_bytes_and_metadata(self):
         license_data = b'Project license fixture\r\n'
@@ -132,6 +246,18 @@ class PackageLicenses(unittest.TestCase):
         self.assert_project_document(terms, 'baton_root_notice', 'NOTICE', data)
         self.assertIn('no root LICENSE', (self.payload / 'notices/distribution.md').read_text())
 
+    def test_agent_summary_preload_license_text_is_packaged_with_its_source(self):
+        terms = PACKAGE.stage_notices(self.payload, [])
+        entry = terms['agent_summary_preload_license']
+        text = (self.payload / entry['path']).read_text()
+        self.assertTrue(text.startswith('MIT License\n\nCopyright (c) 2026 Flamerix AI'))
+        self.assertIn('Permission is hereby granted, free of charge', text)
+        self.assertIn('THE SOFTWARE IS PROVIDED "AS IS"', text)
+        self.assertEqual(entry['revision'], '4f1ad563fbe4fb830af5dd67fbde4c1860f9caa6')
+        self.assertEqual(entry['script_sha256'], 'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40')
+        distribution = (self.payload / 'notices/distribution.md').read_text()
+        self.assertIn(entry['source'] + ' revision ' + entry['revision'], distribution)
+
     def test_changed_upstream_license_refuses_staging(self):
         self.document('docs/bend2/reference/upstream/LICENSE', b'Changed upstream license\n')
         with self.assertRaisesRegex(RuntimeError, 'upstream Bend license differs from its versioned pin'):
@@ -150,15 +276,26 @@ class PackageLicenses(unittest.TestCase):
         scripts.mkdir(parents=True)
         names = [harness + '-' + suffix + '.mjs'
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
-        names.extend(('context-provider.mjs', 'context-project-policy.mjs',
+        names.extend(('check-install.py', 'context-provider.mjs', 'context-project-policy.mjs',
                       'context-query-artifact.mjs', 'context-worktree-capture.mjs',
-                      'codex-inbox-wake.mjs', 'check-install.py'))
+                      'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs',
+                      'no-agent-summary.js', 'agent-summary-check.mjs',
+                      'codex-root-relay.mjs', 'root-channel-config.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         harness = self.source / 'bend2/harness'
         harness.mkdir(parents=True)
         for name in ('git-series.mjs', 'native-history.mjs', 'project-settings.mjs', 'task-start.mjs'):
             shutil.copyfile(ROOT / 'bend2/harness' / name, harness / name)
+        shutil.copytree(ROOT / 'bend2/harness/git-series-bin', harness / 'git-series-bin')
+        shutil.copytree(ROOT / 'bend2/harness/agy-plugin', harness / 'agy-plugin')
+        native = self.source / '.scratch/bend2'
+        native.mkdir(parents=True)
+        # Archive tests retain file bytes and executable modes; these helpers are never run.
+        for name in ('claude-credit-observe', 'api-key-exec', 'usage-read'):
+            path = native / name
+            path.write_bytes(('File-only ' + name + ' fixture; never run.\n').encode())
+            path.chmod(0o755)
         shutil.copytree(ROOT / 'bend2/ui/orchestra', self.source / 'bend2/ui/orchestra')
         PACKAGE.stage_adapters(self.payload)
         return names
@@ -171,6 +308,15 @@ class PackageLicenses(unittest.TestCase):
             path = 'libexec/baton2/' + name
             data = (ROOT / 'bend2/scripts' / name).read_bytes()
             self.assertEqual((prefix / path).read_bytes(), data)
+        # The agent_summary preload is pinned by SHA-256 (#1338).
+        self.assertEqual(hashlib.sha256((prefix / 'libexec/baton2/no-agent-summary.js').read_bytes()).hexdigest(),
+                         'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40')
+        for name in ('claude-credit-observe', 'api-key-exec'):
+            self.assertEqual((prefix / 'libexec/baton2' / name).read_bytes(),
+                             (self.source / '.scratch/bend2' / name).read_bytes())
+        for name in ('plugin.json', 'hooks.json'):
+            self.assertEqual((prefix / 'libexec/baton2/agy-plugin' / name).read_bytes(),
+                             (ROOT / 'bend2/harness/agy-plugin' / name).read_bytes())
 
     def test_extracted_git_helper_selects_author_with_its_source_absent(self):
         self.stage_runtime_files()
@@ -182,6 +328,9 @@ class PackageLicenses(unittest.TestCase):
         installed = prefix / 'libexec/baton2/git-series.mjs'
         self.assertFalse((prefix / 'libexec/baton2/git-series.py').exists())
         self.assertEqual(installed.read_bytes(), data)
+        wrapper = prefix / 'libexec/baton2/git-series-bin/gh'
+        self.assertEqual(wrapper.read_bytes(), (ROOT / 'bend2/harness/git-series-bin/gh').read_bytes())
+        self.assertTrue(os.access(wrapper, os.X_OK))
         self.assertEqual(manifest['source']['directory'], str(self.source))
 
         public = self.home / 'public series λ'

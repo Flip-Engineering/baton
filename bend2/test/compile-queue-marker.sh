@@ -1,11 +1,11 @@
 #!/bin/sh
 # Marker case: the first command writes the compile marker and remains alive;
 # the second command, which has no recorded peak, runs while the first is alive
-# and unfinished because the marker ended the first command's admission claim.
+# and unfinished because the marker released the shared heavy lock.
 # No-marker case: the first command writes no marker and remains alive; the
 # second supervisor becomes active but its command cannot start until the first
-# exits, because neither job has a recorded peak and only one such job runs at a
-# time. Synchronization files, not elapsed thresholds, decide both cases.
+# exits because both commands use the shared heavy lock. Synchronization files,
+# not elapsed thresholds, decide both cases.
 # Requires the built queue executable at BATON2_COMPILE_QUEUE_BIN.
 set -u
 

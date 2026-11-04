@@ -127,13 +127,10 @@ def main():
         finally:
             connection.close()
         windows = snapshot("usage_windows")
-        result = run("invalid-usage-reset",[full,db,"usage-window-reset","focused-clear-0","next monday","operator observed reset"])
-        check("invalid-usage-reset-refused",result.returncode != 0 and snapshot("usage_windows") == windows)
-        result = run("usage-reset",[full,db,"usage-window-reset","focused-clear-0","2020-01-01T00:00:00Z","operator console observation"])
-        check("usage-reset-result",result.returncode == 0 and json.loads(result.stdout)["schema"] == "baton2-usage-window-reset-v1")
-        after_reset = snapshot("usage_windows")
-        check("usage-reset-recorded-once",len(after_reset) == len(windows) + 1 and after_reset[:-1] == windows)
-        check("usage-reset-provenance",connect_read(db,"SELECT reset_source,used_fraction,receipt FROM usage_windows ORDER BY id DESC LIMIT 1") == [("operator-observation",None,"operator-observation: operator console observation")])
+        # An operator-entered reset no longer exists as a command (#1025): only a
+        # live read of the provider's usage API releases a hold.
+        result = run("usage-reset-removed",[full,db,"usage-window-reset","focused-clear-0","2020-01-01T00:00:00Z","operator console observation"])
+        check("usage-reset-removed",result.returncode != 0 and snapshot("usage_windows") == windows)
         for table in ("sessions","executions","messages"):
             check("usage-reset-" + table + "-preserved",snapshot(table) == preserved[table])
     finally:

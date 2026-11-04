@@ -1,10 +1,9 @@
 #!/bin/sh
 # One-time bootstrap for the shared compile queue executable.
 #
-# The bootstrap waits for heavy.lock, which serializes bootstraps with each
-# other and with a queue that still uses the lock. Queue jobs do not take
-# heavy.lock; the bootstrap registers its memory with the admission rule as a
-# running job, so queued jobs count it.
+# The bootstrap holds heavy.lock while it compiles and links the queue
+# executable. Queue C-generation requests use the same lock until their C
+# output is ready, so the lock serializes bootstrap with queue C generation.
 #
 # This is the only supported pre-queue compilation. It builds exactly
 # bend2/src/host/compile-queue.bend to the requested output and accepts no
@@ -66,6 +65,9 @@ telemetry="$record/telemetry"
 scratch=
 phase=waiting
 child=
+child_starttime=
+cancel_signal=
+retain_scratch=0
 process_start() {
   if [ -r "/proc/$1/stat" ]; then
     sed 's/.*) //' "/proc/$1/stat" | awk '{print $20}'
@@ -87,28 +89,53 @@ pressure() {
 }
 cleanup_bootstrap() {
   status=$?
-  trap - EXIT
+  trap - EXIT HUP INT TERM
+  if [ -n "$cancel_signal" ]; then
+    retain_scratch=1
+    printf 'cancel_signal=%s\n' "$cancel_signal" >> "$telemetry"
+  fi
+  if [ -n "$child" ]; then
+    current_starttime=$(process_start "$child")
+    if [ -n "$current_starttime" ] && [ -n "$child_starttime" ] \
+        && [ "$current_starttime" != "$child_starttime" ]; then
+      printf 'child_cleanup=identity-changed\nchild_pid=%s\nchild_starttime=%s\n' \
+        "$child" "$child_starttime" >> "$telemetry"
+    else
+      if kill -0 "$child" 2>/dev/null; then
+        # Background children may ignore SIGINT inherited from the shell.
+        printf 'child_cancel_signal=TERM\nchild_cancel_pid=%s\nchild_cancel_starttime=%s\n' \
+          "$child" "$child_starttime" >> "$telemetry"
+        kill -TERM "$child" 2>/dev/null || true
+      fi
+      child_status=0
+      wait "$child" || child_status=$?
+      printf 'child_exit_status=%s\nchild_reaped=1\n' "$child_status" >> "$telemetry"
+    fi
+    child=
+    child_starttime=
+    retain_scratch=1
+  fi
   printf 'phase=terminal\nlast_phase=%s\nterminal_status=%s\nfinished_ns=%s\n' \
     "$phase" "$status" "$(date +%s%N)" >> "$telemetry"
   pressure
-  if [ -n "$child" ] && [ -d "/proc/$child" ]; then
-    printf 'retained_child_pid=%s\nretained_scratch=%s\n' "$child" "$scratch" >> "$telemetry"
-  else
-    [ -z "$scratch" ] || rm -rf -- "$scratch"
+  if [ -n "$scratch" ] && [ "$retain_scratch" -eq 1 ]; then
+    printf 'retained_scratch=%s\n' "$scratch" >> "$telemetry"
+  elif [ -n "$scratch" ]; then
+    rm -rf -- "$scratch"
   fi
   if [ -n "${BATON_COMPILE_QUEUE_TELEMETRY:-}" ]; then
     if ! cp "$telemetry" "$BATON_COMPILE_QUEUE_TELEMETRY"; then
       printf 'The bootstrap telemetry remains at %s\n' "$telemetry" >&2
     fi
   fi
-  # Closing the shell descriptor preserves custody held by a surviving child.
+  # The active child has exited and been reaped before this lock is closed.
   exec 8>&-
   exit "$status"
 }
 trap cleanup_bootstrap EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'cancel_signal=HUP; exit 129' HUP
+trap 'cancel_signal=INT; exit 130' INT
+trap 'cancel_signal=TERM; exit 143' TERM
 printf 'schema=baton-compile-queue-custody-v1\nkind=bootstrap\n' > "$telemetry"
 printf 'pid=%s\nstarttime=%s\nentry=%s\ncompiler=%s\ncc=%s\nstarted_ns=%s\n' \
   "$$" "$(process_start "$$")" "$entry" "$compiler" "$cc" "$(date +%s%N)" >> "$telemetry"
@@ -120,31 +147,21 @@ printf 'lock_path=%s\nlock_identity=%s\nlock_descriptor=8\nphase=waiting\n' \
 flock -x 8
 phase=compile
 printf 'phase=%s\nacquired_ns=%s\n' "$phase" "$(date +%s%N)" >> "$telemetry"
-# Register with the admission rule. The claim file stays locked through
-# descriptor 7 while this script or a compiler it started holds the descriptor.
-mkdir -p "$state/admission/running" "$state/admission/waiting"
-exec 6>"$state/admission/lock"
-flock -x 6
-claim_ns=$(date +%s%N)
-claim=$(printf '%s/admission/running/%020d-%010d' "$state" "$claim_ns" "$$")
-exec 7>"$claim"
-flock -x -n 7
-printf 'pid=%s\nstarttime=%s\nroot=%s\nmeasure=tree\nkey=bootstrap\ngroup=\nexpected_kb=0\nhistory=1\nbackfill=0\nadmitted_ns=%s\n' \
-  "$$" "$(process_start "$$")" "$$" "$claim_ns" >&7
-exec 6>&-
-printf 'admission_claim=%s\n' "$claim" >> "$telemetry"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/baton2-queue-bootstrap.XXXXXXXX")
 printf 'scratch=%s\n' "$scratch" >> "$telemetry"
 run_phase() {
   "$@" > "$record/$phase.stdout" 2> "$record/$phase.stderr" &
   child=$!
+  child_starttime=$(process_start "$child")
   printf 'child_phase=%s\nchild_pid=%s\nchild_starttime=%s\n' \
-    "$phase" "$child" "$(process_start "$child")" >> "$telemetry"
+    "$phase" "$child" "$child_starttime" >> "$telemetry"
   rc=0
   wait "$child" || rc=$?
+  printf 'child_exit_status=%s\nchild_reaped=1\n' "$rc" >> "$telemetry"
+  child=
+  child_starttime=
   cat "$record/$phase.stdout"
   cat "$record/$phase.stderr" >&2
-  child=
   return "$rc"
 }
 run_phase "$compiler" "$entry" -o "$scratch/compile-queue.c"

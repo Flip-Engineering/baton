@@ -135,18 +135,10 @@ class EndToEnd(unittest.TestCase):
         self.assertIn('Feature implemented', notification['params']['content'])
         self.assertEqual(json.loads(notification['params']['meta']['messageIds']), ['turn-1'])
 
-        # 5. Root acknowledges the report.
-        send_mcp(proc, {
-            'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
-            'params': {
-                'name': 'baton2_ack',
-                'arguments': {'id': 'turn-1', 'receipt': 'channel-delivered'},
-            },
-        })
-        ack_resp = read_mcp(proc)
-        while 'method' in ack_resp:
-            ack_resp = read_mcp(proc)
-        self.assertNotIn('isError', ack_resp.get('result', {}))
+        # 5. Root reads the complete report through the public CLI.
+        read = subprocess.run([str(EXE), str(self.db), 'as', 'root', 'read', 'turn-1'],
+                              capture_output=True, text=True)
+        self.assertEqual(read.returncode, 0, read.stderr)
 
         # 6. Root lands the worker's change via the MCP tool.
         send_mcp(proc, {

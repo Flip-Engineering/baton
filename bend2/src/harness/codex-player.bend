@@ -1,15 +1,25 @@
 import Base
 import ../host/process.bend as P
-import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
-import ../git/process.bend as Process
-import ../git/text.bend as Tx
+import ./claude-player.bend as Claude
 
 def models_args(cmd: String) -> List<String>:
   [cmd,"debug","models"]
 
+# Codex runs the retained Baton entry at Stop and after each successful tool, the same
+# entry Claude Code runs (#1212). PostToolUse adds complete owed input to the running
+# turn and Stop continues the turn while input is owed or the coordinator has not
+# confirmed the completion request. additionalContextLimit=0 passes the complete context to
+# the model; the default limit saves context over about 2500 tokens to a file and shows
+# a preview. The hook trust bypass runs these inline hooks without a persisted review.
+def hook_handler(extra: String) -> String:
+  "{type=\"command\",command=" ++ J.string_literal(Claude.stop_hook_command()) ++ extra ++ "}"
+
+def hook_configs() -> List<String>:
+  ["-c","hooks.Stop=[{hooks=[" ++ hook_handler("") ++ "]}]","-c","hooks.PostToolUse=[{matcher=\"*\",hooks=[" ++ hook_handler(",additionalContextLimit=0") ++ "]}]"]
+
 def arguments(model: String, effort: String) -> List<String>:
-  ["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort),"--dangerously-bypass-approvals-and-sandbox","-"]
+  List.append(&1,String,["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort)],List.append(&1,String,hook_configs(),["--dangerously-bypass-hook-trust","--dangerously-bypass-approvals-and-sandbox","-"]))
 
 def argv(cmd: String, model: String, effort: String, session: String, fresh: Bool) -> String:
   match fresh:
@@ -21,59 +31,6 @@ def start_player(cmd: String, model: String, effort: String, cwd: String, stderr
 
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,text)
-
-def wake_directory_step(+rest: String, +current: String, +last: String) -> String:
-  match rest:
-    case SNil{}: last
-    case SCon{+head,+tail}:
-      +next = current ++ SCon{head,SNil{}}
-      wake_directory_step(tail,next,Bool.pick(String,Char.is_eq(head,Char.from_u32(47)),next,last))
-
-def wake_directory(executable: String) -> String:
-  wake_directory_step(executable,"","")
-
-def wake_source_result(code: U32, detail: String, source: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
-  match source:
-    case Done{path}: Done{path}
-    case Fail{(+source_code,source_detail)}:
-      Fail{(source_code,"Installed Codex inbox helper: " ++ U32.show(code) ++ ": " ++ detail ++ "\nSource Codex inbox helper: " ++ U32.show(source_code) ++ ": " ++ source_detail)}
-
-def wake_source_path(installed: Result<&1,&1,U32 & String,String>, source: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match installed:
-    case Done{path}: IO.pure(Result<&1,&1,U32 & String,String>,Done{path})
-    case Fail{(code,detail)}: do IO<Result<&1,&1,U32 & String,String>>:
-      resolved : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(source)
-      IO.pure(Result<&1,&1,U32 & String,String>,wake_source_result(code,detail,resolved))
-
-def wake_path(+executable: String) -> IO(Result<&1,&1,U32 & String,String>):
-  do IO<Result<&1,&1,U32 & String,String>>:
-    +directory : String = wake_directory(executable)
-    installed : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(directory ++ "../libexec/baton2/codex-inbox-wake.mjs")
-    wake_source_path(installed,directory ++ "../../bend2/scripts/codex-inbox-wake.mjs")
-
-def wake_start(path: Result<&1,&1,U32 & String,String>, thread: String, pointer: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
-  match path:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
-    case Done{script}: P.ProcessChild.spawn(P.argv(["node",script,thread,pointer]),".",stderr)
-
-def inbox_admission(executable: Result<&1,&1,U32 & String,String>, thread: String, pointer: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
-  match executable:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
-    case Done{path}: do IO<Result<&1,&1,U32 & String,U32>>:
-      script : Result<&1,&1,U32 & String,String> <- wake_path(path)
-      wake_start(script,thread,pointer,stderr)
-
-def inbox_follow_source(executable: String, db: String, session: String, native: String, source: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
-  match source:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{script}: Process.Process.run(Tx.enc_argv(["node",script,"--follow",executable,db,session,native]),".")
-
-def inbox_follow(executable: Result<&1,&1,U32 & String,String>, db: String, session: String, native: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match executable:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{+path}: do IO<Result<&1,&1,U32 & String,String>>:
-      source : Result<&1,&1,U32 & String,String> <- wake_path(path)
-      inbox_follow_source(path,db,session,native,source)
 
 # The profile variant keeps the existing key unbinds first, then the profile's store
 # assignment, then the command: env parses its options before its operands, so a

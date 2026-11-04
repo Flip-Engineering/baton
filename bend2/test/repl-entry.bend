@@ -4,6 +4,7 @@ import ../src/coordinator/store.bend as Store
 import ../src/coordinator/repl.bend as Repl
 import ../src/coordinator/repl-model.bend as M
 import ../src/host/instance.bend as Custody
+import ../src/host/text.bend as T
 import ../src/context/raw.bend as Raw
 
 # A focused native entry for the REPL fixtures. It reaches the same command
@@ -29,10 +30,15 @@ def attach(db: String, args: List<String>) -> IO(Unit):
 def run(+db: String, args: List<String>) -> IO(Unit):
   match args:
     case "attach" <> rest: attach(db,rest)
+    case "as" <> actor <> "repl" <> rest: Repl.execute(db,actor,rest)
     case "repl" <> rest: do IO<Unit>:
       actor : String <- actor_for(db)
       Repl.execute(db,actor,rest)
     case "repl-observe" <> cell <> Nil{}: Repl.observe(db,cell)
+    case "observe-file" <> id <> actor <> path <> Nil{}: do IO<Unit>:
+      event : String <- IO.try(String,T.Text.read(path))
+      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,actor,event,False{},"fixture"}))
+      IO.write(saved)
     case other: IO.die(Unit,2,"focused REPL entry: attach|repl|repl-observe")
 
 def dispatch(args: List<String>) -> IO(Unit):

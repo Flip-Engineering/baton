@@ -2746,6 +2746,65 @@ def query_file(+db: String, +owner: String, +query: String, path: String) -> IO(
     binding : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(db)
     query_binding_result(db, owner, query, path, binding)
 
+def query_binding_text(+db: String, +owner: String, +query: String, +text: String,
+                       binding_result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match binding_result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.die(Unit, 3, "databaseBindingUnavailable")
+    case Done{+binding}:
+      do IO<Unit>:
+        request : NativeRequest.RequestDecode <- NativeRequest.read_text(db, binding, text)
+        query_request_result(db, binding, owner, query, request)
+
+# Direct native context commands can omit the query identity. Generate a real
+# distinct identity before artifact preparation and retained-result lookup; the
+# context action uses the same nonempty identity for evaluation and query.
+def query_identity(+db: String, +query: String) -> IO(String):
+  match query:
+    case "": do IO<String>:
+      generated : String <- IO.try(String,DB.Sql.read(db,"SELECT 'context-eval:' || lower(hex(randomblob(16)));"))
+      IO.pure(String,Tx.trim_nl(generated))
+    case other: IO.pure(String,other)
+
+def query_text(+db: String, +owner: String, +query: String, +text: String) -> IO(Unit):
+  do IO<Unit>:
+    +query_id : String <- query_identity(db,query)
+    binding : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(db)
+    query_binding_text(db, owner, query_id, text, binding)
+
+def recorded_workspace(+owner: String, +trimmed: String) -> IO(String):
+  match trimmed:
+    case "": IO.die(String, 3, "evalWorkspaceUnrecorded:" ++ owner)
+    case other: IO.pure(String,other)
+
+# The public evaluation action composes the existing runtime evaluate request.
+# It selects the recorded owner workspace when no cwd is supplied. An owner with
+# no recorded workspace is refused, and the refusal names the owner session. The
+# request then reuses the same decode, admission, submission and retained-result
+# path as a request file.
+def eval_cwd(+db: String, +owner: String, +cwd: String) -> IO(String):
+  match cwd:
+    case "": do IO<String>:
+      saved : String <- IO.try(String,DB.Sql.query(db,"SELECT workspace FROM sessions WHERE id=" ++ ContextCommands.q(owner) ++ ";"))
+      +trimmed : String <- IO.pure(String,Tx.trim_nl(saved))
+      recorded_workspace(owner,trimmed)
+    case other: IO.pure(String,other)
+
+def eval_request_text(+session: String, +expression: String, +frame: String, +cwd: String) -> String:
+  "{\"version\":1,\"engine\":\"runtime\",\"cwd\":" ++ J.string_literal(cwd)
+  ++ ",\"subject\":{\"kind\":\"runtime\",\"intent\":\"evaluate\",\"session\":" ++ J.string_literal(session)
+  ++ ",\"expression\":" ++ J.string_literal(expression)
+  ++ Bool.pick(String,String.is_empty(frame),"",",\"frame\":" ++ J.string_literal(frame))
+  ++ "},\"select\":[\"state\",\"value\"],\"effects\":[\"controlRuntime\",\"evaluateRuntime\"]}"
+
+def eval(+db: String, +owner: String, +query: String, +session: String, +expression: String,
+         +frame: String, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
+    +directory : String <- eval_cwd(db,owner,cwd)
+    +text : String = eval_request_text(session,expression,frame,directory)
+    query_text(db,owner,query,text)
+
 def result_retained(query: String, retained: ContextService.Retained) -> IO(Unit):
   match retained:
     case ContextService.RetainedFound{state, envelope}:

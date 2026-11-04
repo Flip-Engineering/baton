@@ -2,12 +2,13 @@
 # pins one value the module must produce: the row query's exact text so a change
 # to the classification is a deliberate edit, one stalled row's JSON object, an
 # empty report being an empty array, empty and malformed lines being skipped
-# with rows separated by commas, and the owed message each stalled row
-# contributes to the wake. The non-stalled fixtures pin that active, stopped,
-# blocked and claimed candidates contribute no wake address.
+# with rows separated by commas, and the owed message each eligible row
+# contributes to the wake. The fixtures pin that active, stopped and blocked
+# candidates contribute no wake address.
 # Serves: docs/pure-bend2/pending-stall-bend2.md.
 import Base
 import ./stall.bend as Stall
+import ../coordinator/commands.bend as C
 
 def row() -> String:
   "worker\t18\tattempt-1\texited\t1\tm7\t0\t\tstalled"
@@ -31,7 +32,7 @@ def two_rows() -> List<String>:
   Con{"", Con{row(), Con{"", Con{row(), Nil{}}}}}
 
 law the_row_query_selects_pending_candidates_and_classifies_them:
-  {Stall.stalled_rows_sql(True{}) == "SELECT s.id||char(9)||CAST((SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL) AS TEXT)||char(9)||coalesce(e.id,'')||char(9)||coalesce(e.phase,'')||char(9)||CAST(CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END AS TEXT)||char(9)||coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL ORDER BY m.seq LIMIT 1),'')||char(9)||CAST(EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS TEXT)||char(9)||coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')||char(9)||CASE WHEN EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) THEN 'stopped' WHEN coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')='claimed' THEN 'claimed' WHEN coalesce(e.phase,'')='' THEN 'blocked' WHEN e.phase='exited' AND (CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END)=0 THEN 'blocked' WHEN e.phase='exited' THEN 'stalled' ELSE 'active' END FROM sessions s LEFT JOIN executions e ON e.session=s.id WHERE (SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL)>0 ORDER BY s.id;" : String}
+  {Stall.stalled_rows_sql(True{}) == "SELECT s.id||char(9)||CAST((SELECT count(*) FROM messages m WHERE m.recipient=s.id AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=m.id AND owed_read.recipient=m.recipient) AND NOT " ++ C.task_closed_sql("s.id") ++ ") AS TEXT)||char(9)||coalesce(e.id,'')||char(9)||coalesce(e.phase,'')||char(9)||CAST(CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END AS TEXT)||char(9)||coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=m.id AND owed_read.recipient=m.recipient) ORDER BY m.seq LIMIT 1),'')||char(9)||CAST(EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS TEXT)||char(9)||coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')||char(9)||CASE WHEN EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) THEN 'stopped' WHEN coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')='claimed' THEN 'claimed' WHEN coalesce(e.phase,'')='' THEN 'blocked' WHEN e.phase='exited' AND (CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END)=0 THEN 'blocked' WHEN e.phase='exited' THEN 'stalled' ELSE 'active' END FROM sessions s LEFT JOIN executions e ON e.session=s.id WHERE (SELECT count(*) FROM messages m WHERE m.recipient=s.id AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=m.id AND owed_read.recipient=m.recipient) AND NOT " ++ C.task_closed_sql("s.id") ++ ")>0 ORDER BY s.id;" : String}
 
 def the_row_query_selects_pending_candidates_and_classifies_them():
   {==}
@@ -90,10 +91,10 @@ law a_blocked_row_contributes_no_wake:
 def a_blocked_row_contributes_no_wake():
   {==}
 
-law a_claimed_row_contributes_no_wake:
-  {Stall.owed_of(claimed_row()) == Nil{} : List<String>}
+law an_exited_claimed_row_contributes_its_owed_message:
+  {Stall.owed_of(claimed_row()) == ["m7"] : List<String>}
 
-def a_claimed_row_contributes_no_wake():
+def an_exited_claimed_row_contributes_its_owed_message():
   {==}
 
 law a_row_without_an_owed_message_contributes_nothing:

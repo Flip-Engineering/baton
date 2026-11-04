@@ -94,8 +94,8 @@ def main():
         require(len(records) == 20, 'all twenty complete public messages returned')
         require([row['body'] for row in records] == ['complete body ' + str(i) + '\nUnicode: λ' for i in range(20)],
                 'all complete bodies and Unicode preserved')
-        require(records[0]['nativeInputStatus']['handled'] == 'incomplete', 'incomplete native observation preserved')
-        require(records[1]['nativeInputStatus']['handled'] == 'recorded', 'settled native observation preserved')
+        require(records[0]['nativeInputStatus']['read'] == 'recorded', 'first native read preserved')
+        require(records[1]['nativeInputStatus']['read'] == 'recorded', 'second native read preserved')
         require([row['native'] for row in records[1]['nativeInputStatus']['attempts']] == ['native-b', 'native-c'],
                 'multiple native attempt identities preserved')
         require(original == snapshot(), 'public and native inspection preserve attempt custody and receipts')

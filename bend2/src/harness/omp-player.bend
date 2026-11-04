@@ -45,6 +45,15 @@ def bound_arguments(binding: List<String>, cmd: String, model: String, effort: S
 def argv_profile(binding: List<String>, cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> String:
   P.argv(bound_arguments(binding,cmd,model,effort,sessions,session,fresh))
 
+def completion_extension_args(+extension: String) -> List<String>:
+  Bool.pick(List<String>,String.is_empty(extension),Nil{},["--extension",extension])
+
+def completion_arguments(binding: List<String>, cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool, extension: String) -> List<String>:
+  List.append(&1,String,bound_arguments(binding,cmd,model,effort,sessions,session,fresh),completion_extension_args(extension))
+
+def argv_with_completion(binding: List<String>, cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool, extension: String) -> String:
+  P.argv(completion_arguments(binding,cmd,model,effort,sessions,session,fresh,extension))
+
 def start_player(cmd: String, model: String, effort: String, cwd: String, sessions: String, session: String, fresh: Bool, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(argv(cmd,model,effort,sessions,session,fresh),cwd,stderr)
 
@@ -144,6 +153,12 @@ def start_player_profile(binding: List<String>, cmd: String, model: String, effo
     checked : Result<&1,&1,U32 & String,Unit> <- preflight_arguments(argv)
     spawn_checked(checked,argv,cwd,stderr)
 
+def start_player_with_completion(binding: List<String>, cmd: String, model: String, effort: String, cwd: String, sessions: String, session: String, fresh: Bool, stderr: String, extension: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    +argv : String = argv_with_completion(binding,cmd,model,effort,sessions,session,fresh,extension)
+    checked : Result<&1,&1,U32 & String,Unit> <- preflight_arguments(argv)
+    spawn_checked(checked,argv,cwd,stderr)
+
 # The setup asks the server for the event selection matching the session log
 # level (issue #686). Diagnostic asks for every event category with full
 # message updates. Other levels ask for the SessionEvent categories in the
@@ -175,7 +190,7 @@ def filter_requested(+mode: String) -> String:
   Bool.pick(String,String.eq(mode,"array+delta"),filter_events("default"),Bool.pick(String,String.eq(mode,"null+full"),"null","unknown"))
 
 def prompt(text: String, +level: String) -> String:
-  filter_request(level) ++ "\n" ++ "{\"type\":\"get_state\",\"id\":\"baton:session\"}\n{\"type\":\"prompt\",\"id\":\"baton:prompt\",\"message\":" ++ J.string_literal(text) ++ "}\n"
+  "{\"type\":\"set_interrupt_mode\",\"id\":\"baton:interrupt-mode\",\"mode\":\"wait\"}\n" ++ filter_request(level) ++ "\n" ++ "{\"type\":\"get_state\",\"id\":\"baton:session\"}\n{\"type\":\"prompt\",\"id\":\"baton:prompt\",\"message\":" ++ J.string_literal(text) ++ "}\n"
 
 # The turn folds the server's classified answer into one mode: the exact
 # successful requested selection activates it, a failed answer is refused, a

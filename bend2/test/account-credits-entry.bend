@@ -29,6 +29,69 @@ def current_decided(account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
     case None{}: IO.print("")
     case Some{+chosen}: IO.print(A.account_id(chosen))
 
+def binding_text(values: List<String>) -> String:
+  match values:
+    case first <> second <> rest: first ++ "|" ++ second
+    case first <> rest: first
+    case Nil{}: ""
+
+def admission_line(decision: A.CreditAdmission) -> String:
+  match decision:
+    case A.CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}:
+      "admitted|" ++ organization ++ "|" ++ cycle ++ "|" ++ reserved_total ++ "|" ++ balance_after_reserve ++ "|" ++ cap_after_reserve
+    case A.CRefused{reason}: "refused|" ++ reason
+
+def gate_line(pair: Maybe<List<String>> & String) -> String:
+  (binding,refusal)=pair
+  match binding:
+    case Some{values}: "binding|" ++ binding_text(values) ++ "|" ++ refusal
+    case None{}: "refused|" ++ refusal
+
+def price_line(decision: A.CreditRequestPrice) -> String:
+  match decision:
+    case A.Priced{max_charge}: "priced|" ++ max_charge
+    case A.PriceRefused{reason}: "refused|" ++ reason
+
+def facts_line(facts: A.CreditRequestFacts) -> String:
+  match facts:
+    case A.CRF{model,input_tokens,output_tokens,cache_5m,cache_1h,cache_hit,geo,fast_mode,server_actions,tools}:
+      model ++ "|" ++ input_tokens ++ "|" ++ output_tokens ++ "|" ++ cache_5m ++ "|" ++ cache_1h ++ "|" ++ cache_hit ++ "|" ++ geo ++ "|" ++ Bool.pick(String,fast_mode,"1","0") ++ "|" ++ server_actions ++ "|" ++ Bool.pick(String,tools,"1","0")
+
+def history_needed_text(+first: Maybe<&2,A.AccountRecord>, +second: Maybe<&2,A.AccountRecord>) -> String:
+  match first:
+    case Some{+left}:
+      match second:
+        case Some{+right}: Bool.pick(String,A.account_history_needed(left,right),"yes","no")
+        case None{}: "absent"
+    case None{}: "absent"
+
+def reserve_bound_decided(+db: String, +session: String, +attempt: String, +period: String, +bound: String, account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
+  match account:
+    case None{}: IO.print("refused|accountAbsent")
+    case Some{+chosen}: do IO<Unit>:
+      decision : A.CreditAdmission <- A.credit_reserve_bounded_for(db,session,attempt,chosen,period,bound)
+      IO.print(admission_line(decision))
+
+def gate_priced_pair(+db: String, +session: String, +harness: String, +attempt: String, +model: String, +input: String, +output: String, +cache5: String, +cache1: String, +cachehit: String, +geo: String, +fast: String, +server: String, +tools: String, +qualified: String) -> IO(Unit):
+  do IO<Unit>:
+    +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+    pair : Maybe<List<String>> & String <- A.credit_launch_gate_priced(db,session,attempt,harness,account,Some{"/fixture/api-key-exec"},"",A.CRF{model,input,output,cache5,cache1,cachehit,geo,String.eq(fast,"1"),server,String.eq(tools,"1")},String.eq(qualified,"1"))
+    IO.print(gate_line(pair))
+
+def gate_body_pair(+db: String, +session: String, +harness: String, +attempt: String, +body: String, +qualified: String) -> IO(Unit):
+  do IO<Unit>:
+    +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+    facts : A.CreditRequestFacts <- A.credit_request_facts_for(db,body)
+    pair : Maybe<List<String>> & String <- A.credit_launch_gate_priced(db,session,attempt,harness,account,Some{"/fixture/api-key-exec"},"",facts,String.eq(qualified,"1"))
+    IO.print(gate_line(pair))
+
+def reserve_decided(+db: String, +session: String, +attempt: String, +cap: String, account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
+  match account:
+    case None{}: IO.print("refused|accountAbsent")
+    case Some{+chosen}: do IO<Unit>:
+      decision : A.CreditAdmission <- A.credit_reserve_for(db,session,attempt,chosen,cap)
+      IO.print(admission_line(decision))
+
 def dispatch(arguments: List<String>) -> IO(Unit):
   match arguments:
     case +db <> "account" <> +action <> +id <> +provider <> +harness <> +funding <> +secret <> +organization <> +detail <> +session <> Nil{}:
@@ -52,6 +115,10 @@ def dispatch(arguments: List<String>) -> IO(Unit):
       do IO<Unit>:
         completed : Unit <- A.attempt_completed(db,attempt,outcome,detail)
         IO.print("attempt-completed")
+    case +db <> "complete-event" <> +attempt <> +outcome <> +detail <> +event <> Nil{}:
+      do IO<Unit>:
+        completed : Unit <- A.attempt_completed_event(db,attempt,outcome,detail,event)
+        IO.print("attempt-completed")
     case +db <> "current" <> +session <> +harness <> Nil{}:
       do IO<Unit>:
         +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
@@ -61,7 +128,52 @@ def dispatch(arguments: List<String>) -> IO(Unit):
         +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
         recorded : Unit <- A.record_current_attempt(db,session,attempt,predecessor,account)
         IO.print("attempt-recorded")
-    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete")
+    case +db <> "reserve" <> +session <> +harness <> +attempt <> +cap <> Nil{}:
+      do IO<Unit>:
+        +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+        reserve_decided(db,session,attempt,cap,account)
+    case +db <> "settle" <> +request <> +outcome <> +cost <> Nil{}:
+      do IO<Unit>:
+        state : String <- A.credit_settle_for(db,request,outcome,cost,False{})
+        IO.print(state)
+    case +db <> "reconcile" <> +request <> +cost <> Nil{}:
+      do IO<Unit>:
+        state : String <- A.credit_settle_for(db,request,"reconciled",cost,True{})
+        IO.print(state)
+    case +db <> "gate-qualified" <> +session <> +harness <> +attempt <> Nil{}:
+      do IO<Unit>:
+        +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+        pair : Maybe<List<String>> & String <- A.credit_launch_gate(db,session,attempt,harness,account,Some{"/fixture/api-key-exec"},"",True{})
+        IO.print(gate_line(pair))
+    case +db <> "gate-held" <> +session <> +harness <> +attempt <> Nil{}:
+      do IO<Unit>:
+        +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+        pair : Maybe<List<String>> & String <- A.credit_launch_gate(db,session,attempt,harness,account,Some{"/fixture/api-key-exec"},"",False{})
+        IO.print(gate_line(pair))
+    case +db <> "price" <> +model <> +input <> +output <> +cache5 <> +cache1 <> +cachehit <> +geo <> +fast <> +server <> +tools <> Nil{}:
+      IO.print(price_line(A.credit_request_price(A.CRF{model,input,output,cache5,cache1,cachehit,geo,String.eq(fast,"1"),server,String.eq(tools,"1")})))
+    case +db <> "history-needed" <> +first <> +second <> +harness <> Nil{}:
+      do IO<Unit>:
+        left : Maybe<&2,A.AccountRecord> <- A.account_by_label(db,first,harness)
+        right : Maybe<&2,A.AccountRecord> <- A.account_by_label(db,second,harness)
+        IO.print(history_needed_text(left,right))
+    case +db <> "reserve-bound" <> +session <> +harness <> +attempt <> +period <> +bound <> Nil{}:
+      do IO<Unit>:
+        +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+        reserve_bound_decided(db,session,attempt,period,bound,account)
+    case +db <> "gate-priced" <> +session <> +harness <> +attempt <> +model <> +input <> +output <> +cache5 <> +cache1 <> +cachehit <> +geo <> +fast <> +server <> +tools <> +qualified <> Nil{}:
+      gate_priced_pair(db,session,harness,attempt,model,input,output,cache5,cache1,cachehit,geo,fast,server,tools,qualified)
+    case +db <> "facts" <> +body <> Nil{}:
+      do IO<Unit>:
+        facts : A.CreditRequestFacts <- A.credit_request_facts_for(db,body)
+        IO.print(facts_line(facts))
+    case +db <> "price-body" <> +body <> Nil{}:
+      do IO<Unit>:
+        facts : A.CreditRequestFacts <- A.credit_request_facts_for(db,body)
+        IO.print(price_line(A.credit_request_price(facts)))
+    case +db <> "gate-body" <> +session <> +harness <> +attempt <> +body <> +qualified <> Nil{}:
+      gate_body_pair(db,session,harness,attempt,body,qualified)
+    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|complete-event|reserve|reserve-bound|settle|reconcile|gate-qualified|gate-held|gate-priced|price-body|gate-body|facts|price|history-needed")
 
 def main() -> IO(Unit):
   do IO<Unit>:

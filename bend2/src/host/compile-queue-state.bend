@@ -1,12 +1,9 @@
 import Base
 import ./choice.bend as Choice
 import ../host/text.bend as T
-import ../host/files.bend as F
 import ./compile-queue-files.bend as QF
-import ./posix.bend as P
-import ./wide.bend as W
 
-def field_lines( +lines: List<&2,String>, +name: String) -> String:
+def field_lines(+lines: List<&2,String>, +name: String) -> String:
   match lines:
     case Nil{}: ""
     case +line <> rest:
@@ -25,16 +22,16 @@ def decimal(text: String, acc: Nat) -> Nat:
 def nat(text: String) -> Nat:
   decimal(text,0n)
 
-def number( +text: String) -> U32:
+def number(+text: String) -> U32:
   QF.number(text)
 
-def first( +parts: List<&2,String>) -> String:
+def first(+parts: List<&2,String>) -> String:
   QF.first(parts)
 
-def at( +parts: List<&2,String>, +index: U32) -> String:
+def at(+parts: List<&2,String>, +index: U32) -> String:
   QF.at(parts,index)
 
-def last( +parts: List<&2,String>) -> String:
+def last(+parts: List<&2,String>) -> String:
   match parts:
     case Nil{}: ""
     case value <> Nil{}: value
@@ -52,46 +49,17 @@ def dirname_parts(parts: List<&2,String>, +acc: String, first: Bool) -> String:
 def dirname(path: String) -> String:
   dirname_parts(String.split(path,Char.from_u32(47)),"",True{})
 
-def state(attempt: String) -> String:
-  dirname(dirname(dirname(dirname(attempt))))
-
-def keydir(attempt: String) -> String:
-  dirname(dirname(attempt))
-
-def key( +attempt: String) -> String:
-  basename(keydir(attempt))
-
 def text_or_empty(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:
     case Done{value}: value
     case Fail{error}: ""
 
-def read( +path: String) -> IO(String):
+def read(+path: String) -> IO(String):
   do IO<String>:
     result : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
     IO.pure(String,text_or_empty(result))
 
-def visible(names: List<&2,String>) -> List<&2,String>:
-  match names:
-    case Nil{}: Nil{}
-    case +name <> +rest: Choice.choose(List<&2,String>,String.starts_with(name,"."), _choice_unit => visible(rest), _choice_unit => name <> visible(rest))
-
-def names( +path: String) -> IO(List<&2,String>):
-  do IO<List<&2,String>>:
-    result : Result<&1,&1,U32 & String,String> <- QF.list_dir(path)
-    IO.pure(List<&2,String>,QF.nonempty(String.split(text_or_empty(result),Char.from_u32(0))))
-
-def remove( +path: String) -> IO(Unit):
-  do IO<Unit>:
-    result : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(path)
-    IO.pure(Unit,Unit{})
-
-def write( +path: String, +bytes: String) -> IO(Unit):
-  do IO<Unit>:
-    result : Result<&1,&1,U32 & String,Unit> <- F.Files.write_shared(path,bytes)
-    IO.pure(Unit,Unit{})
-
-def words_go( +text: String, +acc: String, +out: List<&2,String>) -> List<&2,String>:
+def words_go(+text: String, +acc: String, +out: List<&2,String>) -> List<&2,String>:
   match text:
     case SNil{}: List.reverse(&2,String,Choice.choose(List<&2,String>,String.is_empty(acc), _choice_unit => out, _choice_unit => acc <> out))
     case SCon{+char,+rest}:
@@ -99,147 +67,5 @@ def words_go( +text: String, +acc: String, +out: List<&2,String>) -> List<&2,Str
         words_go(rest,"",Choice.choose(List<&2,String>,String.is_empty(acc), _choice_unit => out, _choice_unit => acc <> out)), _choice_unit =>
         words_go(rest,acc ++ Char.show(char),out))
 
-def words( +text: String) -> List<&2,String>:
+def words(+text: String) -> List<&2,String>:
   words_go(text,"",Nil{})
-
-@unsafe
-def pad(+text: String, +width: Nat) -> String:
-  Choice.choose(String,Nat.is_ge(String.length(text),width), _choice_unit => text, _choice_unit => pad("0" ++ text,width))
-
-def id( +queued: String, +pid: U32) -> String:
-  pad(queued,20n) ++ "-" ++ pad(U32.show(pid),10n)
-
-# FNV-1a preserves the names of the existing history records. Each Unicode
-# character is encoded to UTF-8 before the byte recurrence is applied.
-def fnv_byte(hash: W.Wide64, byte: U32) -> W.Wide64:
-  W.fnv_step(hash,byte)
-
-def fnv_char(+code: U32, +hash: W.Wide64) -> W.Wide64:
-  Choice.choose(W.Wide64,U32.is_lt(code,128), _choice_unit => fnv_byte(hash,code), _choice_unit =>
-    Choice.choose(W.Wide64,U32.is_lt(code,2048), _choice_unit =>
-      fnv_byte(fnv_byte(hash,U32.add(192,U32.div(code,64))),U32.add(128,U32.mod(code,64))), _choice_unit =>
-      Choice.choose(W.Wide64,U32.is_lt(code,65536), _choice_unit =>
-        fnv_byte(fnv_byte(fnv_byte(hash,U32.add(224,U32.div(code,4096))),U32.add(128,U32.mod(U32.div(code,64),64))),U32.add(128,U32.mod(code,64))), _choice_unit =>
-        fnv_byte(fnv_byte(fnv_byte(fnv_byte(hash,U32.add(240,U32.div(code,262144))),U32.add(128,U32.mod(U32.div(code,4096),64))),U32.add(128,U32.mod(U32.div(code,64),64))),U32.add(128,U32.mod(code,64))))))
-
-def fnv( +text: String, +hash: W.Wide64) -> W.Wide64:
-  match text:
-    case SNil{}: hash
-    case SCon{char,rest}: fnv(rest,fnv_char(Char.to_u32(char),hash))
-
-def hash(text: String) -> String:
-  W.hex(fnv(text,W.Wide64{3421674724,2216829733}))
-
-def entry_key(+entry: String) -> String:
-  Choice.choose(String,String.is_empty(entry), _choice_unit => "", _choice_unit => hash(Choice.choose(String,String.starts_with(entry,"/"), _choice_unit => basename(entry), _choice_unit => entry)))
-
-def shape_token(+token: String) -> String:
-  Choice.choose(String,Bool.and(String.starts_with(token,"/"),
-    Bool.not(Bool.or(String.contains(token," "),Bool.or(String.contains(token,"\n"),String.contains(token,"\t"))))), _choice_unit => basename(token), _choice_unit => token)
-
-def shape_tokens( +tokens: List<&2,String>, +hash: W.Wide64) -> W.Wide64:
-  match tokens:
-    case Nil{}: hash
-    case token <> rest: shape_tokens(rest,fnv(shape_token(token) ++ "\n",hash))
-
-def argv_parts(parts: List<&2,String>) -> List<&2,String>:
-  match parts:
-    case SNil{} <> Nil{}: Nil{}
-    case value <> rest: value <> argv_parts(rest)
-    case Nil{}: Nil{}
-
-def shape_argv(result: Result<&1,&1,U32 & String,String>, +attempt: String) -> IO(List<&2,String>):
-  match result:
-    case Done{bytes}: IO.pure(List<&2,String>,argv_parts(String.split(bytes,Char.from_u32(0))))
-    case Fail{error}:
-      do IO<List<&2,String>>:
-        +bytes : String <- read(attempt ++ "/command")
-        IO.pure(List<&2,String>,QF.nonempty(String.lines(bytes)))
-
-def shape(+attempt: String) -> IO(String):
-  do IO<String>:
-    +meta : String <- read(attempt ++ "/meta")
-    argv : Result<&1,&1,U32 & String,String> <- T.Text.read(attempt ++ "/argv")
-    +tokens : List<&2,String> <- shape_argv(argv,attempt)
-    +entry : String <- IO.pure(String,field(meta,"entry"))
-    +head : String <- IO.pure(String,"kind=" ++ field(meta,"kind") ++ "\nentry=" ++ Choice.choose(String,String.starts_with(entry,"/"), _choice_unit => basename(entry), _choice_unit => entry) ++ "\n")
-    IO.pure(String,W.hex(shape_tokens(tokens,fnv(head,W.Wide64{3421674724,2216829733}))))
-
-def mode(+attempt: String) -> IO(String):
-  do IO<String>:
-    argv : Result<&1,&1,U32 & String,String> <- T.Text.read(attempt ++ "/argv")
-    +tokens : List<&2,String> <- shape_argv(argv,attempt)
-    IO.pure(String,Choice.choose(String,String.contains(String.concat(tokens),"--check-only"), _choice_unit => "check", _choice_unit => "full"))
-
-def name_char(+char: Char) -> Bool:
-  Bool.or(Char.is_alpha(char),Bool.or(Char.is_digit(char),String.contains("._-",Char.show(char))))
-
-def path_char(+char: Char) -> Bool:
-  Bool.or(name_char(char),String.contains("/@",Char.show(char)))
-
-def starts_name( +text: String) -> Bool:
-  match text:
-    case SNil{}: False{}
-    case SCon{char,rest}: name_char(char)
-
-def root_length( +roots: List<&2,String>, +text: String, +best: Nat) -> Nat:
-  match roots:
-    case Nil{}: best
-    case +root <> rest:
-      +size = String.length(root)
-      +fits = Bool.and(String.starts_with(root,"/"),Bool.and(Nat.is_gt(size,1n),
-        Bool.and(String.starts_with(text,root),Bool.not(starts_name(String.drop(text,size))))))
-      root_length(rest,text,Choice.choose(Nat,fits, _choice_unit => Nat.max(best,size), _choice_unit => best))
-
-@unsafe
-def replace_roots(+text: String, +roots: List<&2,String>) -> String:
-  match text:
-    case SNil{}: ""
-    case SCon{char,rest}:
-      +size = root_length(roots,text,0n)
-      Choice.choose(String,Nat.is_gt(size,0n), _choice_unit => "@root" ++ replace_roots(String.drop(text,size),roots), _choice_unit => Char.show(char) ++ replace_roots(rest,roots))
-
-def name_length( +text: String) -> Nat:
-  match text:
-    case SNil{}: 0n
-    case SCon{char,rest}: Choice.choose(Nat,name_char(char), _choice_unit => Nat.add(1n,name_length(rest)), _choice_unit => 0n)
-
-def hex_length( +text: String) -> Nat:
-  match text:
-    case SNil{}: 0n
-    case SCon{char,rest}: Choice.choose(Nat,String.contains("0123456789abcdef",Char.show(char)), _choice_unit => Nat.add(1n,hex_length(rest)), _choice_unit => 0n)
-
-def trim_path( +text: String) -> String:
-  match text:
-    case SNil{}: ""
-    case SCon{+char,+rest}: Choice.choose(String,path_char(char), _choice_unit => trim_path(rest), _choice_unit => SCon{char,rest})
-
-def pattern_length(+text: String, +attempts: Bool) -> Nat:
-  match attempts:
-    case False{}:
-      Choice.choose(Nat,String.starts_with(text,"/worktrees/"), _choice_unit => Nat.add(11n,name_length(String.drop(text,11n))), _choice_unit => 0n)
-    case True{}:
-      Choice.choose(Nat,Bool.and(String.starts_with(text,"/keys/"),
-        Bool.and(Nat.is_eq(hex_length(String.drop(text,6n)),64n),String.starts_with(String.drop(text,70n),"/runs/"))), _choice_unit =>
-        Nat.add(76n,name_length(String.drop(text,76n))), _choice_unit => 0n)
-
-@unsafe
-def replace_pattern(+text: String, +attempts: Bool, +acc: String) -> String:
-  match text:
-    case SNil{}: String.reverse(acc)
-    case SCon{char,rest}:
-      +size = pattern_length(text,attempts)
-      Choice.choose(String,Nat.is_gt(size,0n), _choice_unit =>
-        replace_pattern(String.drop(text,size),attempts,String.reverse(Choice.choose(String,attempts, _choice_unit => "@attempt", _choice_unit => "@worktree")) ++ trim_path(acc)), _choice_unit =>
-        replace_pattern(rest,attempts,SCon{char,acc}))
-
-def group_text( +text: String, +roots: String) -> String:
-  replace_pattern(replace_pattern(replace_roots(text,String.lines(roots)),False{},""),True{},"")
-
-def without( +lines: List<&2,String>, +name: String) -> String:
-  match lines:
-    case Nil{}: ""
-    case +line <> rest: Choice.choose(String,Bool.or(String.starts_with(line,name ++ "="),String.is_empty(line)), _choice_unit => "", _choice_unit => line ++ "\n") ++ without(rest,name)
-
-def put( +text: String, +name: String, +value: String) -> String:
-  name ++ "=" ++ value ++ "\n" ++ without(String.lines(text),name)

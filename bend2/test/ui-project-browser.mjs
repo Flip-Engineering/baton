@@ -22,12 +22,12 @@ const sessions = [
     harness: 'muse', model: 'configured-model', effort: 'high', observedHarness: 'muse',
     observedModel: 'reported-model', observedEffort: 'low', workspace: '/recorded/workspace λ',
     branch: 'recorded-branch', native: 'recorded-native', execution: { phase: 'running', status: 'pid 4242' },
-    pendingCount: 2, unacknowledgedCount: 3, latestReportId: 'original-report' },
+    pendingCount: 2, unreadCount: 3, latestReportId: 'original-report' },
   { id: 'earlier-principal', kind: 'player', role: 'principal-conductor', harness: 'muse',
     model: 'prior-model', effort: 'low', workspace: '/recorded/earlier', branch: 'earlier-branch',
     execution: { phase: 'exited', status: 'exit 0' }, pendingCount: 0, latestReportId: 'earlier-report' },
   { id: 'stopped-conversation', role: 'player', kind: 'player', workspace: '/recorded/stopped',
-    pendingCount: 1, unacknowledgedCount: 1, stop: { status: 'stopped', reason: 'Operator stop. λ',
+    pendingCount: 1, unreadCount: 1, stop: { status: 'stopped', reason: 'Operator stop. λ',
       outcome: 'native-exited', attempt: 'original-stopped-attempt' }, latestReportId: 'stopped-report' },
 ];
 let projectMode = 'normal';

@@ -514,12 +514,11 @@ def exit_report_cause(+db: String, +session: String, +id: String, cause: String)
       model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
       +harness_text : String <- IO.pure(String,exit_result_text(harness))
       +model_text : String <- IO.pure(String,exit_result_text(model))
-      +reset : String <- IO.pure(String,UW.reset_text_of(other))
       +window : String <- IO.pure(String,UW.window_label_of(UW.lower_ascii(other)))
       account_result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT account FROM account_attempts WHERE session=" ++ C.q(session) ++ " AND turn=" ++ C.q(id) ++ " ORDER BY recorded DESC,rowid DESC LIMIT 1;")
       +account_row : String <- IO.pure(String,exit_result_text(account_result))
       +account : String <- Bool.pick(IO(String),String.is_empty(account_row),profile_label_io(db,session),IO.pure(String,account_row))
-      identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(account) ++ " || char(31) || " ++ C.q(window) ++ " || char(31) || " ++ C.q(reset) ++ ";")
+      identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(account) ++ " || char(31) || " ++ C.q(window) ++ ";")
       exit_report_encoded(db,id,exit_result_text(identity))
 
 def exit_report_id(+db: String, session: String, id: String, event: String) -> IO(String):
@@ -550,73 +549,82 @@ def refusal_report_base(+db: String, +session: String, +id: String) -> IO(String
     refusal_identity_base(db,id,Tx.trim_nl(identity))
 
 # The verdict of the sidecar write, at the head of the definition so the caller's do block
-# ends on a term. A failed write reports its cause and returns false, so no profile is
-# advanced and the original input stays owed.
-def history_appended(db: String, session: String, id: String, path: String, variable: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
+# ends on a term. A failed write reports its cause and returns false, so no profile or
+# account is advanced and the original input stays owed.
+def history_appended(db: String, session: String, id: String, path: String, variable: String, appended: Result<&1,&1,U32 & String,Unit>, +scope: String) -> IO(Bool):
   match appended:
     case Done{unit}: IO.pure(Bool,True{})
     case Fail{error}: match error:
       case (code,detail): do IO<Bool>:
-        noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-history-failed") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q("subscription profile history home record failed at " ++ path ++ " for " ++ variable ++ ": " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no profile was advanced.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
+        noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":" ++ scope ++ "-history-failed") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q("subscription " ++ scope ++ " history home record failed at " ++ path ++ " for " ++ variable ++ ": " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no " ++ scope ++ " was advanced.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
         IO.pure(Bool,False{})
 
-def history_recorded(db: String, session: String, id: String, variable: String, +path: String, line: String) -> IO(Bool):
+def history_recorded(db: String, session: String, id: String, variable: String, +path: String, line: String, +scope: String) -> IO(Bool):
   do IO<Bool>:
     appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(path,Tx.trim_nl(line) ++ "\n")
-    history_appended(db,session,id,path,variable,appended)
+    history_appended(db,session,id,path,variable,appended,scope)
 
-def history_answered_empty(db: String, session: String, id: String, variable: String, path: String, answer: String, empty: Bool) -> IO(Bool):
+def history_answered_empty(db: String, session: String, id: String, variable: String, path: String, answer: String, empty: Bool, +scope: String) -> IO(Bool):
   match empty:
     case True{}: do IO<Bool>:
-      noted : Unit <- report_body(db,session,id,"profile-history-failed","the native history helper answered without a provider history home; the provider cause stands and no profile was advanced; helper output: " ++ Tx.trim_nl(answer))
+      noted : Unit <- report_body(db,session,id,scope ++ "-history-failed","the native history helper answered without a provider history home; the provider cause stands and no " ++ scope ++ " was advanced; helper output: " ++ Tx.trim_nl(answer))
       IO.pure(Bool,False{})
-    case False{}: history_recorded(db,session,id,variable,path,answer)
+    case False{}: history_recorded(db,session,id,variable,path,answer,scope)
 
 # A usable answer is recorded whole, so the sidecar keeps what the helper resolved.
-def history_answered(+db: String, +session: String, +id: String, variable: String, path: String, answer: String, +home: String) -> IO(Bool):
-  history_answered_empty(db,session,id,variable,path,answer,String.is_empty(home))
+def history_answered(+db: String, +session: String, +id: String, variable: String, path: String, answer: String, +home: String, +scope: String) -> IO(Bool):
+  history_answered_empty(db,session,id,variable,path,answer,String.is_empty(home),scope)
 
-def history_helper_result(+db: String, +session: String, +id: String, harness: String, variable: String, from_store: String, path: String, run: T.RunRes) -> IO(Bool):
+def history_helper_result(+db: String, +session: String, +id: String, harness: String, variable: String, from_store: String, path: String, run: T.RunRes, +scope: String) -> IO(Bool):
   match run:
     case T.RRun{T.SExit{0}, out}: do IO<Bool>:
       +answer : String <- IO.pure(String,last_line(Tx.split_lines(Tx.trim_nl(out))))
       home : String <- IO.try(String,DB.Sql.query(db,history_home_sql(answer)))
-      history_answered(db,session,id,variable,path,answer,Tx.trim_nl(home))
+      history_answered(db,session,id,variable,path,answer,Tx.trim_nl(home),scope)
     case +other: do IO<Bool>:
-      noted : Unit <- report_body(db,session,id,"profile-history-failed","the native history helper did not prepare the preserved provider history; the provider cause stands and no profile was advanced; helper exit and output: " ++ Tx.trim_nl(run_status(other)) ++ " " ++ Tx.trim_nl(run_text(other)))
+      noted : Unit <- report_body(db,session,id,scope ++ "-history-failed","the native history helper did not prepare the preserved provider history; the provider cause stands and no " ++ scope ++ " was advanced; helper exit and output: " ++ Tx.trim_nl(run_status(other)) ++ " " ++ Tx.trim_nl(run_text(other)))
       IO.pure(Bool,False{})
 
 # The helper's own answer is the sidecar line: it carries the provider history home, the
 # source and selected stores, the native identity and the rollout and history paths, and the
 # continuation reads its home from it. An answer that names no home is not a usable one.
-def history_from_helper(db: String, session: String, id: String, +harness: String, variable: String, +from_store: String, path: String, profile: Profile, script: String, cmd: String, +cwd: String, native: String, existing: String) -> IO(Bool):
+def history_from_helper(db: String, session: String, id: String, +harness: String, variable: String, +from_store: String, path: String, to_store: String, script: String, cmd: String, +cwd: String, native: String, existing: String, +scope: String) -> IO(Bool):
   do IO<Bool>:
-    run : T.RunRes <- Proc.runFull(history_prepare_args(script,harness,cmd,cwd,native,from_store,profile_store(profile),existing),cwd)
-    history_helper_result(db,session,id,harness,variable,from_store,path,run)
+    run : T.RunRes <- Proc.runFull(history_prepare_args(script,harness,cmd,cwd,native,from_store,to_store,existing),cwd)
+    history_helper_result(db,session,id,harness,variable,from_store,path,run,scope)
 
-def prepare_history_variable(+db: String, +session: String, id: String, harness: String, from_store: String, cmd: String, cwd: String, native: String, profile: Profile, selected: Maybe<String>, previous: String) -> IO(Bool):
+def prepare_history_store(+db: String, +session: String, id: String, harness: String, from_store: String, to_store: String, cmd: String, cwd: String, native: String, selected: Maybe<String>, previous: String, +scope: String) -> IO(Bool):
   match selected:
     case None{}: IO.pure(Bool,True{})
     case Some{variable}: do IO<Bool>:
       +path : String <- history_path(db,session)
       script : String <- helper_script()
-      history_from_helper(db,session,id,harness,variable,from_store,path,profile,script,cmd,cwd,native,previous)
+      history_from_helper(db,session,id,harness,variable,from_store,path,to_store,script,cmd,cwd,native,previous,scope)
 
-# The preserved history home for this handoff. The packaged native runtime helper reads the
+# The preserved history home for one handoff. The packaged native runtime helper reads the
 # original account's effective provider history home and materializes what the next account
 # needs, and its answer is recorded for the continuation to bind. A helper that fails
-# reports its own cause and leaves the original input owed, so no profile is advanced.
-# The previous native-history record is the sidecar's last line for this handoff's own
-# harness. An empty source store means no previous store on this harness (a harness
-# reset or a fresh session), so no previous record is passed either; old lines stay.
-def prepare_history(+db: String, +session: String, +id: String, +harness: String, +from_store: String, +cmd: String, +cwd: String, +native: String, decided: Maybe<&2,Profile>) -> IO(Bool):
+# reports its own cause and leaves the original input owed, so no profile or account is
+# advanced. The previous native-history record is the sidecar's last line for this
+# handoff's own harness. An empty source store means no previous store on this harness (a
+# harness reset or a fresh session), so no previous record is passed either; old lines stay.
+def prepare_history_store_recorded(+db: String, +session: String, +id: String, +harness: String, +from_store: String, +to_store: String, +cmd: String, +cwd: String, +native: String, +scope: String) -> IO(Bool):
+  do IO<Bool>:
+    +path : String <- history_path(db,session)
+    recorded : String <- file_text(path)
+    +previous : String <- IO.pure(String,Bool.pick(String,String.is_empty(from_store),"",last_line(Tx.split_lines(recorded))))
+    prepare_history_store(db,session,id,harness,from_store,to_store,cmd,cwd,native,history_store_variable(harness),previous,scope)
+
+def prepare_history(+db: String, +session: String, +id: String, +harness: String, +from_store: String, +cmd: String, +cwd: String, +native: String, +scope: String, decided: Maybe<&2,Profile>) -> IO(Bool):
   match decided:
     case None{}: IO.pure(Bool,True{})
-    case Some{profile}: do IO<Bool>:
-      +path : String <- history_path(db,session)
-      recorded : String <- file_text(path)
-      previous : String <- IO.pure(String,Bool.pick(String,String.is_empty(from_store),"",last_line(Tx.split_lines(recorded))))
-      prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,history_store_variable(harness),previous)
+    case Some{profile}: prepare_history_store_recorded(db,session,id,harness,from_store,profile_store(profile),cmd,cwd,native,scope)
+
+# The account-record path uses the same native-history transport with the refused and next
+# account credential stores. The caller invokes it only for two subscription accounts with
+# distinct stores, so the continuation reads the original conversation under the next root.
+def prepare_account_history(+db: String, +session: String, +id: String, +harness: String, +from_store: String, +to_store: String, +cmd: String, +cwd: String, +native: String) -> IO(Bool):
+  prepare_history_store_recorded(db,session,id,harness,from_store,to_store,cmd,cwd,native,"account")
 
 # Each account advance records its provider cause under a separate report ID.
 def record_handoff(db: String, session: String, id: String, harness: String, from_label: String, +profile: Profile, cause: String) -> IO(Bool):
@@ -677,7 +685,7 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
     +from_label : String <- IO.pure(String,record_current(Tx.trim_nl(harness),last_record))
     from_store : String <- IO.pure(String,record_source(Tx.trim_nl(harness),last_record))
     +decided : Maybe<&2,Profile> <- next_profile_available(db,session,profiles,Tx.trim_nl(harness),from_label)
-    prepared : Bool <- prepare_history(db,session,id,Tx.trim_nl(harness),from_store,cmd,cwd,native,decided)
+    prepared : Bool <- prepare_history(db,session,id,Tx.trim_nl(harness),from_store,cmd,cwd,native,"profile",decided)
     taken : Bool <- Bool.pick(IO(Bool),prepared,choose_profile(db,session,id,record_path,Tx.trim_nl(harness),from_label,cause,decided),IO.pure(Bool,False{}))
     IO.pure(Bool,taken)
 

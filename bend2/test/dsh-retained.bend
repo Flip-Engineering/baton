@@ -1,8 +1,11 @@
 # Retained-launch fixture for DSH. It exercises DSH_HOME, patch preparation,
 # argv composition and admission under the shared instance owner.
 import Base
+import ../src/coordinator/accounts.bend as Accounts
+import ../src/coordinator/commands.bend as C
 import ../src/coordinator/turn.bend as Turn
 import ../src/harness/dsh-player.bend as Dsh
+import ../src/host/sqlite.bend as DB
 import ../src/host/process.bend as P
 import ../src/host/instance.bend as Custody
 import ../src/host/session-lock.bend as Lock
@@ -54,7 +57,7 @@ def admit(+db: String, +directory: String, +cmd: String, +model: String, +effort
   do IO<Unit>:
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     home : String <- Turn.dsh_home(db,canonical,"dsh-fixture")
-    prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Turn.dsh_prepare_if(True{},directory,model,effort)
+    prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Turn.dsh_prepare_if(True{},directory,model,effort,"")
     launch : Turn.RetainedLaunch <- IO.try(Turn.RetainedLaunch,Turn.retained_launch_checked(prepared,True{},False{},"",home,cmd,model,effort,native,False{},"","fixture task",False{},False{},"default",True{}))
     start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained_admit(canonical,directory,".","fixture task",0,P.argv(["/bin/true"]),launch))
     admission_value(start)
@@ -75,15 +78,37 @@ def instance_mode(owner: Bool, shutdown: Bool, db: String) -> IO(Unit):
         case True{}: IO.try(Unit,Custody.Instance.shutdown(db))
         case False{}: IO.die(Unit,2,"expected instance mode")
 
+def witness_mode(db: String) -> IO(Unit):
+  do IO<Unit>:
+    witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.owner_witness(db)
+    match witness:
+      case Fail{error}: IO.die(Unit,2,"owner witness failed")
+      case Done{value}: IO.print(value)
+
+def ensure_witness_mode(db: String) -> IO(Unit):
+  match Custody.Instance.ensure_owner_witness(db):
+    case Fail{error}: IO.die(Unit,2,"instance owner ensure failed")
+    case Done{value}: IO.print(value)
+
 def admission_mode(selected: Bool, db: String, directory: String, cmd: String, model: String, effort: String, native: String) -> IO(Unit):
   match selected:
     case True{}: admit(db,directory,cmd,model,effort,native)
     case False{}: IO.die(Unit,2,"expected admission mode")
 
+def prepare_retained(+db: String, +directory: String, +cmd: String, +model: String, +effort: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : Unit <- Accounts.ensure(db)
+    schema : String <- IO.try(String,DB.Sql.query(db,C.schema()))
+    seated : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO sessions(id,parent,harness,model,effort) VALUES('dsh-fixture',NULL,'dsh','deepseek-flash','max');INSERT INTO executions(session,id,mode,directory,phase,status) VALUES('dsh-fixture','receive:dsh-fixture:1','retained'," ++ C.q(directory) ++ ",'starting','');"))
+    launch : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_prepare_checked(db,"dsh-fixture",directory,cmd,model,effort,"", "dsh\n",db ++ ".sessions","fixture task","default",False{},"",Done{Unit{}})
+    launch_value(launch)
+
 def run(args: List<String>) -> IO(Unit):
   match args:
     case +mode <> +db <> Nil{}:
-      instance_mode(String.eq(mode,"--instance-owner"),String.eq(mode,"shutdown"),db)
+      Bool.pick(IO(Unit),String.eq(mode,"--instance-ensure-witness"),ensure_witness_mode(db),Bool.pick(IO(Unit),String.eq(mode,"--instance-witness"),witness_mode(db),instance_mode(String.eq(mode,"--instance-owner"),Bool.or(String.eq(mode,"--instance-shutdown"),String.eq(mode,"shutdown")),db)))
+    case +mode <> +db <> +directory <> +cmd <> +model <> +effort <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(mode,"prepare"),prepare_retained(db,directory,cmd,model,effort),IO.die(Unit,2,"expected prepare mode"))
     case +mode <> +directory <> +path <> +phase <> Nil{}:
       storage_mode(String.eq(mode,"storage"),directory,path,phase)
     case +mode <> +db <> +directory <> +cmd <> +model <> +effort <> +native <> Nil{}:
@@ -91,7 +116,7 @@ def run(args: List<String>) -> IO(Unit):
     case +db <> +directory <> +cmd <> +model <> +effort <> +native <> Nil{}: do IO<Unit>:
       canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
       home : String <- Turn.dsh_home(db,canonical,"dsh-fixture")
-      prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Turn.dsh_prepare_if(True{},directory,model,effort)
+      prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Turn.dsh_prepare_if(True{},directory,model,effort,"")
       prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_SESSION=dsh-fixture"]))
       launch : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_launch_checked(prepared,True{},False{},prefix,home,cmd,model,effort,native,False{},"","fixture task",False{},False{},"default",False{})
       launch_value(launch)

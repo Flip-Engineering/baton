@@ -7,7 +7,7 @@ path it exercises answers as the design says.
 
   landing-publishing  one real Player commits; a real OMP Principal Conductor session reads
                       the Player's report, inspects its worktree and
-                      acknowledges it; the gated landing lands the change; the
+                      reads it; the gated landing lands the change; the
                       coordinator publishes the landed target and git ls-remote
                       reads the advertised ref back; a remote moved
                       independently makes the next push refuse.
@@ -171,10 +171,10 @@ def wait_native(db, player, turn=None, after=None):
 
 
 def wait_handled(binary, db, ident):
-    """Wait for the recipient's handling receipt for the complete stored input."""
+    """Wait for the recipient's recorded read of the complete stored input."""
     while True:
         delivery = coord_json(binary, db, 'delivery', ident)
-        if delivery.get('receipt'):
+        if delivery.get('nativeInputStatus', {}).get('read') == 'recorded':
             return delivery
         time.sleep(0.05)
 
@@ -281,9 +281,9 @@ def scenario_landing_publishing(config, out, binary):
     coord(binary, db, "message", "review-setup", "operator", "root", "guidance",
           "Remember this instruction for this acceptance run: when a Player report arrives, "
           "inspect its worktree, branch diff and committed file contents, describe your review "
-          "in your response, then use the acknowledge action. Do not land, push, edit, or launch Players. "
+          "in your response. Do not land, push, edit, or launch Players. "
           "The acceptance driver performs the Git acts after your review. "
-          "Use the acknowledge action for the complete handled input and end this turn. Do not poll or wait in a tool. "
+          "Read the complete input; Baton records the read internally. End this turn. Do not poll or wait in a tool. "
           "The adapter starts your next turn when a Player report is committed.")
     root_attach(binary, db, run_dir, route_omp)
     remote = run_dir / "remote.git"
@@ -291,7 +291,7 @@ def scenario_landing_publishing(config, out, binary):
     git(repo, "remote", "add", "acceptance-remote", str(remote))
     turn_player(binary, db, repo, run_dir, route_omp, "w1", "wa", base, "data/a.txt", "alpha", "t1")
     delivery = wait_handled(binary, db, 't1')
-    say(f"report t1 acknowledged with receipt {delivery['receipt']}")
+    say(f"report t1 read: {delivery['nativeInputStatus']['read']}")
     say(f"the root's session: {coord(binary, db, 'player', 'root')[0]}")
     if git(repo, "rev-parse", "main") != base:
         raise Failed("the root advanced the target before the requested checked landing")

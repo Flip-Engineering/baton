@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import signal
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,9 @@ T = Path(tempfile.mkdtemp(prefix='compile-queue-custody-'))
 STATE = T / 'queue'
 STATE.mkdir()
 STATE.chmod(0o2770)
+# The queue owns its output modes; exercise that contract under a restrictive
+# caller umask used by the homelab runner.
+os.umask(0o077)
 SOURCE = T / 'source'
 SCRIPTS = SOURCE / 'bend2/scripts'
 SCRIPTS.mkdir(parents=True)
@@ -133,6 +137,17 @@ def wait(p, expected=0):
 def records():
     return list((STATE / 'bootstrap-runs').glob('*/telemetry'))
 
+def assert_group_readable_outputs():
+    result_paths = list((STATE / 'keys').glob('*/runs/*/result'))
+    result_paths.extend((STATE / 'keys').glob('*/completed/result'))
+    log_paths = list((STATE / 'keys').glob('*/runs/*/stdout'))
+    log_paths.extend((STATE / 'keys').glob('*/runs/*/stderr'))
+    assert result_paths, 'fixture queue did not publish result records'
+    assert log_paths, 'fixture queue did not create compiler logs'
+    for path in result_paths + log_paths:
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode == 0o640, (path, oct(mode))
+
 def wait_event(tag, name):
     # This deadline detects a broken disposable fixture; it does not run a compiler.
     deadline = time.monotonic() + 20
@@ -152,20 +167,15 @@ try:
     assert not events()
     print('PASS bootstrap requires the configured absolute state root')
 
-    # Jobs without a recorded peak run one at a time. The bootstrap waits for
-    # heavy.lock and counts its memory as a running job; it runs on its own
-    # because the fixture compiler detects any overlap.
+    # The shared heavy lock serializes these fixture compiler phases.
     a = launch('native')
     b = launch('retained-reference', launcher=REFERENCE)
     for p in (a, b): wait(p)
     wait(launch('bootstrap', True))
     assert all((T / name).is_file() for name in ('native.c', 'retained-reference.c', 'bootstrap'))
     assert not any(r['event'] == 'overlap' for r in events())
-    print('PASS native and maintained retained launcher serialize without recorded peaks; bootstrap completes')
-    assert list((STATE / 'peaks').glob('*')), ('no group peak recorded', T)
-    assert all((path / 'peak').is_file() for path in STATE.glob('keys/*/runs/*') if (path / 'result').is_file()
-               and 'status=completed' in (path / 'result').read_text()), ('run peak missing', T)
-    print('PASS completed runs record their peak and the compiler group peak')
+    assert_group_readable_outputs()
+    print('PASS native and maintained retained launcher serialize; bootstrap completes')
 
     wait(launch('explicit-runtime-separator', separated=True))
     prefix = T / 'prefix'
@@ -240,17 +250,14 @@ try:
         release = T / 'native-retained-child.release'
         try:
             p = exit_supervisor('native-retained-child', CUSTODY_TEST_RELEASE_FILE=str(release))
-            held = 0
-            for claim in (STATE / 'admission/running').glob('*'):
-                with claim.open('r') as probe:
-                    try:
-                        fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
-                    except BlockingIOError:
-                        held += 1
-            if not held:
-                raise AssertionError(('surviving fixture compiler lost its admission claim', T))
-            # The killed supervisor recorded no peak, so the contender has no
-            # history to run beside the surviving compiler.
+            try:
+                with (STATE / 'heavy.lock').open('r+') as probe:
+                    fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass
+            else:
+                raise AssertionError(('surviving fixture compiler lost its heavy lock', T))
+            # The marker watcher retains FD8 while the compiler child survives.
             contender = launch('after-native-supervisor-exit')
         finally:
             release.touch()

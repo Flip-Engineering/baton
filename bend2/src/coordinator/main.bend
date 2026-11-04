@@ -20,7 +20,9 @@ import ../context/native.bend as ContextNative
 import ../context/native-runtime.bend as ContextRuntime
 import ./ui-view.bend as UiView
 import ./control.bend as Control
+import ./stop-hook.bend as StopHook
 import ./wake.bend as Wake
+import ./root-channel.bend as RootChannel
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
 import ./accounts.bend as Accounts
@@ -30,7 +32,11 @@ import ./agent-input.bend as AgentInput
 import ./agent-native.bend as AgentNative
 import ./repl.bend as Repl
 import ./task-input.bend as TaskInput
+import ./codex-inbox.bend as CodexInbox
+import ./repl.bend as Repl
 import ../host/text.bend as T
+import ../host/sqlite.bend as DB
+import ../git/text.bend as Tx
 import ../host/process.bend as P
 import ./stall.bend as Stall
 import ../host/instance.bend as Custody
@@ -51,10 +57,31 @@ def run(+db: String, +command: C.Command) -> IO(Unit):
     woken : Unit <- IO.try(Unit,Wake.drive_command(db,command,Done{result}))
     print_result(result)
 
+# The first input forwarded to the successor wakes it after the succession
+# commits; a failed wake leaves the committed succession and the forwarded
+# input in place.
+def forwarded_wake_sql(+successor: String, +predecessor: String) -> String:
+  +prefix = C.forwarded_prefix(predecessor,successor)
+  "SELECT coalesce((SELECT m.id FROM messages m WHERE m.recipient=" ++ C.q(successor) ++ " AND m.kind='forwarded-input' AND substr(m.id,1,length(" ++ C.q(prefix) ++ "))=" ++ C.q(prefix) ++ " AND " ++ C.owed_sql("m") ++ " ORDER BY m.seq LIMIT 1),'');"
+
+def succeed(+db: String, +successor: String, +predecessor: String) -> IO(Unit):
+  do IO<Unit>:
+    +result : String <- IO.try(String,Store.apply(db,C.Succeed{successor,predecessor}))
+    first : String <- IO.try(String,DB.Sql.query(db,forwarded_wake_sql(successor,predecessor)))
+    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,Tx.trim_nl(first))
+    print_result(result)
+
 def read_command(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String,Store.read(db,command))
     AgentInput.command_output(db,command,result)
+
+# status, session and orchestra name every root with owed input and no
+# attached channel on stderr.
+def read_checked(+db: String, +command: C.Command) -> IO(Unit):
+  do IO<Unit>:
+    warned : Unit <- RootChannel.warn(db)
+    read_command(db,command)
 
 def task_usage() -> String:
   "dispatch TEXT [OPTIONS]\ndispatch --stdin [OPTIONS]\ndispatch --help shows project, saved routes, overrides and continuation options.\ntask-input-read --current returns the current actor's latest complete request and setup result.\ntask-input-read --session PLAYER selects that actor's latest dispatch to the Player.\n"
@@ -101,6 +128,10 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
         saved : String <- Control.receiver(db,session,cmd,log,cwd)
         woken : Unit <- IO.try(Unit,Receive.wake_due(db,session,"0",target => Receive.wake_launch(db,target)))
         print_result(saved)
+    case C.Connect{id,native,endpoint}:
+      do IO<Unit>:
+        saved : String <- Control.connect(db,id,native,endpoint)
+        print_result(saved)
     case C.Configure{+id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort}:
       do IO<Unit>:
         saved : String <- Control.configure(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort)
@@ -117,6 +148,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.StatusPretty{}:
       do IO<Unit>:
         saved : String <- Control.status_pretty(db)
+        warned : Unit <- RootChannel.warn(db)
         print_result(saved)
     case C.Pretty{+read}:
       do IO<Unit>:
@@ -124,7 +156,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
         AgentInput.command_output(db,C.Pretty{read},saved)
     case C.RoleRead{session}: read_command(db,C.RoleRead{session})
     case C.EnsembleRead{id}: read_command(db,C.EnsembleRead{id})
-    case C.Session{id}: read_command(db,C.Session{id})
+    case C.Session{id}: read_checked(db,C.Session{id})
     case C.Delivery{id}: read_command(db,C.Delivery{id})
     case C.InputDetail{id}: read_command(db,C.InputDetail{id})
     case C.DeliveryBatch{input}: MessageBatch.read_text(db,input)
@@ -135,17 +167,17 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.InboxIndex{id}: read_command(db,C.InboxIndex{id})
     case C.Outbox{id}: read_command(db,C.Outbox{id})
     case C.MessageIndex{inbox,condition,state}: read_command(db,C.MessageIndex{inbox,condition,state})
-    case C.Status{}: read_command(db,C.Status{})
+    case C.Status{}: read_checked(db,C.Status{})
     case C.Players{}: read_command(db,C.Players{})
     case C.LegacySubordinates{}: read_command(db,C.LegacySubordinates{})
     case C.PlayerRead{id}: read_command(db,C.PlayerRead{id})
     case C.SectionRead{ensemble,id}: read_command(db,C.SectionRead{ensemble,id})
-    case C.Orchestra{}: read_command(db,C.Orchestra{})
+    case C.Orchestra{}: read_checked(db,C.Orchestra{})
     case C.Turns{id}: read_command(db,C.Turns{id})
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
-      Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
+      Control.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
     case C.Join{id,parent,harness,model,effort,path}:
-      Recruit.join(db,id,parent,harness,model,effort,path)
+      Control.join(db,id,parent,harness,model,effort,path)
     case C.Land{player,repo,target}:
       Land.land_player(db,player,repo,target)
     case C.LandAt{player,repo,target,commit}:
@@ -169,12 +201,6 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.UsageWindows{+session}: do IO<Unit>:
       label : String <- Accounts.handoff_label_io(db,session)
       UsageWindows.query(db,session,label)
-    case C.UsageWindowObserve{+session,window,resets,source}: do IO<Unit>:
-      label : String <- Accounts.handoff_label_io(db,session)
-      UsageWindows.observe(db,session,window,resets,source,label)
-    case C.UsageWindowReset{+session,resets,source}: do IO<Unit>:
-      label : String <- Accounts.handoff_label_io(db,session)
-      UsageWindows.reset_exhausted(db,session,resets,source,label)
     case C.UsageWindowRefresh{+session}: do IO<Unit>:
       label : String <- Accounts.handoff_label_io(db,session)
       UsageWindows.refresh(db,session,label)
@@ -193,6 +219,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.StoragePolicy{}: StoragePolicy.run_policy(db)
     case C.StoragePreview{session}: StoragePolicy.run_preview(db,session)
     case C.StorageApply{session}: StoragePolicy.run_apply(db,session)
+    case C.StorageCollect{session}: StoragePolicy.run_collect(db,session)
     case C.Worktree{id}: Recruit.inspect(db,id)
     case C.KnowledgeRecord{id,author,claim,evidence,limits}:
       Knowledge.record(db,id,author,claim,evidence,limits)
@@ -228,6 +255,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.ProjectSessions{path}: Project.sessions(db,path)
     case C.Resume{session,lift_stop}: Project.resume(db,session,lift_stop)
     case C.ClearStop{session}: Stop.clear(db,session)
+    case C.Succeed{successor,predecessor}: succeed(db,successor,predecessor)
     case C.View{subject,reader,port}: UiView.run(db,subject,reader,port)
     case C.UiSubscribe{after_cursor,generation}:
       UISubscription.run(db,after_cursor,generation)
@@ -237,6 +265,8 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       ContextNative.install_module(module_id,source)
     case C.ContextQueryFile{owner,query,path}:
       ContextNative.query_file(db,owner,query,path)
+    case C.ContextEval{owner,query,session,expression,frame,cwd}:
+      ContextNative.eval(db,owner,query,session,expression,frame,cwd)
     case C.ContextResult{query}:
       ContextNative.result(db,query)
     case C.Stall{}: Stall.report(db)
@@ -247,15 +277,22 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       IO.try(Unit,Instance.owner_status(db))
     case C.Receive{+session,cmd,model,effort,cwd,log,+message}: do IO<Unit>:
       result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
-      Receive.report_result(db,session,message,result)
+      reported : Unit <- Receive.report_result(db,session,message,result)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case C.RecoverObserver{session,observer}:
       IO.try(Unit,Receive.recover_observer(db,session,observer))
-    case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:
-      Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
-    case C.ObserveFile{id,player,path}:
+    case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,+session}: do IO<Unit>:
+      ran : Unit <- Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
+    case C.ObserveFile{+id,+player,path}:
       do IO<Unit>:
-        event : String <- IO.try(String,T.Text.read(path))
-        run(db,C.Observe{id,player,event,False{}})
+        +event : String <- IO.try(String,T.Text.read(path))
+        +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+        run(db,C.Observe{id,player,event,False{},Tx.trim_nl(harness)})
+        observed : Unit <- Turn.refusal_observed(db,player,id,event)
+        IO.pure(Unit,Unit{})
     case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
     case C.NativeReplyFile{parent,id,path}:
       do IO<Unit>:
@@ -290,7 +327,9 @@ type NormalCliKind is Data:
   TaskResultInput{}
   TaskReadInput{}
   AgentCurrentInput{}
+  WorkerContextInput{}
   NativeAttachmentInput{}
+  CodexInboxInput{}
   ReplObserverInput{}
   OrdinaryInput{}
 
@@ -307,6 +346,11 @@ def normal_cli_kind_existing(+head: String) -> NormalCliKind:
 def normal_cli_kind(+head: String) -> NormalCliKind:
   match head:
     case "repl-observe": ReplObserverInput{}
+    case "codex-inbox-session": CodexInboxInput{}
+    case "codex-inbox-follow": CodexInboxInput{}
+    case "codex-inbox-deliver": CodexInboxInput{}
+    case "codex-input-witness": CodexInboxInput{}
+    case "agent-worker-context": WorkerContextInput{}
     case other: normal_cli_kind_existing(other)
 
 def normal_cli_fallback_if(project: Bool, db: String, head: String, tail: List<String>) -> IO(Unit):
@@ -321,8 +365,10 @@ def normal_cli_fallback(+db: String, head: String, tail: List<String>) -> IO(Uni
 
 def normal_native_args(+db: String, args: List<String>) -> IO(Unit):
   match args:
-    case "turn-text" <> player <> id <> cmd <> model <> effort <> cwd <> body <> log <> session <> Nil{}:
-      Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
+    case "turn-text" <> player <> id <> cmd <> model <> effort <> cwd <> body <> log <> +session <> Nil{}: do IO<Unit>:
+      ran : Unit <- Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case other: execute(db,C.parse(other))
 
 def normal_cli_native(args: List<String>, +db: String, head: String) -> IO(Unit):
@@ -342,7 +388,7 @@ def normal_cli_contextual(args: List<String>, +db: String, head: String) -> IO(U
 def normal_cli_settle(args: List<String>, db: String, head: String) -> IO(Unit):
   match args:
     case session <> native <> turn <> status <> Nil{}:
-      AgentInput.settle_codex(db,session,native,turn,status)
+      IO.pure(Unit,Unit{})
     case other: normal_cli_fallback(db,head,other)
 
 def normal_cli_task_record(args: List<String>, db: String, head: String) -> IO(Unit):
@@ -372,6 +418,36 @@ def normal_cli_native_attachment(args: List<String>, db: String, head: String) -
     case session <> component <> Nil{}: NativeInitialInput.attachment(db,session,component)
     case other: normal_cli_fallback(db,head,other)
 
+def normal_cli_codex_session(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case session <> native <> message <> token <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,token))
+    case session <> native <> message <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,""))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex_follow(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case session <> native <> Nil{}: IO.try(Unit,CodexInbox.follow(db,session,native))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex_deliver(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case native <> pointer <> Nil{}: IO.try(Unit,CodexInbox.deliver(db,native,pointer))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex_witness(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case native <> Nil{}: IO.try(Unit,CodexInbox.witness(db,native))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex(args: List<String>, db: String, +head: String) -> IO(Unit):
+  match head:
+    case "codex-inbox-session": normal_cli_codex_session(args,db,head)
+    case "codex-inbox-follow": normal_cli_codex_follow(args,db,head)
+    case "codex-inbox-deliver": normal_cli_codex_deliver(args,db,head)
+    case "codex-input-witness": normal_cli_codex_witness(args,db,head)
+    case other: normal_cli_fallback(db,other,args)
 def normal_cli_repl_observer(db: String, args: List<String>) -> IO(Unit):
   match args:
     case cell <> Nil{}: Repl.observe(db,cell)
@@ -386,7 +462,12 @@ def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: Lis
     case TaskResultInput{}: normal_cli_task_result(args,db,head)
     case TaskReadInput{}: normal_cli_task_read(args,db,head)
     case AgentCurrentInput{}: normal_cli_agent_current(args,db,head)
+    case WorkerContextInput{}:
+      match args:
+        case Nil{}: AgentCommand.worker_context(db)
+        case other: normal_cli_fallback(db,head,other)
     case NativeAttachmentInput{}: normal_cli_native_attachment(args,db,head)
+    case CodexInboxInput{}: normal_cli_codex(args,db,head)
     case ReplObserverInput{}: normal_cli_repl_observer(db,args)
     case OrdinaryInput{}: normal_cli_fallback(db,head,args)
 
@@ -457,8 +538,11 @@ def observe_context_runtime_cli(+flag: String, +db: String, +owner: String,
     ContextRuntime.runtime_recover(db, owner, launch_query, target_dir, adapter_dir),
     normal_cli([flag, db, owner, launch_query, target_dir, adapter_dir]))
 
-def legacy_cli_arity(args: List<String>) -> IO(Unit):
+def legacy_cli(args: List<String>) -> IO(Unit):
   match args:
+    case Nil{}: normal_cli(Nil{})
+    case "--project" <> tail: normal_cli(Con{"--project",tail})
+    case "--stop-hook" <> Nil{}: StopHook.run()
     case flag <> database <> Nil{}: instance_owner_cli(database,flag)
     case flag <> db <> owner <> launch_query <> target_dir <> adapter_dir <> Nil{}:
       observe_context_runtime_cli(flag, db, owner, launch_query, target_dir, adapter_dir)
@@ -467,6 +551,8 @@ def legacy_cli_arity(args: List<String>) -> IO(Unit):
         bootstrap_file)
     case "--wake-message" <> +db <> +id <> Nil{}:
       Wake.message_cli(db,id)
+    case "--redeliver-message" <> +db <> +id <> Nil{}:
+      Control.redeliver(db,id)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
@@ -476,16 +562,6 @@ def legacy_cli_arity(args: List<String>) -> IO(Unit):
     case +flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> input_messages <> Nil{}:
       recover_receive_input_cli(String.eq(flag,"--recover-receive"),flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,input_messages)
     case other: normal_cli(other)
-
-def legacy_cli_project(project: Bool, head: String, tail: List<String>) -> IO(Unit):
-  match project:
-    case True{}: normal_cli(Con{head,tail})
-    case False{}: legacy_cli_arity(Con{head,tail})
-
-def legacy_cli(args: List<String>) -> IO(Unit):
-  match args:
-    case Nil{}: normal_cli(Nil{})
-    case +head <> tail: legacy_cli_project(String.eq(head,"--project"),head,tail)
 
 def cli_route(route: AgentRoute.Route) -> IO(Unit):
   match route:

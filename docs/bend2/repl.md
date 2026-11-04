@@ -21,7 +21,9 @@ baton repl eval 'IO.write("complete output\n")' --type 'IO(Unit)'
 baton repl define --stdin --notebook analysis
 baton repl read --cell answer
 baton repl recover
+baton repl cite --cell arithmetic
 baton repl share --cell arithmetic --to reviewer
+baton repl resolve --cell CITATION
 baton repl import MESSAGE
 baton repl interactive
 ```
@@ -30,7 +32,7 @@ The registered project and actor supply context. `--notebook NAME` selects a
 notebook; its default is `main`. Each cell has an immutable reference generated
 by Baton. `--label NAME` adds a semantic name; selecting a repeated label returns
 its latest cell. `read` without `--cell` returns the complete notebook. `bind`,
-`recover` and `share` select its latest cell by default.
+`recover`, `cite` and `share` select its latest cell by default.
 
 `define` accepts complete Bend2 declarations, including imports, types and named
 functions. Only a declaration cell whose canonical check succeeds enters later
@@ -56,8 +58,8 @@ have exact dependency hashes.
 The cumulative book is checked after each declaration load. A redefinition must
 preserve the type and affine validity of that complete book.
 
-The MCP `baton2_repl` tool accepts `define`, `eval`, `bind`, `read`, `recover`,
-`share` and `import`. Its source field carries a complete Bend2 source string;
+The MCP `baton2_repl` tool accepts `define`, `eval`, `bind`, `read`, `cite`, `resolve`,
+`recover`, `share` and `import`. Its source field carries a complete Bend2 source string;
 `bind` takes the definition name in its name field. The
 generic `baton2_action` tool also accepts action `repl` and the same CLI
 arguments. `help repl` describes both surfaces.
@@ -110,15 +112,36 @@ inside that evaluation. Subsequent cells compose retained declarations. Labels
 select saved result records. A pure normal form can supply a new checked named
 definition. IO stdout and process outcomes are observable results.
 
-`share` sends one complete cell through ordinary message routing. `import`
-selects a declaration message delivered to the current actor and checks its
-complete declaration snapshot in that actor's notebook. It prints the complete
-original message through the existing recipient-owned read operation, followed
-by each checked declaration's cell result. Successful native turn settlement
-records handling of that complete read. A compiler refusal retains its cell and
-the complete source message; failed or interrupted native turns leave the read
-pending. Ordinary routing, recipient identity and explicit stops continue to
-govern these operations.
+## Context citations
+
+`cite` selects a completed successful cell in the actor's notebook and returns
+its immutable citation, cell reference, owner, notebook, label, version and type.
+A citation has the form `repl:NOTEBOOK_ID:LABEL@SEQUENCE`; an unlabelled cell uses
+its cell reference for the label position. Reusing a label creates a later cell.
+An earlier citation continues to select its original cell and source snapshot.
+
+`share` sends that metadata as a `bend-repl` message through ordinary routing.
+The message and its recipient's read grant commit in one database transaction.
+The stored grant derives its recipient from the admitted message. Citations and
+ordinary messages cannot independently create read authority. Each recipient
+resolves only its own grants; the cell owner can also resolve its own citations.
+Explicitly stopped actors cannot share or resolve cells.
+
+`resolve --cell CITATION` returns the complete submitted source, declaration
+snapshot, type, stdout, stderr and process outcomes for that version. Cross-seat
+results contain these values and metadata. The separate execution-directory and
+argument fields remain in the owner's `read` records. Complete compiler stdout
+can include paths in its recorded build provenance. Resolution displays the complete
+original citation message through the recipient-owned read path before returning
+the cell. Each invocation uses the durable cell and grant records, including
+after the receiving process restarts.
+
+`import MESSAGE` selects a shared declaration cell delivered to the current actor
+and checks its complete snapshot in that actor's notebook. Earlier complete-cell
+share messages remain importable. It prints the original message through the
+recipient-owned read path, followed by each checked declaration's result. A
+compiler refusal retains its cell and the source message. Pure results can be
+retained as declarations with `bind` and then shared and imported.
 
 ## Bundled compiler
 
@@ -155,3 +178,36 @@ development files.
 The implementation is scoped by [#778](https://github.com/Flip-Engineering/baton/issues/778).
 The [qualification record](repl-qualification-20261016.md) records package and
 compiler checks and the pending coordinator, installed and native acceptance.
+
+## Context values and native turn snapshots
+
+A seat's context variable is a checked pure Bend2 `String` containing a complete
+JSON value. Evaluate that expression through `repl eval --type String`, then
+select its immutable cell with `repl checkpoint --cell REFERENCE`. The checkpoint
+binds the value to the actor's context variable. Repeating the same checkpoint
+preserves the binding version. Selecting a different cell advances it.
+
+`repl context` reads that bound value. Each result declares
+`baton.context-value/v1`, media type
+`application/vnd.baton.context-value+json`, the owning seat and immutable cell
+version. The citation remains `repl:NOTEBOOK_ID:LABEL_OR_CELL@SEQ`.
+The context value is stored with the original checked cell. Each admitted native
+turn completion records the selected cell and binding version in its own
+transaction. Replaying a terminal observation preserves that turn's original
+snapshot, including the absence of a context value. Later checkpoints preserve
+earlier turn versions. `repl context --turn TURN` reads the value pinned by one
+of the caller's completed native turns.
+
+`repl share --cell REFERENCE --to PLAYER` sends the citation and a preview of
+at most 1024 Unicode characters. The recipient uses
+`repl context --cell CITATION --offset N --length N` to read the value through
+ordinary tool output. The default length is 2048 characters; each read supports
+1–8192 characters and returns `totalCharacters` and `complete`. An incomplete
+read supplies `nextOffset`; a complete read has no further cursor.
+Offsets count Unicode characters in serialized JSON. A receiver appends each
+fragment in offset order and parses the completed JSON value. Ordinary
+`repl resolve` continues to return the complete selected cell and its outcomes.
+
+These snapshots record the context variable explicitly maintained by the seat's
+loop. Harness-private state and hidden model state are outside this value.
+The two-model-seat token and prefix-cache comparison is tracked in #777.

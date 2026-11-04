@@ -26,7 +26,7 @@ type CompileQueueWalk is Data:
 #   - Cycles and repeated imports are visited once. `.js` and helper scripts
 #     contribute bytes without further parsing.
 #
-# The cgen closure starts at the Bend entry. The cc closure starts from the
+# The cgen and check closures start at the Bend entry. The cc closure starts from the
 # generated C, native-entry.c, helper scripts and any other caller-supplied
 # files. Compiler closure hashes the compiler and linker executables, their
 # wrapper exec chains, the captured --version text, and the Bend release tree
@@ -48,11 +48,11 @@ type CompileQueueWalk is Data:
 # record.
 #
 # Material encoding for `material` and `material_key`:
-#   kind                "cgen" or "cc"
+#   kind                "cgen", "check" or "cc"
 #   entry               worktree-relative Bend entry, empty for cc
 #   options             one KEY=VALUE per line; sorted bytewise here
-#   source_digest       64-hex digest of the cgen source closure, empty for cc
-#   file_closure_digest 64-hex digest of the cc file closure, empty for cgen
+#   source_digest       64-hex digest of the cgen/check source closure, empty for cc
+#   file_closure_digest 64-hex digest of the cc file closure, empty for cgen/check
 #   compiler_digest     64-hex digest of the compiler/linker/version closure
 #   input_rows          one `destination<TAB>sha256<TAB>bytes` per line; the
 #                       destination is the work-relative staged name
@@ -67,7 +67,7 @@ type CompileQueueWalk is Data:
 #   kind=KIND
 #   entry=ENTRY
 #   option=VALUE            (sorted, one per line)
-#   source-digest=HEX       (cgen) or file-digest=HEX (cc)
+#   source-digest=HEX       (cgen/check) or file-digest=HEX (cc)
 #   toolchain-digest=HEX
 #   input=DEST<TAB>SHA<TAB>BYTES
 #   artifact-name=NAME
@@ -85,23 +85,29 @@ def CompileQueueIdentity.key(material: String) -> IO(Result<&1,&1,U32 & String,S
   CompileQueueIdentity.text_digest(material)
 
 
-def CompileQueueIdentity.file_digest(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  Digest.HostDigest.file(path)
+def CompileQueueIdentity.file_digest(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("digest",path,Digest.HostDigest.file(path))
 
-def CompileQueueIdentity.file_size(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  QF.file_size(path)
+def CompileQueueIdentity.file_size(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("size",path,QF.file_size(path))
 
-def CompileQueueIdentity.list_dir(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  QF.list_dir(path)
+def CompileQueueIdentity.list_dir(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("list",path,QF.list_dir(path))
 
-def CompileQueueIdentity.realpath(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  F.Files.realpath(path)
+def CompileQueueIdentity.realpath(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("realpath",path,F.Files.realpath(path))
 
-def CompileQueueIdentity.readlink(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  F.Files.readlink(path)
+def CompileQueueIdentity.readlink(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("readlink",path,F.Files.readlink(path))
 
-def CompileQueueIdentity.is_script(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  QF.is_script(path)
+def CompileQueueIdentity.read_text(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("read",path,T.Text.read(path))
+
+def CompileQueueIdentity.regular(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("stat",path,F.Files.regular(path))
+
+def CompileQueueIdentity.is_script(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("read",path,QF.is_script(path))
 
 # The targets of the quoted `#include` lines of a C file, one per line, in file order.
 # The host scans the file in fixed-size reads, so the size of the file does not
@@ -171,8 +177,8 @@ def CompileQueueIdentity.argv_lines(+tokens: String) -> String:
       CompileQueueIdentity.argv_terminated(String.lines(tokens)),
       CompileQueueIdentity.argv_plain(String.lines(tokens))))
 
-def CompileQueueIdentity.digest_lines(kind: String, source_digest: String, file_closure_digest: String) -> String:
-  Bool.pick(String, String.eq(kind, "cgen"), "source-digest=" ++ source_digest ++ "\n", "file-digest=" ++ file_closure_digest ++ "\n")
+def CompileQueueIdentity.digest_lines(+kind: String, source_digest: String, file_closure_digest: String) -> String:
+  Bool.pick(String, Bool.or(String.eq(kind, "cgen"), String.eq(kind, "check")), "source-digest=" ++ source_digest ++ "\n", "file-digest=" ++ file_closure_digest ++ "\n")
 
 def CompileQueueIdentity.path_absolute(+path: String) -> Bool:
   String.starts_with(path, "/")
@@ -261,7 +267,7 @@ def CompileQueueIdentity.bend_targets(lines: List<&2,String>) -> List<&2,String>
 
 def CompileQueueIdentity.bend_file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
-    text : String <- IO.try(String, T.Text.read(path))
+    text : String <- IO.try(String, CompileQueueIdentity.read_text(path))
     IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{CompileQueueIdentity.bend_targets(String.lines(text))})
 
 def CompileQueueIdentity.c_file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
@@ -427,13 +433,13 @@ def CompileQueueIdentity.chain_step(+resolved: String, +label: String, +steps: U
     Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueChain>),
       Bool.and(String.eq(script, "1"), U32.is_lt(steps, 5)),
       do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
-        text : String <- IO.try(String, T.Text.read(resolved))
+        text : String <- IO.try(String, CompileQueueIdentity.read_text(resolved))
         +target : String <- IO.pure(String, CompileQueueIdentity.exec_target(text))
         Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueChain>), String.is_empty(target),
           CompileQueueIdentity.chain_done(resolved, lines),
           do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
             +next : String <- IO.try(String, CompileQueueIdentity.realpath(target))
-            regular : String <- IO.try(String, F.Files.regular(next))
+            regular : String <- IO.try(String, CompileQueueIdentity.regular(next))
             Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueChain>), String.eq(regular, "1"),
               do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
                 next_digest : String <- IO.try(String, CompileQueueIdentity.file_digest(next))
@@ -698,15 +704,16 @@ def CompileQueueIdentity.closure_files(+sources: String, +aux: String) -> String
 # already normalized to @root/@cwd, {in:...}, {out:...} and {compiler}.
 def CompileQueueIdentity.request_key(+kind: String, +cwd: String, +root: String, +source_root: String, +entry: String, +compiler: String, +linker: String, +version: String, +inputs: String, +aux: String, +artifacts: String, +options: String, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    +closure : String <- Bool.pick(IO(String), String.eq(kind, "cgen"),
+    +source_kind : Bool <- IO.pure(Bool, Bool.or(String.eq(kind, "cgen"), String.eq(kind, "check")))
+    +closure : String <- Bool.pick(IO(String), source_kind,
       IO.try(String, CompileQueueIdentity.source_digest(source_root, entry)),
       IO.try(String, CompileQueueIdentity.file_closure_digest(source_root, CompileQueueIdentity.closure_files(CompileQueueIdentity.input_sources(String.lines(inputs)), aux))))
     +ccache : String <- IO.pure(String, CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler))
     toolchain : String <- IO.try(String, CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache))
     rows : String <- IO.try(String, CompileQueueIdentity.input_rows(String.lines(inputs)))
     CompileQueueIdentity.material_key(kind, entry, options,
-      Bool.pick(String, String.eq(kind, "cgen"), closure, ""),
-      Bool.pick(String, String.eq(kind, "cgen"), "", closure),
+      Bool.pick(String, source_kind, closure, ""),
+      Bool.pick(String, source_kind, "", closure),
       toolchain, rows,
       CompileQueueIdentity.artifact_names(String.lines(artifacts)), command)
 
@@ -717,3 +724,57 @@ def CompileQueueIdentity.history_compiler(+cwd: String, +root: String, +compiler
   do IO<Result<&1,&1,U32 & String,String>>:
     +ccache : String <- IO.pure(String, CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler))
     CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache)
+
+# C-family text that the compiler reads. A change of such a file changes the
+# workload; the history group of a cc request admits that variation.
+def CompileQueueIdentity.workload_source(+path: String) -> Bool:
+  Bool.or(String.ends_with(path, ".c"),
+    Bool.or(String.ends_with(path, ".h"),
+      Bool.or(String.ends_with(path, ".cc"),
+        Bool.or(String.ends_with(path, ".cpp"),
+          Bool.or(String.ends_with(path, ".cxx"), String.ends_with(path, ".hpp"))))))
+
+# Each control file contributes its normalized path and content digest. The
+# association preserves the role of helpers when two files exchange contents.
+# The sorted lines permit input-list reordering and matching worktree roots.
+def CompileQueueIdentity.control_path(+path: String, +cwd: String, +root: String) -> String:
+  Bool.pick(String, Bool.and(Bool.not(String.is_empty(root)),CompileQueueIdentity.path_inside(root,path)),
+    "@root/" ++ CompileQueueIdentity.path_relative(root,path),
+    Bool.pick(String, Bool.and(Bool.not(String.is_empty(cwd)),CompileQueueIdentity.path_inside(cwd,path)),
+      "@cwd/" ++ CompileQueueIdentity.path_relative(cwd,path),path))
+
+def CompileQueueIdentity.control_digest_lines(files: List<&2,String>, +cwd: String, +root: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match files:
+    case Nil{}:
+      IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
+    case +path <> +rest:
+      do IO<Result<&1,&1,U32 & String,String>>:
+        +skip : Bool <- IO.pure(Bool, Bool.or(String.is_empty(path), CompileQueueIdentity.workload_source(path)))
+        +line : String <- Bool.pick(IO(String), skip, IO.pure(String, ""),
+          IO.try(String, CompileQueueIdentity.file_digest(path)))
+        +more : String <- IO.try(String, CompileQueueIdentity.control_digest_lines(rest,cwd,root))
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String, String.is_empty(line), more,
+          CompileQueueIdentity.control_path(path,cwd,root) ++ "\t" ++ line ++ "\n" ++ more)})
+
+def CompileQueueIdentity.joined_lines(values: List<&2,String>) -> String:
+  match values:
+    case Nil{}: ""
+    case value <> rest: value ++ "\n" ++ CompileQueueIdentity.joined_lines(rest)
+
+def CompileQueueIdentity.control_digest(+files: String, cwd: String, root: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    +lines : String <- IO.try(String, CompileQueueIdentity.control_digest_lines(String.lines(files),cwd,root))
+    CompileQueueIdentity.text_digest(CompileQueueIdentity.joined_lines(CompileQueueIdentity.sort(CompileQueueIdentity.nonempty(String.lines(lines)))))
+
+# The history group of a cc request: the workload family whose recorded peaks
+# apply to it. The material is the request key material with the digest of the
+# C-family source files and the digests of the input rows left out and the content
+# digest of every other input and aux file kept (control_digest). The kind, entry,
+# options, toolchain, artifact names and normalized command stay in it. An edit of
+# the C source keeps the group; a change of a driver, helper or other control
+# file, of a command argument, of an option or of the toolchain starts another.
+def CompileQueueIdentity.request_group(+kind: String, +cwd: String, +root: String, +entry: String, +compiler: String, +linker: String, +version: String, +inputs: String, +aux: String, +artifacts: String, +options: String, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    toolchain : String <- IO.try(String, CompileQueueIdentity.history_compiler(cwd, root, compiler, linker, version, command))
+    +controls : String <- IO.try(String, CompileQueueIdentity.control_digest(CompileQueueIdentity.closure_files(CompileQueueIdentity.input_sources(String.lines(inputs)), aux),cwd,root))
+    CompileQueueIdentity.text_digest("baton-compile-queue-history-v4\n" ++ CompileQueueIdentity.material(kind, entry, options, "", controls, toolchain, "", CompileQueueIdentity.artifact_names(String.lines(artifacts)), command))

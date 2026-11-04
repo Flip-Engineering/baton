@@ -291,7 +291,6 @@ with socket.create_connection(('127.0.0.1',int(sys.argv[1]))) as stream:
             accepted = next(message for message in messages if message['id'] == original['id'])
             self.assertEqual(accepted['seq'], original['seq'])
             self.assertEqual(accepted['body'], original['body'])
-            self.assertIsNotNone(accepted['receipt'])
             pending = [start for start in session['starts'] if '[id: pending-' + name + ']' in start['prompt']]
             self.assertTrue(pending)
             self.assertTrue(all(TEXT in start['prompt'] for start in pending))

@@ -13,9 +13,10 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY_LAYOUT = (
-    {'role': 'focused-facade', 'option': 'focused', 'name': 'baton', 'alias': None,
+    {'role': 'focused-facade', 'option': 'focused', 'name': 'baton-focused', 'alias': None,
      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
-    {'role': 'full-cli', 'option': 'full', 'name': 'baton2', 'alias': 'baton-full',
+    {'role': 'full-cli', 'option': 'full', 'name': 'baton', 'alias': 'baton2',
+     'aliases': ('baton2', 'baton-full'),
      'entry': 'bend2/src/coordinator/main.bend',
      'wrapper': True, 'build_mode': 'full-native-receiver-router'},
     {'role': 'recovery-helper', 'option': 'recovery', 'name': 'baton-recovery', 'alias': None,
@@ -128,13 +129,16 @@ def stage_binaries(prefix, specs, package):
             record['wrapper_source'] = spec['wrapper_source']
         if spec.get('retained_c_sha256'):
             record['retained_c_sha256'] = spec['retained_c_sha256']
+        aliases = ['bin/' + name for name in spec.get('aliases', ())]
         if spec['alias']:
-            alias = 'bin/' + spec['alias']
+            record['alias'] = 'bin/' + spec['alias']
+        if aliases:
+            record['aliases'] = aliases
+        for alias in aliases:
             require(alias not in paths, 'Duplicate installed alias path: ' + alias)
             paths.add(alias)
             shutil.copyfile(source, prefix / alias)
             (prefix / alias).chmod(0o755)
-            record['alias'] = alias
         records.append(record)
     return records
 
@@ -202,9 +206,9 @@ def main():
     spec.loader.exec_module(package)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--focused-binary', type=Path, required=True,
-                        help='source-built focused receiver installed as bin/baton')
+                        help='source-built focused receiver installed as bin/baton-focused')
     parser.add_argument('--full-binary', type=Path, required=True,
-                        help='full router installed as bin/baton2 with the bin/baton-full general CLI sibling')
+                        help='full router installed as bin/baton with bin/baton2 and bin/baton-full aliases')
     parser.add_argument('--recovery-binary', type=Path, required=True,
                         help='focused recovery helper installed as bin/baton-recovery')
     for role in ('focused', 'full', 'recovery'):
@@ -251,15 +255,15 @@ def main():
         if args.context_typescript_package is not None:
             modules.append(package.stage_typescript_context_module(prefix, args.context_typescript_package))
         default_source = {'directory': str(ROOT), **package.source_identity()}
-        focused = next(record for record in records if record['role'] == 'focused-facade')
+        full = next(record for record in records if record['role'] == 'full-cli')
         manifest = {
             'schema': 'baton2-native-install-v2', 'kind': 'source',
             'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'platform': {'system': platform.system(), 'machine': platform.machine()},
             'source': default_source,
             'binaries': records,
-            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
-                       'sha256': focused['sha256'], 'source': focused['source']},
+            'binary': {'path': full['path'], 'alias': full.get('alias'),
+                       'sha256': full['sha256'], 'source': full['source']},
             'selected_modules': modules, 'selected_dependencies': dependencies,
             'required_system_dependencies': package.system_dependencies(platform.system()),
             'terms': package.stage_notices(prefix, []),

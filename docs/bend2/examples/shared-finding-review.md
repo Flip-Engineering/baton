@@ -36,18 +36,16 @@ sender or recipient.
 ```sh
 baton2 state.db record hierarchy-check-finding deepseek "CHECK passes for the selected file" message:deepseek-turn "Selected checks only; see cited message for paths and output"
 baton2 state.db inbox lead
-baton2 state.db ack hierarchy-check-finding:notice lead lead-reviewed
 ```
 
 Recording writes the finding and a `question` notice to the author's
 immediate parent in one transaction, then delivers the notice and
 answers with the stored finding row. The notice body holds only
 `{finding, author}`. The parent retrieves the full record through
-`knowledge`. The `ack` receipt on `FINDING:notice` records that the lead
-accepted that particular retained message. The receipt and the promotion
-are separate records: the receipt covers the notice message, and the
-stored promotion below records the declared sharing decision with its
-actor and scope provenance.
+`knowledge`. The lead's inbox read records that the lead read that particular
+retained message. The read and the promotion are separate records: the
+read covers the notice message, and the stored promotion below records
+the declared sharing decision with its actor and scope provenance.
 
 ## 2. Lead reviews the evidence and promotes the exact finding
 
@@ -92,12 +90,11 @@ owner in the same transaction. Its identity is
 
 ```sh
 baton2 state.db inbox lead
-baton2 state.db ack hierarchy-check-promotion:promotion-notice lead lead-accepted-promotion
 baton2 state.db knowledge lead
 ```
 
-The `ack` receipt on `PROMOTION_ID:promotion-notice` records that the
-destination owner accepted that particular retained message. The
+The destination owner's inbox read records that it read that
+particular retained message. The
 follow-up `knowledge` read confirms the stored destination and full promotion
 provenance. Every registered session reads the same shared finding. Readers
 obtain the claim, the cited retained message, the limits, and the promotion

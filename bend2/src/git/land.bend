@@ -523,12 +523,22 @@ def land_fast_forward_at(repo: String, +workerCommit: String, target: String) ->
     r5 : FFLD <- ff_go5(r4, rp, tg)
     ff_answer(r5)
 
-def outcome_json(o: T.LandOutcome) -> String:
+# The outcome text and whether the target advanced. One match answers both, so
+# a caller that records the outcome can also select post-consolidation work
+# without consuming the outcome twice.
+def outcome_json_success(o: T.LandOutcome) -> Bool & String:
   match o:
-    case T.LLanded{target, commit}: "{\"status\":\"landed\",\"target\":\"" ++ target ++ "\",\"commit\":\"" ++ commit ++ "\"}"
-    case T.LAlready{commit}: "{\"status\":\"already\",\"commit\":\"" ++ commit ++ "\"}"
-    case T.LConflict{files, dir}: "{\"status\":\"conflict\",\"files\":\"" ++ files ++ "\",\"dir\":\"" ++ dir ++ "\"}"
-    case T.LBlocked{reason}: "{\"status\":\"blocked\",\"reason\":\"" ++ reason ++ "\"}"
+    case T.LLanded{target, commit}: (True{}, "{\"status\":\"landed\",\"target\":\"" ++ target ++ "\",\"commit\":\"" ++ commit ++ "\"}")
+    case T.LAlready{commit}: (True{}, "{\"status\":\"already\",\"commit\":\"" ++ commit ++ "\"}")
+    case T.LConflict{files, dir}: (False{}, "{\"status\":\"conflict\",\"files\":\"" ++ files ++ "\",\"dir\":\"" ++ dir ++ "\"}")
+    case T.LBlocked{reason}: (False{}, "{\"status\":\"blocked\",\"reason\":\"" ++ reason ++ "\"}")
+
+def outcome_text(pair: Bool & String) -> String:
+  (advanced, text) = pair
+  text
+
+def outcome_json(o: T.LandOutcome) -> String:
+  outcome_text(outcome_json_success(o))
 
 type Verdict is Data:
   VPass{}

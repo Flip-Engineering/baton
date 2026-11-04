@@ -526,7 +526,7 @@ def common_task(out):
 Use the supplied native launchers and existing login. Keep credentials, global
 configuration, historical trials and other checkouts unchanged. Preserve this
 run's sessions, branches and worktrees. Do not push. Read complete incoming input
-with `"$B2" "$DB" inbox`, then use `"$B2" "$DB" acknowledge` after handling it.
+with `"$B2" inbox`; Baton records the complete reads internally.
 Baton resolves the actor and handling state. Supply complete task and report
 text directly to Baton. Run only the selected Python checks.
 If a task cannot be completed, explain the concrete failure in your parent report.
@@ -548,7 +548,7 @@ def lead_task(out, run):
 You are the Kimi Associate Conductor, session lead under Principal Conductor root.
 Deliver the two assigned changes through DeepSeek and Muse. Review their actual
 diffs and tests, then land them. Your native final response reports to root.
-Acknowledge each handled task/report. Do not issue a duplicate manual report.
+Read complete tasks and reports. Do not issue a duplicate manual report.
 
 Recruit the two Players with these commands:
 "$B2" "$DB" recruit --session deepseek --harness omp --model "$DEEPSEEK_MODEL" --effort "$DEEPSEEK_EFFORT" --repo "$REPO" --branch hierarchy-deepseek --path "$STATE/deepseek" --base hierarchy-lead
@@ -577,10 +577,10 @@ checks that the retained native processes and current execution custody ended,
 and preserves the supplied wrapper through primary dispatch. Baton stores the
 complete correction and continues the existing assignment. Use no task-source
 file or correction suffix.
-Tell the Player to read its complete inbox and acknowledge its handled input.
+Tell the Player to read its complete inbox; Baton records the reads internally.
 End your turn while its correction runs; its native response resumes you.
 
-For each Player report, inspect its actual diff and check output, acknowledge it,
+For each Player report, inspect its actual diff and check output, read it,
 and run `"$PYTHON" "$STATE/acceptance.py" land-reviewed "$STATE" PLAYER`.
 The helper invokes checked landing onto hierarchy-lead with the assigned checks
 and retains each complete result under an automatically generated evidence name.
@@ -604,9 +604,9 @@ and assign its role with these commands:
 "$B2" "$DB" recruit --session lead --harness omp --model "$ASSOCIATE_MODEL" --effort "$ASSOCIATE_EFFORT" --repo "$REPO" --branch hierarchy-lead --path "$STATE/lead" --base bend2-trial
 "$B2" "$DB" role --session lead --role associate-conductor
 Run `"$PYTHON" "$STATE/acceptance.py" dispatch-lead "$STATE"` once. It dispatches
-the full task and configures the supplied lead wrapper. Acknowledge your handled
-input, then finish this turn. Each Associate Conductor report resumes this same
-Principal Conductor conversation. Read and acknowledge progress reports.
+the full task and configures the supplied lead wrapper. Read the complete
+input, then finish this native turn. Each Associate Conductor report resumes this same
+Principal Conductor conversation. Read and review complete progress reports.
 
 On LEAD_READY, independently inspect both Player diffs, their bindings, guidance
 receipt, the lead branch diff and all selected checks. Run
@@ -699,6 +699,8 @@ def verify(out, state, run, helpers):
     repo = out / 'repo'
     sessions = {row['id']: row for row in state['sessions']}
     messages = {row['id']: row for row in state['messages']}
+    with sqlite3.connect('file:' + quote(str(out / 'state.db'), safe='/') + '?mode=ro', uri=True) as connection:
+        read_ids = {row[0] for row in connection.execute('SELECT message FROM message_reads')}
     processes = records(out)
     assert successful_receipts(processes), processes
     for seat, parent, harness, route_key in [('root', None, 'codex', 'codex'),
@@ -714,10 +716,10 @@ def verify(out, state, run, helpers):
         seen.discard(None)
         assert seen == {session['native']}, (seat, seen, session['native'])
     assert len(records(out, 'root')) > 1 and len(records(out, 'lead')) > 1
-    assert all(row['receipt'] for row in state['messages'] if row['recipient'] != 'operator')
+    assert {row['id'] for row in state['messages'] if row['recipient'] != 'operator'} <= read_ids, state['messages']
     for seat in PLAYERS:
         report = messages[f'{seat}-turn']
-        assert report['sender'] == seat and report['recipient'] == 'lead' and report['receipt']
+        assert report['sender'] == seat and report['recipient'] == 'lead' and report['id'] in read_ids
         assert report['body'] and any(row['id'] == report['id'] for row in state['turns'])
     deepseek_text = list(helpers.omp_reports(Path(records(out, 'deepseek')[0]['frames'])))
     assert deepseek_text == [messages['deepseek-turn']['body']]
@@ -726,16 +728,19 @@ def verify(out, state, run, helpers):
     assert muse_terminal and muse_terminal[-1]['payload']['terminal'] == 'completed'
     assert muse_terminal[-1]['payload']['text'] == messages['muse-turn']['body']
     assert any(row['sender'] == 'lead' and row['recipient'] == 'root' and row['kind'] == 'report'
-               and row['receipt'] for row in state['messages'])
+               and row['id'] in read_ids for row in state['messages'])
     selected_guidance = [row for row in state['messages'] if row['sender'] == 'lead'
                         and row['recipient'] == 'deepseek' and row['kind'] == 'guidance'
                         and row['body'] == run['tasks']['guidance']]
     assert len(selected_guidance) == 1, selected_guidance
     guidance = selected_guidance[0]
-    receipt = json.loads(guidance['receipt'])
     assert guidance['sender'] == 'lead' and guidance['recipient'] == 'deepseek'
-    assert guidance['body'] == run['tasks']['guidance']
-    assert receipt['command'] == 'steer' and receipt['success'] is True
+    assert guidance['body'] == run['tasks']['guidance'] and guidance['id'] in read_ids
+    assert guidance['receipt'] is None
+    assert any(frame.get('type') == 'response' and frame.get('command') == 'steer'
+               and frame.get('success') is True
+               for record in records(out, 'deepseek')
+               for frame in frames(Path(record['frames'])))
     player_runs = {seat: records(out, seat) for seat in PLAYERS}
     assert all(player_runs.values()), player_runs
     deepseek, muse = (player_runs[seat][0] for seat in PLAYERS)

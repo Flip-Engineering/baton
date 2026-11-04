@@ -187,3 +187,32 @@ def remove(+path: String, +identity: String, +root: String, +root_identity: Stri
   do IO<RemoveResult>:
     result : Result<&1,&1,U32 & String,String> <- H.StorageHost.remove(path, identity, root, root_identity)
     IO.pure(RemoveResult, removal_result(result))
+
+# Cooperative root lease API. Baton-owned writers hold a shared lease on
+# `.baton-writer-lease` for the duration of a write; cleanup holds an exclusive
+# lease before removal. The host answers `none` for contention and every error,
+# so the caller treats a missing handle as a refusal.
+def lease_handle(+text: String) -> Maybe<U32>:
+  +prefix : String = "handle:"
+  Bool.pick(Maybe<U32>, String.starts_with(text, prefix),
+    Some{parse_u32(String.drop(text, 7n))}, None{})
+
+def lease_maybe(result: Result<&1,&1,U32 & String,String>) -> Maybe<U32>:
+  match result:
+    case Fail{error}: None{}
+    case Done{value}: lease_handle(value)
+
+def acquire_writer_lease(+root: String) -> IO(Maybe<U32>):
+  do IO<Maybe<U32>>:
+    result : Result<&1,&1,U32 & String,String> <- H.StorageHost.writer_try_acquire(root)
+    IO.pure(Maybe<U32>, lease_maybe(result))
+
+def acquire_cleanup_lease(+root: String) -> IO(Maybe<U32>):
+  do IO<Maybe<U32>>:
+    result : Result<&1,&1,U32 & String,String> <- H.StorageHost.cleanup_try_acquire(root)
+    IO.pure(Maybe<U32>, lease_maybe(result))
+
+def release_lease(handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    released : Unit <- IO.try(Unit, H.StorageHost.lease_release(handle))
+    IO.pure(Unit, released)

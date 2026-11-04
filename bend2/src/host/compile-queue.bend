@@ -7,9 +7,18 @@ import ./compile-queue-identity.bend as Identity
 import ./compile-queue-result.bend as Result
 import ./compile-queue-artifact.bend as Artifact
 
-# Standalone queue commands use identity-v2 keys and result-v2 artifacts.
-# Identity derives source and toolchain closures. Result verifies cached
-# artifact bytes, publishes artifacts and records external adoption.
+# The identity seat declares schema(), source_closure, source_digest,
+# file_closure, compiler_closure, file_digest, text_digest, key(material) and
+# request_key(kind, cwd, root, source_root, entry, compiler, linker, version,
+# inputs, aux, artifacts, options, command). The request_key export is the
+# adapter used below; change only this adapter if its final shape differs. The
+# identity is schema v2 and its keys do not match the shell reference keys; a
+# shell completed result is evidence only.
+#
+# Result owns result formatting, parsing, verification, artifact copy and the
+# adoption record. Exports used here: write, write_adoption, verify_completed,
+# verify_adoption, copy_artifacts, retain_artifacts, retain_external,
+# receipt_write, latest_result, report_failure.
 
 type Split is Data:
   Split{left: String, right: String}
@@ -22,6 +31,14 @@ type Input is Data:
 
 type Artifact is Data:
   Artifact{name: String, path: String}
+
+type ExitMarker is Data:
+  ExitMarker{pid: String, start: String}
+
+type ExitMarkerField is Data:
+  ExitMarkerPid{}
+  ExitMarkerStart{}
+  ExitMarkerOther{}
 
 type InputRowCandidate is Data:
   ValidInputRow{value: Input}
@@ -39,6 +56,16 @@ type StateKey is Data:
 
 type CancelArgs is Data:
   CancelArgs{state: String, key: String, token: String}
+
+type ClaimStats is Data:
+  ClaimStats{count: U32, unspent: U32, unknown: U32, unobserved: U32, group_current: U32, reserve: U32, used: U32, signature: U32}
+
+type OutsideState is Data:
+  OutsideState{baseline: Maybe<&2,U32>, growth: U32}
+
+type AdmissionGate is Data:
+  AdmissionAccounted{claim: U32, heavy: Maybe<&2,U32>}
+  AdmissionExclusive{heavy: U32}
 
 def non_empty(s: String) -> Bool:
   match s:
@@ -190,6 +217,11 @@ def artifact_set_valid(artifacts: List<&2,Artifact>) -> Bool:
     case Con{Artifact{name, path}, rest}:
       Bool.and(artifact_path_ok(name), artifact_paths_ok(rest))
 
+def artifacts_absent(artifacts: List<&2,Artifact>) -> Bool:
+  match artifacts:
+    case Nil{}: True{}
+    case Con{artifact, rest}: False{}
+
 def artifact_names(artifacts: List<&2,Artifact>) -> List<&2,String>:
   match artifacts:
     case Nil{}: Nil{}
@@ -235,7 +267,7 @@ def config_input(config: Config, +source: String) -> Config:
 
 def default_config(state_root: String, cwd: String) -> Config:
   Config{"kind=\nstate_root=" ++ state_root ++ "\ncwd=" ++ cwd
-    ++ "\nroot=\nsource_root=\nentry=\ncompiler=\nreceipt=\ntoken=\npriority=\n", Nil{}}
+    ++ "\nroot=\nsource_root=\nentry=\ncompiler=\nreceipt=\ntoken=\n", Nil{}}
 
 def env_value_result(result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
@@ -257,8 +289,7 @@ def fresh_config() -> IO(Config):
   do IO<Config>:
     state : String <- default_state_root()
     cwd : String <- IO.try(String, L.CompileQueueLifecycle.cwd())
-    priority : String <- env_value("BATON_COMPILE_QUEUE_PRIORITY")
-    IO.pure(Config, config_line(default_config(state, cwd), "priority", priority))
+    IO.pure(Config, default_config(state, cwd))
 
 # require_state_root rejects a request whose flag differs from the host
 # configuration, then verifies the configured directory is present, readable,
@@ -334,17 +365,6 @@ def parse_common(args: List<&2,String>, config: Config) -> IO(Config):
         parse_common(rest, updated)
     case +option <> rest: IO.die(Config, 2, "compile-queue: unknown option " ++ option)
 
-# The priority class of a request, from the labels of the issue it works on:
-# extreme, then high, then rest. It orders waiting entries and is not part of
-# the key, so one request submitted at two priorities is one key.
-def priority_valid(+priority: String) -> Bool:
-  Bool.or(Bool.not(non_empty(priority)),
-    Bool.or(Tx.str_eq(priority, "extreme"), Bool.or(Tx.str_eq(priority, "high"), Tx.str_eq(priority, "rest"))))
-
-def priority_rank(+priority: String) -> U32:
-  Bool.pick(U32, Tx.str_eq(priority, "extreme"), 2,
-    Bool.pick(U32, Tx.str_eq(priority, "high"), 1, 0))
-
 def validate_config(config: Config, need_command: Bool) -> String:
   match config:
     case Config{+text, command}:
@@ -353,13 +373,15 @@ def validate_config(config: Config, need_command: Bool) -> String:
       +cwd = field(text, "cwd")
       +source = field(text, "source_root")
       +entry = field(text, "entry")
-      artifacts = artifact_rows(text)
+      +artifacts = artifact_rows(text)
       inputs = input_rows(text)
       +token = field(text, "token")
-      +kind_ok = Bool.or(Tx.str_eq(kind, "cgen"), Tx.str_eq(kind, "cc"))
+      +kind_ok = Bool.or(Tx.str_eq(kind, "cgen"),
+        Bool.or(Tx.str_eq(kind, "cc"), Tx.str_eq(kind, "check")))
       +command_ok = Bool.pick(Bool, need_command, non_empty_list(command), True{})
-      +artifact_ok = artifact_set_valid(artifacts)
-      +source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cgen"),
+      +artifact_ok = Bool.pick(Bool, Tx.str_eq(kind, "check"),
+        artifacts_absent(artifacts), artifact_set_valid(artifacts))
+      +source_ok = Bool.pick(Bool, Bool.or(Tx.str_eq(kind, "cgen"), Tx.str_eq(kind, "check")),
         Bool.and(non_empty(source), non_empty(entry)), True{})
       +cc_source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"), valid_state_root(source), True{})
       +linker = field(text, "linker")
@@ -367,7 +389,6 @@ def validate_config(config: Config, need_command: Bool) -> String:
       +toolchain_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"),
         Bool.and(non_empty(linker), non_empty(version)), True{})
       +token_okay = Bool.pick(Bool, non_empty(token), token_ok(token), True{})
-      +priority_okay = priority_valid(field(text, "priority"))
       +state_ok = valid_state_root(state)
       +cwd_ok = non_empty(cwd)
       +duplicates = duplicate_destinations(inputs)
@@ -380,20 +401,18 @@ def validate_config(config: Config, need_command: Bool) -> String:
                   Bool.pick(String, cc_source_ok,
                     Bool.pick(String, toolchain_ok,
                       Bool.pick(String, token_okay,
-                        Bool.pick(String, priority_okay,
-                          Bool.pick(String, duplicates,
-                            "compile-queue: two inputs share a destination basename",
-                            ""),
-                          "compile-queue: priority must be extreme, high or rest"),
+                        Bool.pick(String, duplicates,
+                          "compile-queue: two inputs share a destination basename",
+                          ""),
                         "compile-queue: token must contain only letters, digits, dot, underscore or hyphen"),
                       "compile-queue: cc requires --linker and --version"),
                     "compile-queue: cc requires an absolute --source-root"),
                   "compile-queue: cgen requires --source-root and --entry"),
-                "compile-queue: artifact names must be safe relative paths"),
+                "compile-queue: artifact declarations are invalid for this kind"),
               "compile-queue: a command is required after --"),
             "compile-queue: cwd is unavailable"),
           "compile-queue: set BATON_COMPILE_QUEUE_ROOT or pass an absolute --state-root"),
-        "compile-queue: kind must be cgen or cc")
+        "compile-queue: kind must be cgen, cc or check")
 
 def input_pairs_text(inputs: List<&2,Input>) -> String:
   match inputs:
@@ -475,7 +494,7 @@ def normalize_command(args: List<&2,String>, +cwd: String, +root: String, +compi
 def keydir_of(state_root: String, key: String) -> String:
   state_root ++ "/keys/" ++ key
 
-def identity_key(+config: Config) -> IO(String):
+def identity_key_result(+config: Config) -> IO(Result<&1,&1,U32 & String,String>):
   match config:
     case Config{+text, command}:
       +inputs = input_rows(text)
@@ -485,40 +504,42 @@ def identity_key(+config: Config) -> IO(String):
       +compiler = field(text, "compiler")
       +linker = Bool.pick(String, String.eq(field(text, "kind"), "cc"), field(text, "linker"), "")
       +version = Bool.pick(String, String.eq(field(text, "kind"), "cc"), field(text, "version"), "")
-      IO.try(String, Identity.CompileQueueIdentity.request_key(
+      Identity.CompileQueueIdentity.request_key(
         field(text, "kind"), cwd, root,
         field(text, "source_root"), field(text, "entry"), compiler,
         linker, version, input_pairs_text(inputs),
         fields_join("\n", fields_all(text, "aux")),
         artifact_pairs_text(artifacts),
         fields_join("\n", fields_all(text, "option")),
-        normalize_command(command, cwd, root, compiler, inputs, artifacts)))
+        normalize_command(command, cwd, root, compiler, inputs, artifacts))
 
-# The group file of an attempt: the group digest and the compiler digest. The
-# group covers the kind, the entry file, the compiler closure and the command,
-# with checkout and attempt paths replaced by placeholders.
-def history_group(+config: Config) -> IO(String):
+def identity_key(config: Config) -> IO(String):
+  IO.try(String, identity_key_result(config))
+
+# The history group of a cc request (see CompileQueueIdentity.request_group); empty
+# for every other kind. A cgen or check request is admitted on the record of its
+# exact key only: a changed Bend source can use several times the memory of the
+# source recorded before it, and no property of the source predicts that.
+def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,String>):
   match config:
-    case Config{+text, +command}:
+    case Config{+text, command}:
       +inputs = input_rows(text)
       +artifacts = artifact_rows(text)
       +cwd = field(text, "cwd")
       +root = field(text, "root")
       +compiler = field(text, "compiler")
-      +kind = field(text, "kind")
-      +linker = Bool.pick(String, String.eq(kind, "cc"), field(text, "linker"), "")
-      +version = Bool.pick(String, String.eq(kind, "cc"), field(text, "version"), "")
-      +normalized = normalize_command(command, cwd, root, compiler, inputs, artifacts)
-      do IO<String>:
-        +toolchain : String <- IO.try(String, Identity.CompileQueueIdentity.history_compiler(
-          cwd, root, compiler, linker, version, normalized))
-        material : String <- IO.pure(String, "kind=" ++ kind ++ "\nentry=" ++ field(text, "entry")
-          ++ "\ncompiler=" ++ toolchain ++ "\ncommand=" ++ normalized ++ "\n")
-        scrubbed : String <- IO.try(String, L.CompileQueueLifecycle.group_text(material,
-          cwd ++ "\n" ++ root ++ "\n" ++ field(text, "source_root")))
-        group : String <- IO.try(String, Identity.CompileQueueIdentity.text_digest(
-          "schema=baton-compile-queue-history-v2\n" ++ scrubbed))
-        IO.pure(String, "group=" ++ group ++ "\ncompiler=" ++ toolchain ++ "\n")
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.eq(field(text, "kind"), "cc"),
+        Identity.CompileQueueIdentity.request_group(
+          field(text, "kind"), cwd, root, field(text, "entry"), compiler,
+          field(text, "linker"), field(text, "version"),
+          input_pairs_text(inputs), fields_join("\n", fields_all(text, "aux")),
+          artifact_pairs_text(artifacts),
+          fields_join("\n", fields_all(text, "option")),
+          normalize_command(command, cwd, root, compiler, inputs, artifacts)),
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{""}))
+
+def identity_group(config: Config) -> IO(String):
+  IO.try(String, identity_group_result(config))
 
 def config_state(config: Config) -> String:
   match config:
@@ -588,17 +609,26 @@ def command_tokens(args: List<&2,String>, +work: String, +inputs: List<&2,Input>
     case Con{token, rest}:
       Con{replace_token(token, work, inputs, artifacts), command_tokens(rest, work, inputs, artifacts)}
 
+def copy_identity_tokens(args: List<&1,String>, +acc: List<&2,String>) -> List<&2,String>:
+  match args:
+    case Nil{}: List.reverse(&2,String,acc)
+    case Con{+token, rest}: copy_identity_tokens(rest, Con{token,acc})
+
+def priority_text(+text: String) -> String:
+  Bool.pick(String, String.is_empty(field(text, "priority")), "0", field(text, "priority"))
+
 def meta_text(config: Config, key: String, keydir: String, attempt: String, artifacts: List<&2,Artifact>) -> String:
   match config:
     case Config{+text, command}:
       "kind=" ++ field(text, "kind") ++ "\n"
       ++ "cwd=" ++ field(text, "cwd") ++ "\n"
+      ++ "state_root=" ++ field(text, "state_root") ++ "\n"
       ++ "source_root=" ++ field(text, "source_root") ++ "\n"
       ++ "entry=" ++ field(text, "entry") ++ "\n"
+      ++ "priority=" ++ priority_text(text) ++ "\n"
       ++ "key=" ++ key ++ "\n"
       ++ "keydir=" ++ keydir ++ "\n"
       ++ "attempt=" ++ attempt ++ "\n"
-      ++ "priority=" ++ field(text, "priority") ++ "\n"
       ++ names_text(artifact_names(artifacts))
 
 def write_attempt_digest(attempt: String, +text: String) -> IO(Unit):
@@ -610,7 +640,7 @@ def write_attempt_digest(attempt: String, +text: String) -> IO(Unit):
 
 def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt: String) -> IO(Unit):
   match config:
-    case Config{+text, +command}:
+    case Config{+text, command}:
       do IO<Unit>:
         +work : String <- IO.pure(String, attempt ++ "/work")
         +inputs : List<&2,Input> <- IO.pure(List<&2,Input>, input_rows(text))
@@ -620,19 +650,22 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
         rechecked : String <- identity_key(config)
         checked : Unit <- Bool.pick(IO(Unit), Tx.str_eq(rechecked, key), IO.pure(Unit, Unit{}),
           IO.die(Unit, 1, "compile-queue: inputs changed before execution"))
+        wrote_identity_config : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/identity-config", text))
+        wrote_identity_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_bytes(attempt ++ "/identity-command", P.argv(command_tokens(command, "", Nil{}, Nil{}))))
         wrote_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts)))
         wrote_argv : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_bytes(attempt ++ "/argv", P.argv(command_tokens(command, work, inputs, artifacts))))
         wrote_meta : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
-        group : String <- history_group(config)
-        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/group", group))
-        digest_written : Unit <- Bool.pick(IO(Unit), Tx.str_eq(field(text, "kind"), "cgen"),
+        +group : String <- identity_group(config)
+        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/history-group", "group=" ++ group ++ "\n"))
+        digest_written : Unit <- Bool.pick(IO(Unit),
+          Bool.or(Tx.str_eq(field(text, "kind"), "cgen"), Tx.str_eq(field(text, "kind"), "check")),
           write_attempt_digest(attempt, text), IO.pure(Unit, Unit{}))
         IO.pure(Unit, Unit{})
 
 def owner_lock(keydir: String) -> IO(U32):
   IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/owners.lock"))
 
-def publish_token(+keydir: String, +requested: String) -> IO(String):
+def publish_token(+keydir: String, +requested: String, +priority: String) -> IO(String):
   do IO<String>:
     made_keydir : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(keydir))
     lock : U32 <- owner_lock(keydir)
@@ -647,7 +680,8 @@ def publish_token(+keydir: String, +requested: String) -> IO(String):
     checked : Unit <- Bool.pick(IO(Unit), exists,
       IO.die(Unit, 2, "compile-queue: owner token is already in use"), IO.pure(Unit, Unit{}))
     wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(owner_path,
-      "pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nstarted_ns=" ++ now ++ "\n"))
+      "pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nstarted_ns=" ++ now
+      ++ "\npriority=" ++ priority ++ "\n"))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
     IO.pure(String, token)
 
@@ -661,21 +695,6 @@ def remove_token(+keydir: String, token: String) -> IO(Unit):
     removed : Unit <- remove_token_unlocked(keydir, token)
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
     IO.pure(Unit, Unit{})
-
-# keys/KEY/priority holds the highest class of the requesters of the key; the
-# admission rule reads it for every waiting entry. A requester that joins a
-# waiting key with a higher class raises the entry; nothing lowers it.
-def raise_priority(+keydir: String, +requested: String) -> IO(Unit):
-  Bool.pick(IO(Unit), non_empty(requested),
-    do IO<Unit>:
-      lock : U32 <- owner_lock(keydir)
-      +current : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/priority"))
-      wrote : Unit <- Bool.pick(IO(Unit), U32.is_gt(priority_rank(requested), priority_rank(field(current, "priority"))),
-        IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/priority", "priority=" ++ requested ++ "\n")),
-        IO.pure(Unit, Unit{}))
-      released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
-      IO.pure(Unit, Unit{}),
-    IO.pure(Unit, Unit{}))
 
 def remove_stale_owner(keydir: String, name: String) -> IO(U32):
   do IO<U32>:
@@ -715,6 +734,24 @@ def owner_count(+keydir: String) -> IO(U32):
     names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(keydir ++ "/owners"))
     count_live_owners(keydir, Tx.split_nul(names), 0)
 
+# The scan of owner_count unlinks the files it judges dead, among them the
+# temporary file of a token that is being published. Every caller that is not
+# already inside the owner lock counts through this helper, which holds the same
+# lock as publish_token. A caller that holds the key lock takes this lock second,
+# as the supervisor does.
+def owner_count_locked(+keydir: String) -> IO(U32):
+  do IO<U32>:
+    gate : U32 <- owner_lock(keydir)
+    count : U32 <- owner_count(keydir)
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+    IO.pure(U32, count)
+
+# Removes the tokens of processes that are gone.
+def prune_stale_owners(+keydir: String) -> IO(Unit):
+  do IO<Unit>:
+    pruned : U32 <- owner_count_locked(keydir)
+    IO.pure(Unit, Unit{})
+
 def clean_stale_active_alive(pid: U32, active: String, start: String) -> IO(Unit):
   do IO<Unit>:
     alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
@@ -738,16 +775,21 @@ def clean_stale_active(keydir: String) -> IO(Unit):
     start : String <- IO.pure(String, field(text, "starttime"))
     clean_stale_active_pid(U32.read(pid_text), active, start)
 
+def write_failure_stage(+attempt: String, +keydir: String, status: String, code: U32,
+                        kind: String, key: String, started: String, detail: String,
+                        stage: String, +names: List<&2,String>) -> IO(Unit):
+  do IO<Unit>:
+    finished : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
+    wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write_with_stage(attempt ++ "/result", status, U32.show(code), kind, key, started,
+      finished, attempt, attempt ++ "/work", attempt ++ "/stdout", attempt ++ "/stderr",
+      detail, stage, artifact_paths_text(names)))
+    removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
+    IO.pure(Unit, Unit{})
+
 def write_failure(+attempt: String, +keydir: String, status: String, code: U32,
                   kind: String, key: String, started: String, detail: String,
                   +names: List<&2,String>) -> IO(Unit):
-  do IO<Unit>:
-    finished : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
-    wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write(attempt ++ "/result", status, U32.show(code), kind, key, started,
-      finished, attempt, attempt ++ "/work", attempt ++ "/stdout", attempt ++ "/stderr",
-      detail, artifact_paths_text(names)))
-    removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
-    IO.pure(Unit, Unit{})
+  write_failure_stage(attempt, keydir, status, code, kind, key, started, detail, "", names)
 
 def finish_success(+attempt: String, +keydir: String, +kind: String, +key: String,
                     +started: String, +names: List<&2,String>) -> IO(Unit):
@@ -766,6 +808,11 @@ def finish_success(+attempt: String, +keydir: String, +kind: String, +key: Strin
     copied_result : Unit <- IO.try(Unit, L.CompileQueueLifecycle.copy_file(keydir ++ "/completed/result", attempt ++ "/result"))
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
+
+def missing_artifact_name(mode: Result<&1,&1,U32 & String,U32>, name: String) -> String:
+  match mode:
+    case Done{value}: ""
+    case Fail{error}: name
 
 def cgen_content_valid(path: String) -> IO(Bool):
   do IO<Bool>:
@@ -810,36 +857,25 @@ def finish_validated_artifacts(kind: String, invalid: String, +attempt: String,
     case "cgen": finish_cgen_validation(invalid, attempt, keydir, kind, key, started, names)
     case _: finish_success(attempt, keydir, kind, key, started, names)
 
-def artifact_present(mode: Result<&1,&1,U32 & String,U32>) -> Bool:
-  match mode:
-    case Done{value}: True{}
-    case Fail{error}: False{}
-
-# The first declared artifact the command did not write, or "".
-def missing_artifact(+work: String, names: List<&2,String>) -> IO(String):
+def verify_artifacts(+work: String, names: List<&2,String>) -> IO(String):
   match names:
     case Nil{}: IO.pure(String, "")
     case Con{+name, rest}:
       do IO<String>:
         mode : Result<&1,&1,U32 & String,U32> <- F.Files.mode_of(work ++ "/" ++ name)
-        Bool.pick(IO(String), artifact_present(mode), missing_artifact(work, rest), IO.pure(String, name))
-
-def finish_artifacts(missing: String, +attempt: String, +keydir: String, +kind: String,
-                     +key: String, +started: String, +names: List<&2,String>) -> IO(Unit):
-  match missing:
-    case SNil{}:
-      do IO<Unit>:
-        invalid : String <- invalid_artifact_name(kind, names, attempt ++ "/work")
-        finish_validated_artifacts(kind, invalid, attempt, keydir, key, started, names)
-    case name:
-      write_failure(attempt, keydir, "failed", 1, kind, key, started,
-        "compile-queue: artifact " ++ name ++ " was not written", names)
+        +missing : String <- IO.pure(String, missing_artifact_name(mode, name))
+        Bool.pick(IO(String), String.is_empty(missing), verify_artifacts(work, rest), IO.pure(String, missing))
 
 def verify_and_finish(+attempt: String, +keydir: String, +kind: String, +key: String,
                        +started: String, +names: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
-    missing : String <- missing_artifact(attempt ++ "/work", names)
-    finish_artifacts(missing, attempt, keydir, kind, key, started, names)
+    +missing : String <- verify_artifacts(attempt ++ "/work", names)
+    Bool.pick(IO(Unit), String.is_empty(missing),
+      do IO<Unit>:
+        invalid : String <- invalid_artifact_name(kind, names, attempt ++ "/work")
+        finish_validated_artifacts(kind, invalid, attempt, keydir, key, started, names),
+      write_failure_stage(attempt, keydir, "failed", 1, kind, key, started,
+        "declared artifact " ++ missing ++ " was not written", "artifact-verification", names))
 
 def supervised_completion(canceled: Bool, failed: Bool, +code: U32, disposition: String,
                           +attempt: String, +keydir: String, +kind: String, +key: String,
@@ -864,8 +900,6 @@ def supervised_result(outcome: Result<&1,&1,U32 & String,U32 & String>, attempt:
       +failed = Bool.and(Bool.not(canceled), Bool.not(U32.is_eq(code, 0)))
       supervised_completion(canceled, failed, code, disposition, attempt, keydir, kind, key, started, names)
 
-# The argument vector of an attempt. Attempts written by an older executable have
-# only the `command` file, one argument per line.
 def command_argv(present: Bool, +attempt: String) -> IO(String):
   Bool.pick(IO(String), present,
     IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/argv")),
@@ -879,12 +913,12 @@ def run_supervised(+attempt: String, +keydir: String, +kind: String, +key: Strin
     present : Bool <- regular(attempt ++ "/argv")
     argv : String <- command_argv(present, attempt)
     outcome : Result<&1,&1,U32 & String,U32 & String> <- L.CompileQueueLifecycle.run_command(
-      argv, cwd, attempt ++ "/stdout", attempt ++ "/stderr")
+      argv, cwd, attempt ++ "/stdout", attempt ++ "/stderr", attempt)
     supervised_result(outcome, attempt, keydir, kind, key, started, names, cwd)
 
-def supervise_kind(+kind: String, source_root: String, entry: String, +attempt: String,
-                    +keydir: String, +key: String, +started: String, +names: List<&2,String>, +cwd: String) -> IO(Unit):
-  Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
+def supervise_source(+kind: String, source_root: String, entry: String, +attempt: String,
+                     +keydir: String, +key: String, +started: String, +names: List<&2,String>, +cwd: String) -> IO(Unit):
+  Bool.pick(IO(Unit), Bool.or(Tx.str_eq(kind, "cgen"), Tx.str_eq(kind, "check")),
     do IO<Unit>:
       before : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/source-digest"))
       before_digest : String <- IO.pure(String, field(before, "digest"))
@@ -895,24 +929,645 @@ def supervise_kind(+kind: String, source_root: String, entry: String, +attempt: 
           "source changed before execution", names)),
     run_supervised(attempt, keydir, kind, key, started, names, cwd))
 
-@unsafe
-def watch_heavy(+attempt: String, +pid: U32, +start: String) -> IO(Unit):
-  do IO<Unit>:
-    alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
-    compiled : Bool <- regular(attempt ++ "/compiled")
-    Bool.pick(IO(Unit), U32.is_eq(alive, 0), IO.pure(Unit, Unit{}),
-      Bool.pick(IO(Unit), compiled,
-        do IO<Unit>:
-          released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
-          IO.pure(Unit, Unit{}),
-        do IO<Unit>:
-          slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
-          watch_heavy(attempt, pid, start)))
+def supervise_identity_matches(matches: Bool, +kind: String, source_root: String, entry: String,
+                               +attempt: String, +keydir: String, +key: String, +started: String,
+                               +names: List<&2,String>, cwd: String) -> IO(Unit):
+  Bool.pick(IO(Unit), matches,
+    supervise_source(kind, source_root, entry, attempt, keydir, key, started, names, cwd),
+    write_failure(attempt, keydir, "failed", 1, kind, key, started,
+      "request identity changed before execution", names))
 
-def watch_heavy_pid(parsed: Maybe<&2,U32>, attempt: String, start: String) -> IO(Unit):
+def supervise_kind(+kind: String, source_root: String, entry: String, +attempt: String,
+                    +keydir: String, +key: String, +started: String, +names: List<&2,String>, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
+    text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/identity-config"))
+    packed_command : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/identity-command"))
+    current_key : String <- identity_key(Config{text, copy_identity_tokens(Tx.split_nul(packed_command), Nil{})})
+    supervise_identity_matches(Tx.str_eq(current_key, key), kind, source_root, entry,
+      attempt, keydir, key, started, names, cwd)
+
+def exit_marker_field(label: String) -> ExitMarkerField:
+  match label:
+    case "pid": ExitMarkerPid{}
+    case "starttime": ExitMarkerStart{}
+    case other: ExitMarkerOther{}
+
+def exit_marker_update_fields(field_kind: ExitMarkerField, right: String,
+                              marker: ExitMarker) -> ExitMarker:
+  match field_kind:
+    case ExitMarkerPid{}:
+      match marker:
+        case ExitMarker{pid, start}: ExitMarker{right, start}
+    case ExitMarkerStart{}:
+      match marker:
+        case ExitMarker{pid, start}: ExitMarker{pid, right}
+    case ExitMarkerOther{}: marker
+
+def exit_marker_update(parsed: Maybe<&1,Split>, marker: ExitMarker) -> ExitMarker:
+  match parsed:
+    case None{}: marker
+    case Some{Split{left, right}}:
+      exit_marker_update_fields(exit_marker_field(left), right, marker)
+
+def exit_marker_fields(lines: List<&1,String>, marker: ExitMarker) -> ExitMarker:
+  match lines:
+    case Nil{}: marker
+    case line <> rest:
+      exit_marker_fields(rest, exit_marker_update(split_eq(line, ""), marker))
+
+def exit_marker_identity_matches(marker: ExitMarker, pid: U32, start: String) -> Bool:
+  match marker:
+    case ExitMarker{marker_pid, marker_start}:
+      Bool.and(Tx.str_eq(marker_pid, U32.show(pid)), Tx.str_eq(marker_start, start))
+
+def exit_marker_matches_text(text: String, pid: U32, start: String) -> Bool:
+  +marker = exit_marker_fields(Tx.split_lines(text), ExitMarker{"", ""})
+  exit_marker_identity_matches(marker, pid, start)
+
+def exit_marker_matches(attempt: String, pid: U32, start: String) -> IO(Bool):
+  do IO<Bool>:
+    text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/exit_status"))
+    IO.pure(Bool, exit_marker_matches_text(text, pid, start))
+
+def peak_text_result(result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Fail{error}: ""
+    case Done{+text}: text
+
+# The history group the requester recorded for the attempt. The file has its own
+# name: the attempt file "group" belongs to the memory-admission executable. An
+# attempt without a group has no group history.
+def attempt_group(+attempt: String) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/history-group")
+    +text : String <- IO.pure(String, peak_text_result(result))
+    IO.pure(String, field(text, "group"))
+
+def status_number_parsed(parsed: Maybe<&2,U32>) -> U32:
+  match parsed:
+    case None{}: 0
+    case Some{value}: value
+
+def status_number(text: String) -> U32:
+  status_number_parsed(U32.read(text))
+
+def peak_record(+attempt: String, +peak: U32) -> IO(Unit):
+  Bool.pick(IO(Unit),U32.is_gt(peak,0),
+    do IO<Unit>:
+      attempt_peak : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
+        attempt ++ "/peak", "peak_kb=" ++ U32.show(peak) ++ "\n")
+      meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
+      +meta : String <- IO.pure(String,peak_text_result(meta_result))
+      +keydir : String <- IO.pure(String,field(meta,"keydir"))
+      old_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/peak")
+      +old_text : String <- IO.pure(String,peak_text_result(old_result))
+      +prior_peak : U32 <- IO.pure(U32,status_number(field(old_text,"peak_kb")))
+      Bool.pick(IO(Unit),U32.is_gt(peak,prior_peak),
+        do IO<Unit>:
+          ignored : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
+            keydir ++ "/peak","peak_kb=" ++ U32.show(peak) ++ "\n")
+          IO.pure(Unit,Unit{}),
+        IO.pure(Unit,Unit{})),
+    IO.pure(Unit,Unit{}))
+
+
+# Measured admission shares host capacity across queue versions. The lock file
+# remains the compatibility fence: an existing exclusive holder prevents this
+# queue from creating a claim for cgen/check work.
+def admission_root(+state: String) -> String:
+  state ++ "/admission"
+
+# The peak measured for a cc command that exited 0 is recorded for the history
+# group of its request, so a later request that differs only in its C source finds
+# it. The record holds the largest peak seen: a later larger measurement raises it
+# and a smaller one leaves it. The peak of a run that did not exit 0 stays with its
+# own key: it predicts that exact request and says nothing about the request after
+# the source is fixed. The records are in history/, which the memory-admission
+# executable neither reads nor rebuilds (it rebuilds peaks/).
+def exit_marker_success(+attempt: String) -> IO(Bool):
+  do IO<Bool>:
+    result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/exit_status")
+    +text : String <- IO.pure(String, peak_text_result(result))
+    IO.pure(Bool, Bool.and(Tx.str_eq(field(text, "exit"), "0"), Tx.str_eq(field(text, "signal"), "0")))
+
+def group_peak_raise(+state: String, +group: String, +peak: U32, key: String, attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    made_admission : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(admission_root(state)))
+    made_history : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(state ++ "/history"))
+    guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
+    old_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/history/" ++ group)
+    +old_text : String <- IO.pure(String, peak_text_result(old_result))
+    +prior : U32 <- IO.pure(U32, status_number(field(old_text, "peak_kb")))
+    raised : Unit <- Bool.pick(IO(Unit), U32.is_gt(peak, prior),
+      do IO<Unit>:
+        ignored : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
+          state ++ "/history/" ++ group, "peak_kb=" ++ U32.show(peak) ++ "\nkey=" ++ key ++ "\nattempt=" ++ attempt ++ "\n")
+        IO.pure(Unit, Unit{}),
+      IO.pure(Unit, Unit{}))
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
+    IO.pure(Unit, Unit{})
+
+def group_peak_record(+attempt: String, +peak: U32) -> IO(Unit):
+  do IO<Unit>:
+    succeeded : Bool <- exit_marker_success(attempt)
+    meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
+    +meta : String <- IO.pure(String, peak_text_result(meta_result))
+    +group : String <- attempt_group(attempt)
+    Bool.pick(IO(Unit), Bool.and(succeeded, Bool.and(U32.is_gt(peak, 0), non_empty(group))),
+      group_peak_raise(field(meta, "state_root"), group, peak, field(meta,"key"), attempt),
+      IO.pure(Unit, Unit{}))
+
+# Admission uses the largest observed peak of the exact key and compatible CC
+# group. A request with unavailable history enters when no other claim is live.
+def max_u32(+a: U32, +b: U32) -> U32:
+  Bool.pick(U32,U32.is_gt(a,b),a,b)
+
+def admission_history_value(exact: Result<&1,&1,U32 & String,String>, grouped: Result<&1,&1,U32 & String,String>) -> U32:
+  +exact_peak = status_number(field(peak_text_result(exact), "peak_kb"))
+  max_u32(exact_peak, status_number(field(peak_text_result(grouped), "peak_kb")))
+
+def admission_history(+state: String, +key: String, +group: String) -> IO(U32):
+  do IO<U32>:
+    exact : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/keys/" ++ key ++ "/peak")
+    grouped : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>), non_empty(group),
+      L.CompileQueueLifecycle.read_text(state ++ "/history/" ++ group),
+      IO.pure(Result<&1,&1,U32 & String,String>, Done{""}))
+    IO.pure(U32, admission_history_value(exact, grouped))
+
+# Retained history is imported through the queue's recorded identity and completed
+# result. An unchanged request can reconstruct its group with the current tools.
+# Changed or missing source/control/toolchain files leave the history unavailable.
+# A legacy key peak is usable only when its sole attempt completed successfully.
+def history_import_group(result: Result<&1,&1,U32 & String,String>, state: String,
+                         +key: String, attempt: String, peak: U32) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.write("history=unavailable key=" ++ key ++ "\n")
+    case Done{+group}:
+      Bool.pick(IO(Unit), non_empty(group),
+        do IO<Unit>:
+          recorded : Unit <- group_peak_raise(state,group,peak,key,attempt)
+          IO.write("history=recorded key=" ++ key ++ " group=" ++ group ++ "\n"),
+        IO.write("history=unavailable key=" ++ key ++ "\n"))
+
+def history_import_identity(result: Result<&1,&1,U32 & String,String>, +config: Config,
+                            +state: String, +key: String, +attempt: String, +peak: U32) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.write("history=unavailable key=" ++ key ++ "\n")
+    case Done{computed}:
+      Bool.pick(IO(Unit), Tx.str_eq(computed,key),
+        do IO<Unit>:
+          grouped : Result<&1,&1,U32 & String,String> <- identity_group_result(config)
+          history_import_group(grouped,state,key,attempt,peak),
+        IO.write("history=identity-changed key=" ++ key ++ "\n"))
+
+def history_import_config(valid: Bool, +config: Config, +state: String, +key: String,
+                          attempt: String, peak: U32) -> IO(Unit):
+  Bool.pick(IO(Unit), valid,
+    do IO<Unit>:
+      exact : Result<&1,&1,U32 & String,String> <- identity_key_result(config)
+      history_import_identity(exact,config,state,key,attempt,peak),
+    IO.write("history=unavailable key=" ++ key ++ "\n"))
+
+def history_import_attempt(+state: String, +key: String, +keydir: String,
+                           +attempt: String, +sole: Bool) -> IO(Unit):
+  do IO<Unit>:
+    result_read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/result")
+    +result : String <- IO.pure(String,peak_text_result(result_read))
+    attempt_peak_read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/peak")
+    legacy_peak_read : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),sole,
+      L.CompileQueueLifecycle.read_text(keydir ++ "/peak"),
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
+    +peak : U32 <- IO.pure(U32,max_u32(status_number(field(peak_text_result(attempt_peak_read),"peak_kb")),
+      status_number(field(peak_text_result(legacy_peak_read),"peak_kb"))))
+    +eligible : Bool <- IO.pure(Bool,Bool.and(U32.is_gt(peak,0),
+      Bool.and(Result.CompileQueueResult.recorded_completed(result,key),
+        Bool.and(Tx.str_eq(field(result,"kind"),"cc"),Bool.not(Tx.str_eq(field(result,"external"),"1"))))))
+    Bool.pick(IO(Unit),eligible,
+      do IO<Unit>:
+        config_read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/identity-config")
+        command_read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/identity-command")
+        +text : String <- IO.pure(String,peak_text_result(config_read))
+        +packed : String <- IO.pure(String,peak_text_result(command_read))
+        +config : Config <- IO.pure(Config,Config{text,copy_identity_tokens(Tx.split_nul(packed),Nil{})})
+        +valid : Bool <- IO.pure(Bool,Bool.and(Tx.str_eq(field(text,"kind"),"cc"),
+          Bool.and(Tx.str_eq(field(text,"state_root"),state),String.is_empty(validate_config(config,True{})))))
+        history_import_config(valid,config,state,key,attempt,peak),
+      IO.write("history=unavailable key=" ++ key ++ "\n"))
+
+def history_import_attempts(names: List<&1,String>, +state: String, +key: String,
+                            +keydir: String, +sole: Bool) -> IO(Unit):
+  match names:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case name <> rest:
+      do IO<Unit>:
+        imported : Unit <- history_import_attempt(state,key,keydir,keydir ++ "/runs/" ++ name,sole)
+        history_import_attempts(rest,state,key,keydir,sole)
+
+def history_import_single(names: List<&1,String>) -> Bool:
+  match names:
+    case name <> Nil{}: True{}
+    case other: False{}
+
+def history_import_cached(result: Result<&1,&1,U32 & String,Bool>, state: String,
+                          +key: String, +keydir: String) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.write("history=unavailable key=" ++ key ++ "\n")
+    case Done{completed}:
+      Bool.pick(IO(Unit),completed,
+        do IO<Unit>:
+          names_read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.list_dir(keydir ++ "/runs")
+          +names_text : String <- IO.pure(String,peak_text_result(names_read))
+          sole : Bool <- IO.pure(Bool,history_import_single(Tx.split_nul(names_text)))
+          history_import_attempts(Tx.split_nul(names_text),state,key,keydir,sole),
+        IO.write("history=unavailable key=" ++ key ++ "\n"))
+
+def history_import_key_locked(lock: Maybe<&2,U32>, +state: String, +key: String,
+                              +keydir: String) -> IO(Unit):
+  match lock:
+    case None{}: IO.write("history=busy key=" ++ key ++ "\n")
+    case Some{held}:
+      do IO<Unit>:
+        cached : Result<&1,&1,U32 & String,Bool> <- Result.CompileQueueResult.verify_completed(keydir)
+        imported : Unit <- history_import_cached(cached,state,key,keydir)
+        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(held))
+        IO.pure(Unit,Unit{})
+
+def history_import_keys(names: List<&1,String>, +state: String, +selected: String) -> IO(Unit):
+  match names:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +key <> rest:
+      do IO<Unit>:
+        chosen : Bool <- IO.pure(Bool,Bool.or(String.is_empty(selected),Tx.str_eq(key,selected)))
+        imported : Unit <- Bool.pick(IO(Unit),chosen,
+          do IO<Unit>:
+            +keydir : String <- IO.pure(String,keydir_of(state,key))
+            lock : Maybe<&2,U32> <- IO.try(Maybe<&2,U32>,L.CompileQueueLifecycle.lock_try(keydir ++ "/lock"))
+            history_import_key_locked(lock,state,key,keydir),
+          IO.pure(Unit,Unit{}))
+        history_import_keys(rest,state,selected)
+
+def history_import_parsed(parsed: StateKey) -> IO(Unit):
+  match parsed:
+    case StateKey{+state,selected}:
+      do IO<Unit>:
+        ready : Unit <- require_state_root(state)
+        names : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(state ++ "/keys"))
+        history_import_keys(Tx.split_nul(names),state,selected)
+
+def record_usage(+attempt: String, pid: U32, sample: U32, growth: U32) -> IO(Unit):
+  do IO<Unit>:
+    meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
+    +meta : String <- IO.pure(String,peak_text_result(meta_result))
+    +keydir : String <- IO.pure(String,field(meta,"keydir"))
+    active_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/active")
+    +active : String <- IO.pure(String,peak_text_result(active_result))
+    +token : String <- IO.pure(String,field(active,"started_ns") ++ "-" ++ field(active,"pid"))
+    +state : String <- IO.pure(String,field(meta,"state_root"))
+    now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
+    +now : String <- IO.pure(String,peak_text_result(now_result))
+    usage_text : String <- IO.pure(String,"kb=" ++ U32.show(sample) ++ "\ngrowth_kb=" ++ U32.show(growth) ++ "\nsample_s=" ++ now ++ "\n")
+    ignored : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
+      admission_root(state) ++ "/usage/" ++ token,usage_text)
+    IO.pure(Unit,Unit{})
+
+def record_usage_measured(+attempt: String, pid: U32, sample: U32, growth: U32,
+                          observed: Maybe<&2,U32>) -> IO(Unit):
+  match observed:
+    case None{}: IO.pure(Unit,Unit{})
+    case Some{outside}: record_usage(attempt,pid,sample,growth)
+
+def admission_live_names_go(names: List<&1,String>, +state: String, +dir: String, +acc: String) -> IO(String):
+  match names:
+    case Nil{}: IO.pure(String,acc)
+    case +name <> rest:
+      do IO<String>:
+        live : U32 <- IO.try(U32,L.CompileQueueLifecycle.held(dir ++ "/" ++ name))
+        +is_live : Bool <- IO.pure(Bool,U32.is_eq(live,1))
+        pruned : Unit <- Bool.pick(IO(Unit),is_live,IO.pure(Unit,Unit{}),
+          do IO<Unit>:
+            removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(dir ++ "/" ++ name)
+            usage_removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name)
+            IO.pure(Unit,Unit{}))
+        next_acc : String <- IO.pure(String,Bool.pick(String,is_live,acc ++ name ++ "\t",acc))
+        admission_live_names_go(rest,state,dir,next_acc)
+
+def admission_live_names(+state: String, names: String) -> IO(String):
+  admission_live_names_go(Tx.split_nul(names),state,admission_root(state) ++ "/running","")
+
+def admission_cache_fresh(+text: String, now: U32, ids: String) -> Bool:
+  +sample = status_number(field(text,"sample_s"))
+  Bool.and(Tx.str_eq(field(text,"valid"),"1"),
+    Bool.and(Tx.str_eq(field(text,"ids"),ids),
+      Bool.and(U32.is_gt(sample,0),Bool.not(U32.is_gt(now,U32.add(sample,1))))))
+
+def claim_file_live(live: U32, +dir: String, +name: String) -> Bool:
+  U32.is_eq(live, 1)
+
+def claim_add_stats_after_sample(+text: String, +group: String,
+                                 +count: U32, +unspent: U32, +unknown: U32, +unobserved: U32,
+                                 +group_current: U32, +reserve: U32, +used: U32, +signature: U32,
+                                 +identity: U32,
+                                 current_text: Result<&1,&1,U32 & String,String>) -> IO(ClaimStats):
+  match current_text:
+    case Fail{error}:
+      IO.pure(ClaimStats, ClaimStats{U32.add(count,1),unspent,U32.add(unknown,1),U32.add(unobserved,1),group_current,reserve,used,U32.add(signature,identity)})
+    case Done{+usage}:
+      +current = status_number(field(usage, "kb"))
+      +expected = status_number(field(text, "expected_kb"))
+      +headroom = Bool.pick(U32, U32.is_gt(expected,current), U32.sub(expected,current), 0)
+      +same_group = Bool.and(non_empty(group), Tx.str_eq(field(text,"group"),group))
+      +next_group = Bool.pick(U32, same_group, U32.add(group_current,current), group_current)
+      +next_unknown = Bool.pick(U32, U32.is_eq(status_number(field(text,"history")),0), U32.add(unknown,1), unknown)
+      IO.pure(ClaimStats, ClaimStats{U32.add(count,1),U32.add(unspent,headroom),next_unknown,unobserved,next_group,reserve,U32.add(used,current),U32.add(signature,identity)})
+
+def claim_add_stats(live: Bool, +text: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
+  match stats:
+    case ClaimStats{count, unspent, unknown, unobserved, group_current, reserve, used, signature}:
+      Bool.pick(IO(ClaimStats), live,
+        do IO<ClaimStats>:
+          +root : U32 <- IO.pure(U32, status_number(field(text, "root")))
+          +identity : U32 <- IO.pure(U32,U32.add(root,status_number(field(text,"starttime"))))
+          current_text : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.session_kb(root)
+          claim_add_stats_after_sample(text,group,count,unspent,unknown,unobserved,group_current,reserve,used,signature,identity,current_text),
+        IO.pure(ClaimStats, stats))
+
+def claim_stats_with_reserve(stats: ClaimStats, growth: U32) -> ClaimStats:
+  match stats:
+    case ClaimStats{count, unspent, unknown, unobserved, group_current, reserve, used, signature}:
+      ClaimStats{count,unspent,unknown,unobserved,group_current,max_u32(reserve,growth),used,signature}
+
+def claim_usage_reserve(result: Result<&1,&1,U32 & String,String>, now: U32, +stats: ClaimStats) -> ClaimStats:
+  match result:
+    case Fail{error}: stats
+    case Done{+text}:
+      +sample = status_number(field(text,"sample_s"))
+      +fresh = Bool.and(U32.is_gt(sample,0),Bool.not(U32.is_gt(now,U32.add(sample,1))))
+      Bool.pick(ClaimStats,fresh,claim_stats_with_reserve(stats,status_number(field(text,"growth_kb"))),stats)
+
+def admission_record_text(result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Fail{error}: ""
+    case Done{+text}: text
+
+def admission_claim_file(+state: String, +dir: String, +name: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
+  do IO<ClaimStats>:
+    live : U32 <- IO.try(U32, L.CompileQueueLifecycle.held(dir ++ "/" ++ name))
+    +path : String <- IO.pure(String, dir ++ "/" ++ name)
+    +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(path))
+    +is_live : Bool <- IO.pure(Bool, claim_file_live(live, dir, name))
+    Bool.pick(IO(ClaimStats), is_live,
+      do IO<ClaimStats>:
+        +measured : ClaimStats <- claim_add_stats(True{}, text, group, stats)
+        usage : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(admission_root(state) ++ "/usage/" ++ name)
+        now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
+        +now_text : String <- IO.pure(String,admission_record_text(now_result))
+        +now : U32 <- IO.pure(U32,status_number(now_text))
+        IO.pure(ClaimStats,claim_usage_reserve(usage,now,measured)),
+      do IO<ClaimStats>:
+        removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(path)
+        usage_removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name)
+        IO.pure(ClaimStats, stats))
+
+def admission_claim_files(names: List<&1,String>, +state: String, +dir: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
+  match names:
+    case Nil{}: IO.pure(ClaimStats, stats)
+    case name <> rest:
+      do IO<ClaimStats>:
+        +next : ClaimStats <- admission_claim_file(state, dir, name, group, stats)
+        admission_claim_files(rest, state, dir, group, next)
+
+def admission_claims(+state: String, +group: String) -> IO(ClaimStats):
+  do IO<ClaimStats>:
+    +dir : String <- IO.pure(String, admission_root(state) ++ "/running")
+    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(dir))
+    admission_claim_files(Tx.split_nul(names), state, dir, group, ClaimStats{0,0,0,0,0,0,0,0})
+
+def admission_outside_used(+total: U32, available: U32, used: U32) -> U32:
+  +accounted = U32.add(available,used)
+  Bool.pick(U32,U32.is_gt(total,accounted),U32.sub(total,accounted),0)
+
+def admission_claims_same_second(first_count: U32, first_signature: U32, second: ClaimStats) -> Bool:
+  match second:
+    case ClaimStats{second_count, second_unspent, second_unknown, second_unobserved, second_group, second_reserve, second_used, second_signature}:
+      Bool.and(U32.is_eq(first_count,second_count),U32.is_eq(first_signature,second_signature))
+
+def admission_claims_same(first: ClaimStats, second: ClaimStats) -> Bool:
+  match first:
+    case ClaimStats{first_count, first_unspent, first_unknown, first_unobserved, first_group, first_reserve, first_used, first_signature}:
+      admission_claims_same_second(first_count,first_signature,second)
+
+def admission_stats_used(stats: ClaimStats) -> U32:
+  match stats:
+    case ClaimStats{count, unspent, unknown, unobserved, group_current, reserve, used, signature}:
+      used
+
+def admission_claims_observed(stats: ClaimStats) -> Bool:
+  match stats:
+    case ClaimStats{count, unspent, unknown, unobserved, group_current, reserve, used, signature}:
+      U32.is_eq(unobserved,0)
+
+def admission_outside_claims(+state: String, +guard: U32, +ids: String, now: U32,
+                             +total: U32, +available: U32, legacy_pid: U32,
+                             legacy_result: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  match legacy_result:
+    case Fail{error}:
+      do IO<Maybe<&2,U32>>:
+        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+        IO.pure(Maybe<&2,U32>,None{})
+    case Done{+legacy_text}:
+      do IO<Maybe<&2,U32>>:
+        +legacy_current : U32 <- IO.pure(U32,status_number(field(legacy_text,"kb")))
+        +first : ClaimStats <- admission_claims(state,"")
+        +second : ClaimStats <- admission_claims(state,"")
+        +stable : Bool <- IO.pure(Bool,Bool.and(admission_claims_same(first,second),
+          Bool.and(admission_claims_observed(first),admission_claims_observed(second))))
+        +known : Bool <- IO.pure(Bool,Bool.and(stable,Bool.and(U32.is_gt(total,0),U32.is_gt(available,0))))
+        +used : U32 <- IO.pure(U32,U32.add(admission_stats_used(second),legacy_current))
+        +outside : U32 <- IO.pure(U32,admission_outside_used(total,available,used))
+        Bool.pick(IO(Maybe<&2,U32>),known,
+          do IO<Maybe<&2,U32>>:
+            +uid : U32 <- IO.try(U32,L.CompileQueueLifecycle.uid())
+            cache_text : String <- IO.pure(String,
+              "valid=1\nsample_s=" ++ U32.show(now) ++ "\nids=" ++ ids
+              ++ "\nlegacy_pid=" ++ U32.show(legacy_pid)
+              ++ "\noutside_kb=" ++ U32.show(outside) ++ "\n")
+            cache_written : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
+              admission_root(state) ++ "/observed." ++ U32.show(uid),cache_text)
+            released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+            IO.pure(Maybe<&2,U32>,Some{outside}),
+          do IO<Maybe<&2,U32>>:
+            released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+            IO.pure(Maybe<&2,U32>,None{}))
+
+def admission_outside_meminfo(+state: String, +guard: U32, +ids: String, now: U32,
+                              +legacy_pid: U32,
+                              result: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  match result:
+    case Fail{error}:
+      do IO<Maybe<&2,U32>>:
+        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+        IO.pure(Maybe<&2,U32>,None{})
+    case Done{+text}:
+      do IO<Maybe<&2,U32>>:
+        +total : U32 <- IO.pure(U32,status_number(field(text,"total_kb")))
+        +available : U32 <- IO.pure(U32,status_number(field(text,"available_kb")))
+        legacy_result : Result<&1,&1,U32 & String,String> <- Bool.pick(
+          IO(Result<&1,&1,U32 & String,String>),U32.is_gt(legacy_pid,0),
+          L.CompileQueueLifecycle.session_kb(legacy_pid),
+          IO.pure(Result<&1,&1,U32 & String,String>,Done{"kb=0\n"}))
+        admission_outside_claims(state,guard,ids,now,total,available,legacy_pid,legacy_result)
+
+def admission_meminfo_result(override: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match override:
+    case Fail{error}: L.CompileQueueLifecycle.meminfo()
+    case Done{+text}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(text),
+        L.CompileQueueLifecycle.meminfo(),
+        IO.pure(Result<&1,&1,U32 & String,String>,Done{text}))
+
+def admission_meminfo(+state: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    override : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/meminfo")
+    admission_meminfo_result(override)
+
+def admission_outside_refresh(+state: String, +guard: U32, +ids: String, now: U32,
+                               legacy_pid: U32, stable_set: Bool) -> IO(Maybe<&2,U32>):
+  Bool.pick(IO(Maybe<&2,U32>),stable_set,
+    do IO<Maybe<&2,U32>>:
+      meminfo : Result<&1,&1,U32 & String,String> <- admission_meminfo(state)
+      admission_outside_meminfo(state,guard,ids,now,legacy_pid,meminfo),
+    do IO<Maybe<&2,U32>>:
+      released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+      IO.pure(Maybe<&2,U32>,None{}))
+
+def admission_outside_cached(+state: String, +guard: U32, +ids: String, +now: U32, +legacy_pid: U32,
+                             +stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  match cache:
+    case Fail{error}: admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set)
+    case Done{+text}:
+      Bool.pick(IO(Maybe<&2,U32>),admission_cache_fresh(text,now,ids),
+        do IO<Maybe<&2,U32>>:
+          +outside : U32 <- IO.pure(U32,status_number(field(text,"outside_kb")))
+          released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+          IO.pure(Maybe<&2,U32>,Some{outside}),
+        admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set))
+
+def admission_outside_cache(+state: String, +guard: U32, +ids: String, now: U32, legacy_pid: U32,
+                            +stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  Bool.pick(IO(Maybe<&2,U32>),stable_set,
+    admission_outside_cached(state,guard,ids,now,legacy_pid,stable_set,cache),
+    do IO<Maybe<&2,U32>>:
+      released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+      IO.pure(Maybe<&2,U32>,None{}))
+
+def admission_outside_holder(+state: String, +guard: U32, +ids: String, now: U32,
+                              stable_set: Bool, uid: U32,
+                              holder: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  match holder:
+    case Fail{error}:
+      do IO<Maybe<&2,U32>>:
+        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+        IO.pure(Maybe<&2,U32>,None{})
+    case Done{+text}:
+      do IO<Maybe<&2,U32>>:
+        +legacy_pid : U32 <- IO.pure(U32,status_number(field(text,"pid")))
+        +legacy_ids : String <- IO.pure(String,ids ++ "legacy=" ++ U32.show(legacy_pid) ++ "\t")
+        cache : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(
+          admission_root(state) ++ "/observed." ++ U32.show(uid))
+        admission_outside_cache(state,guard,legacy_ids,now,legacy_pid,stable_set,cache)
+
+def admission_outside_after_guard(+state: String,
+                                  guard_result: Result<&1,&1,U32 & String,U32>) -> IO(Maybe<&2,U32>):
+  match guard_result:
+    case Fail{error}: IO.pure(Maybe<&2,U32>,None{})
+    case Done{guard}:
+      do IO<Maybe<&2,U32>>:
+        names_first : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(admission_root(state) ++ "/running"))
+        ids_first : String <- admission_live_names(state,names_first)
+        names_second : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(admission_root(state) ++ "/running"))
+        +ids_second : String <- admission_live_names(state,names_second)
+        +stable_set : Bool <- IO.pure(Bool,Tx.str_eq(ids_first,ids_second))
+        now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
+        +now_text : String <- IO.pure(String,admission_record_text(now_result))
+        +now : U32 <- IO.pure(U32,status_number(now_text))
+        +uid : U32 <- IO.try(U32,L.CompileQueueLifecycle.uid())
+        holder_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.exclusive_lock_pid(state ++ "/heavy.lock")
+        admission_outside_holder(state,guard,ids_second,now,stable_set,uid,holder_result)
+
+def admission_outside(+state: String) -> IO(Maybe<&2,U32>):
+  do IO<Maybe<&2,U32>>:
+    guard_result : Result<&1,&1,U32 & String,U32> <- L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock")
+    admission_outside_after_guard(state,guard_result)
+
+def outside_state_growth(state: OutsideState) -> U32:
+  match state:
+    case OutsideState{baseline, growth}: growth
+
+def outside_state_from_baseline(baseline: Maybe<&2,U32>, +current: U32) -> OutsideState:
+  match baseline:
+    case None{}: OutsideState{Some{current},0}
+    case Some{+base}: OutsideState{Some{base},Bool.pick(U32,U32.is_gt(current,base),U32.sub(current,base),0)}
+
+def outside_state_next_sample(+baseline: Maybe<&2,U32>, growth: U32, sample: Maybe<&2,U32>) -> OutsideState:
+  match sample:
+    case None{}: OutsideState{baseline,growth}
+    case Some{current}: outside_state_from_baseline(baseline,current)
+
+def outside_state_next(previous: OutsideState, sample: Maybe<&2,U32>) -> OutsideState:
+  match previous:
+    case OutsideState{baseline, growth}: outside_state_next_sample(baseline,growth,sample)
+
+@unsafe
+def watch_heavy_go(+attempt: String, +pid: U32, +start: String,
+                   +supervisor: U32, +supervisor_start: String, +peak: U32, outside: OutsideState) -> IO(Unit):
+  do IO<Unit>:
+    child_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
+    release_child_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
+    supervisor_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(supervisor, supervisor_start))
+    sample_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.session_kb(pid)
+    sample_text : String <- IO.pure(String,peak_text_result(sample_result))
+    +sample : U32 <- IO.pure(U32,status_number(field(sample_text,"kb")))
+    +bigger : Bool <- IO.pure(Bool,U32.is_gt(sample,peak))
+    +next_peak : U32 <- IO.pure(U32,Bool.pick(U32,bigger,sample,peak))
+    meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
+    +meta : String <- IO.pure(String,peak_text_result(meta_result))
+    +state : String <- IO.pure(String,field(meta,"state_root"))
+    +outside_sample : Maybe<&2,U32> <- admission_outside(state)
+    +next_outside : OutsideState <- IO.pure(OutsideState,outside_state_next(outside,outside_sample))
+    +growth : U32 <- IO.pure(U32,outside_state_growth(next_outside))
+    usage_written : Unit <- record_usage_measured(attempt,pid,sample,growth,outside_sample)
+    marker : Bool <- exit_marker_matches(attempt, pid, start)
+    Bool.pick(IO(Unit), Bool.and(marker, U32.is_eq(release_child_alive, 0)),
+      do IO<Unit>:
+        recorded : Unit <- peak_record(attempt,next_peak)
+        recorded_group : Unit <- group_peak_record(attempt,next_peak)
+        released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
+        IO.pure(Unit,Unit{}),
+      Bool.pick(IO(Unit), U32.is_eq(child_alive, 0),
+        Bool.pick(IO(Unit), U32.is_eq(supervisor_alive, 0), IO.pure(Unit, Unit{}),
+          do IO<Unit>:
+            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(250))
+            watch_heavy_go(attempt, pid, start, supervisor, supervisor_start,next_peak,next_outside)),
+        do IO<Unit>:
+          slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(250))
+          watch_heavy_go(attempt, pid, start, supervisor, supervisor_start,next_peak,next_outside)))
+
+def watch_heavy(+attempt: String, +pid: U32, +start: String,
+                +supervisor: U32, +supervisor_start: String) -> IO(Unit):
+  watch_heavy_go(attempt,pid,start,supervisor,supervisor_start,0,OutsideState{None{},0})
+
+def watch_heavy_supervisor(parsed: Maybe<&2,U32>, pid: U32, attempt: String, start: String,
+                           supervisor_start: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit, 2, "compile-queue: watch supervisor pid is malformed")
+    case Some{supervisor_pid}:
+      watch_heavy(attempt, pid, start, supervisor_pid, supervisor_start)
+
+def watch_heavy_pid(parsed: Maybe<&2,U32>, attempt: String, start: String,
+                    supervisor: String, supervisor_start: String) -> IO(Unit):
   match parsed:
     case None{}: IO.die(Unit, 2, "compile-queue: watch pid is malformed")
-    case Some{pid}: watch_heavy(attempt, pid, start)
+    case Some{pid}: watch_heavy_supervisor(U32.read(supervisor), pid, attempt, start, supervisor_start)
 
 def supervise_marker_result(signaled: Result<&1,&1,U32 & String,Unit>, +attempt: String,
                             +keydir: String, +kind: String, source_root: String, entry: String,
@@ -924,123 +1579,656 @@ def supervise_marker_result(signaled: Result<&1,&1,U32 & String,Unit>, +attempt:
     case Done{value}:
       supervise_kind(kind, source_root, entry, attempt, keydir, key, started, names, cwd)
 
+# Scheduling tickets
+# ==================
+# A supervisor publishes a ticket under $state/waiters before it competes
+# for the shared heavy lock. It defers while a live ticket with a strictly
+# higher priority exists, so a lower-priority waiter never enters the
+# kernel flock queue ahead of a higher-priority product. Equal priorities
+# queue in the kernel's arrival order; after acquiring, the supervisor
+# rescans and releases the lock if a higher-priority live ticket appeared
+# while it waited. A ticket is live only while its recorded pid and start
+# time still identify the same process. Priority is scheduling metadata
+# and never enters the identity material.
+
+def waiters_dir(+state: String) -> String:
+  state ++ "/waiters"
+
+
+# cc jobs order and publish tickets apart from Bend generation so a live
+# cgen does not block C compilation of already-generated source. The ticket
+# directory must always match the lock the supervisor acquires.
+def kind_waiters_dir(+state: String, +kind: String) -> String:
+  Bool.pick(String, String.eq(kind, "cc"), waiters_dir(state) ++ "/cc", waiters_dir(state))
+
+def waiters_ticket_text(priority: U32, pid: U32, start: String, key: String, history_group: String, token: String) -> String:
+  "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid)
+  ++ "\nstarttime=" ++ start ++ "\nkey=" ++ key ++ "\nhistory_group=" ++ history_group
+  ++ "\ntoken=" ++ token ++ "\n"
+
+# A ticket is reaped only when it parses as a complete record (numeric pid
+# and a non-empty start time), the recorded pid and start time no longer
+# identify a live process, and a second read still shows the same record.
+# Unknown or malformed records stay; a live ticket stays; a canceled or
+# killed supervisor's blocked ticket is reaped by the next scan.
+
+def waiters_reap_second(read: Result<&1,&1,U32 & String,String>, +judged: String, +path: String) -> IO(Unit):
+  match read:
+    case Fail{error}: IO.pure(Unit, Unit{})
+    case Done{+text}:
+      Bool.pick(IO(Unit), Tx.str_eq(text, judged),
+        IO.try(Unit, L.CompileQueueLifecycle.remove(path)),
+        IO.pure(Unit, Unit{}))
+
+def waiters_reap_pid_parsed(parsed: Maybe<&2,U32>, +text: String, +path: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.pure(Unit, Unit{})
+    case Some{+pid}:
+      Bool.pick(IO(Unit), String.is_empty(field(text, "starttime")),
+        IO.pure(Unit, Unit{}),
+        do IO<Unit>:
+          alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, field(text, "starttime")))
+          Bool.pick(IO(Unit), U32.is_eq(alive, 1), IO.pure(Unit, Unit{}),
+            do IO<Unit>:
+              again : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(path)
+              waiters_reap_second(again, text, path)))
+
+def waiters_reap_first(read: Result<&1,&1,U32 & String,String>, +path: String) -> IO(Unit):
+  match read:
+    case Fail{error}: IO.pure(Unit, Unit{})
+    case Done{+text}: waiters_reap_pid_parsed(U32.read(field(text, "pid")), text, path)
+
+def waiters_reap_stale(+dir: String, +name: String) -> IO(Unit):
+  do IO<Unit>:
+    read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
+    waiters_reap_first(read, dir ++ "/" ++ name)
+
+def waiters_ticket_higher(+text: String, +token: String, +priority: U32) -> IO(Bool):
+  do IO<Bool>:
+    contender : Bool <- IO.pure(Bool,
+      Bool.and(U32.is_gt(status_number(field(text, "priority")), priority),
+        Bool.not(Tx.str_eq(field(text, "token"), token))))
+    Bool.pick(IO(Bool), contender,
+      do IO<Bool>:
+        alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(
+          status_number(field(text, "pid")), field(text, "starttime")))
+        IO.pure(Bool, U32.is_eq(alive, 1)),
+      IO.pure(Bool, False{}))
+
+# Admission orders equal priorities by age. A ticket is ahead of mine when its priority is
+# greater, or when the priority is equal and the ticket is older. The age is the token
+# "<started_ns>-<pid>" that the supervisor wrote into its ticket, compared as numbers: first
+# started_ns, then pid, then the token text, which makes the order total. A token that is not
+# two non-empty runs of decimal digits joined by one hyphen has no age and is never ahead by
+# age; a ticket with my own token is mine.
+type TicketAge is Data:
+  TicketAge{valid: Bool, started: String, pid: String, text: String}
+
+def token_digits_rest(s: String) -> Bool:
+  match s:
+    case SNil{}: True{}
+    case SCon{+c, rest}: Bool.and(Char.is_digit(c), token_digits_rest(rest))
+
+def token_digits(s: String) -> Bool:
+  match s:
+    case SNil{}: False{}
+    case SCon{+c, rest}: Bool.and(Char.is_digit(c), token_digits_rest(rest))
+
+def token_decimal_trim(text: String) -> String:
+  match text:
+    case SNil{}: SNil{}
+    case SCon{+c, +rest}:
+      Bool.pick(String, Char.is_eq(c, Char.from_u32(48)),
+        token_decimal_trim(rest), SCon{c, rest})
+
+# Compare digit counts by walking the strings together. Work is proportional to token length.
+def token_decimal_width(a: String, b: String) -> Cmp:
+  match a b:
+    case SNil{} SNil{}: EQ{}
+    case SNil{} SCon{c, rest}: LT{}
+    case SCon{c, rest} SNil{}: GT{}
+    case SCon{ca, ra} SCon{cb, rb}: token_decimal_width(ra, rb)
+
+def token_decimal_order_width(a: String, b: String, width: Cmp) -> Cmp:
+  match width:
+    case LT{}: LT{}
+    case EQ{}: String.order(a, b)
+    case GT{}: GT{}
+
+def token_decimal_order(+a: String, +b: String) -> Cmp:
+  token_decimal_order_width(a, b, token_decimal_width(a, b))
+
+def token_age_parts(parts: List<&2,String>, +token: String) -> TicketAge:
+  match parts:
+    case +started <> +pid <> Nil{}:
+      Bool.pick(TicketAge, Bool.and(token_digits(started), token_digits(pid)),
+        TicketAge{True{}, token_decimal_trim(started), token_decimal_trim(pid), token},
+        TicketAge{False{}, "", "", token})
+    case other: TicketAge{False{}, "", "", token}
+
+def token_age(+token: String) -> TicketAge:
+  token_age_parts(String.split(token, Char.from_u32(45)), token)
+
+def age_before(a: TicketAge, b: TicketAge) -> Bool:
+  match a:
+    case TicketAge{a_valid, +a_started, +a_pid, a_text}:
+      match b:
+        case TicketAge{b_valid, +b_started, +b_pid, b_text}:
+          Bool.and(Bool.and(a_valid, b_valid),
+            Bool.or(Cmp.is_lt(token_decimal_order(a_started, b_started)),
+              Bool.and(Tx.str_eq(a_started, b_started),
+                Bool.or(Cmp.is_lt(token_decimal_order(a_pid, b_pid)),
+                  Bool.and(Tx.str_eq(a_pid, b_pid), String.is_lt(a_text, b_text))))))
+
+def admission_ahead(+other_priority: U32, +other_token: String, +my_priority: U32, +my_token: String) -> Bool:
+  Bool.and(Bool.not(Tx.str_eq(other_token, my_token)),
+    Bool.or(U32.is_gt(other_priority, my_priority),
+      Bool.and(U32.is_eq(other_priority, my_priority), age_before(token_age(other_token), token_age(my_token)))))
+
+# A live ticket that is ahead of mine. The scan of the admission queue asks this; the scan of the
+# flock queue (waiters_ticket_higher) keeps strict priority and the kernel's arrival order.
+def admission_ticket_ahead(+text: String, +token: String, +priority: U32) -> IO(Bool):
+  do IO<Bool>:
+    contender : Bool <- IO.pure(Bool,
+      admission_ahead(status_number(field(text, "priority")), field(text, "token"), priority, token))
+    Bool.pick(IO(Bool), contender,
+      do IO<Bool>:
+        alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(
+          status_number(field(text, "pid")), field(text, "starttime")))
+        IO.pure(Bool, U32.is_eq(alive, 1)),
+      IO.pure(Bool, False{}))
+
+def waiters_scan_one(read: Result<&1,&1,U32 & String,String>, +token: String, +priority: U32) -> IO(Bool):
+  match read:
+    case Fail{error}: IO.pure(Bool, False{})
+    case Done{+text}: waiters_ticket_higher(text, token, priority)
+
+def waiters_scan_names(names: List<&1,String>, +dir: String, +token: String, +priority: U32) -> IO(Bool):
+  match names:
+    case Nil{}: IO.pure(Bool, False{})
+    case Con{+name, rest}:
+      do IO<Bool>:
+        reaped : Unit <- waiters_reap_stale(dir, name)
+        read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
+        higher : Bool <- waiters_scan_one(read, token, priority)
+        Bool.pick(IO(Bool), higher, IO.pure(Bool, True{}),
+          waiters_scan_names(rest, dir, token, priority))
+
+def waiters_higher(+dir: String, +token: String, +priority: U32) -> IO(Bool):
+  do IO<Bool>:
+    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(dir))
+    waiters_scan_names(Tx.split_nul(names), dir, token, priority)
+
+@unsafe
+def acquire_heavy(~again_acquire: (@+dir: String -> @+lock: String -> @+token: String -> @+priority: U32 -> @+delay: U32 -> IO(U32)), +dir: String, +lock: String, +token: String, +priority: U32, +delay: U32) -> IO(U32):
+  do IO<U32>:
+    higher : Bool <- waiters_higher(dir, token, priority)
+    Bool.pick(IO(U32), higher,
+      do IO<U32>:
+        slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
+        again_acquire(dir, lock, token, priority, U32.min(U32.mul(delay, 2), 64)),
+      do IO<U32>:
+        +held : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(lock))
+        higher_after : Bool <- waiters_higher(dir, token, priority)
+        Bool.pick(IO(U32), higher_after,
+          do IO<U32>:
+            released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(held))
+            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
+            again_acquire(dir, lock, token, priority, U32.min(U32.mul(delay, 2), 64)),
+          do IO<U32>:
+            removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(dir ++ "/" ++ token))
+            IO.pure(U32, held)))
+
+def acquire_heavy_loop(+dir: String, +lock: String, +token: String, +priority: U32, +delay: U32) -> IO(U32):
+  acquire_heavy(acquire_heavy_loop, dir, lock, token, priority, delay)
+
+def transfer_lock(+held: U32, +target: U32) -> IO(Unit):
+  Bool.pick(IO(Unit), U32.is_eq(held,target), IO.pure(Unit,Unit{}),
+    do IO<Unit>:
+      duped : Unit <- IO.try(Unit, L.CompileQueueLifecycle.dup_to(held,target))
+      closed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(held))
+      IO.pure(Unit,Unit{}))
+
+def transfer_heavy(+held: U32) -> IO(Unit):
+  transfer_lock(held,8)
+
+def admission_names_signature(names: List<&1,String>) -> String:
+  match names:
+    case Nil{}: ""
+    case name <> rest: name ++ "\t" ++ admission_names_signature(rest)
+
+def admission_need(+recorded: U32, stats: ClaimStats) -> U32:
+  match stats:
+    case ClaimStats{count, unspent, unknown, unobserved, group_current, reserve, used, signature}:
+      Bool.pick(U32, U32.is_gt(recorded,0), recorded, group_current)
+
+def admission_legacy_pid_value(parsed: Maybe<&2,U32>) -> U32:
+  match parsed:
+    case None{}: 1
+    case Some{pid}: pid
+
+def admission_legacy_pid_text(text: String) -> U32:
+  admission_legacy_pid_value(U32.read(field(text,"pid")))
+
+def admission_legacy_pid(result: Result<&1,&1,U32 & String,String>) -> U32:
+  match result:
+    case Fail{error}: 1
+    case Done{+text}: admission_legacy_pid_text(text)
+
+def admission_can_start(+kind: String, +history: U32, +need: U32, stats: ClaimStats,
+                        +available: U32, +legacy_pid: U32) -> Bool:
+  match stats:
+    case ClaimStats{+count, unspent, unknown, unobserved, group_current, reserve, used, signature}:
+      # A first unmeasured request may establish its own peak alone when no
+      # legacy exclusive job or other claim is running.
+      +first_unmeasured = Bool.and(U32.is_eq(history,0),Bool.and(U32.is_eq(count,0),U32.is_eq(legacy_pid,0)))
+      # A measured CC request uses live free memory after the remaining known
+      # growth and observed outside growth have been reserved. The first request
+      # of an unmeasured workload enters when no other claim is live.
+      +request_known = Bool.or(U32.is_gt(history,0),first_unmeasured)
+      +measured_cc = Bool.and(Tx.str_eq(kind,"cc"),U32.is_gt(history,0))
+      +history_ok = Bool.and(U32.is_eq(unobserved,0),Bool.and(request_known,Bool.or(measured_cc,U32.is_eq(unknown,0))))
+      +reserved = U32.add(unspent,reserve)
+      +free_now = Bool.pick(U32,U32.is_gt(available,reserved),U32.sub(available,reserved),0)
+      +fits = Bool.pick(Bool, Bool.and(first_unmeasured,Bool.not(Tx.str_eq(kind,"cc"))), True{},
+        Bool.pick(Bool, U32.is_gt(need,0), Bool.not(U32.is_gt(need,free_now)), U32.is_gt(free_now,0)))
+      Bool.and(U32.is_eq(legacy_pid,0),Bool.and(history_ok,fits))
+
+def admission_ticket_text(+priority: U32, +pid: U32, +start: String, +key: String, +kind: String, +group: String, +token: String) -> String:
+  "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start
+  ++ "\nkey=" ++ key ++ "\nkind=" ++ kind ++ "\ngroup=" ++ group ++ "\ntoken=" ++ token ++ "\n"
+
+def admission_waiter_fits(state: String, kind: String, key: String, history_group: String, stats: ClaimStats,
+                          +available: U32, total: U32, legacy_pid: U32) -> IO(Bool):
+  do IO<Bool>:
+    +history : U32 <- admission_history(state,key,history_group)
+    IO.pure(Bool,Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)),
+      admission_can_start(kind,history,history,stats,available,legacy_pid)))
+
+def admission_waiter_priority(read: Result<&1,&1,U32 & String,String>, state: String, kind: String,
+                               token: String, priority: U32, stats: ClaimStats,
+                               +available: U32, total: U32, legacy_pid: U32) -> IO(Bool):
+  match read:
+    case Fail{error}: IO.pure(Bool,False{})
+    case Done{+text}:
+      do IO<Bool>:
+        higher : Bool <- admission_ticket_ahead(text,token,priority)
+        Bool.pick(IO(Bool),higher,
+          admission_waiter_fits(state,kind,field(text,"key"),field(text,"history_group"),stats,available,total,legacy_pid),
+          IO.pure(Bool,False{}))
+
+def admission_waiters_scan(names: List<&1,String>, +dir: String, +state: String, +kind: String,
+                           +token: String, +priority: U32, +stats: ClaimStats,
+                           +available: U32, +total: U32, +legacy_pid: U32) -> IO(Bool):
+  match names:
+    case Nil{}: IO.pure(Bool,False{})
+    case Con{+name,rest}:
+      do IO<Bool>:
+        reaped : Unit <- waiters_reap_stale(dir,name)
+        read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
+        higher : Bool <- admission_waiter_priority(read,state,kind,token,priority,stats,available,total,legacy_pid)
+        Bool.pick(IO(Bool),higher,IO.pure(Bool,True{}),
+          admission_waiters_scan(rest,dir,state,kind,token,priority,stats,available,total,legacy_pid))
+
+def admission_kind_waiters_higher(+state: String, +kind: String, token: String, priority: U32,
+                                  stats: ClaimStats, available: U32, total: U32, legacy_pid: U32) -> IO(Bool):
+  do IO<Bool>:
+    +dir : String <- IO.pure(String,kind_waiters_dir(state,kind))
+    names : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(dir))
+    admission_waiters_scan(Tx.split_nul(names),dir,state,kind,token,priority,stats,available,total,legacy_pid)
+
+def admission_waiters_higher(+state: String, +token: String, +priority: U32, +stats: ClaimStats,
+                             +available: U32, +total: U32, +legacy_pid: U32) -> IO(Bool):
+  do IO<Bool>:
+    heavy : Bool <- admission_kind_waiters_higher(state,"cgen",token,priority,stats,available,total,legacy_pid)
+    cc : Bool <- admission_kind_waiters_higher(state,"cc",token,priority,stats,available,total,legacy_pid)
+    IO.pure(Bool,Bool.or(heavy,cc))
+
+def admission_publish_claim(+state: String, +kind: String, +key: String, +token: String,
+                            +pid: U32, start: String, need: U32,
+                            history: U32, +guard: U32, heavy: Maybe<&2,U32>) -> IO(AdmissionGate):
+  do IO<AdmissionGate>:
+    body : String <- IO.pure(String,
+      "pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nroot=" ++ U32.show(pid)
+      ++ "\nmeasure=session\nkey=" ++ key ++ "\ngroup=" ++ key ++ "\nexpected_kb=" ++ U32.show(need)
+      ++ "\nhistory=" ++ U32.show(Bool.pick(U32,U32.is_gt(history,0),1,0)) ++ "\n")
+    +claim : U32 <- IO.try(U32, L.CompileQueueLifecycle.create_locked(admission_root(state) ++ "/running/" ++ token, body))
+    removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(kind_waiters_dir(state,kind) ++ "/" ++ token))
+    removed_admission : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(admission_root(state) ++ "/waiting/" ++ token))
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
+    IO.pure(AdmissionGate, AdmissionAccounted{claim,heavy})
+
+# The scheduling priority of an execution is the largest priority requested by a
+# live owner of its key. Every owner token records the priority of its request; a
+# token without one (written by an earlier executable) counts at the priority of
+# the first request, which the attempt meta records. A token whose process is gone
+# does not count. A scan holds owners.lock, as every other scan of the tokens does,
+# so a token that is being published or removed is read whole or not at all. Each
+# owner is read as a record with its own live flag, so every priority from 0 to
+# 4294967295 is a valid value and no priority stands for "no owner".
+type OwnerPriority is Data:
+  OwnerPriority{live: U32, priority: U32}
+
+def owner_priority_value(+text: String, +fallback: U32, live: U32) -> OwnerPriority:
+  OwnerPriority{live, Bool.pick(U32, non_empty(field(text, "priority")), status_number(field(text, "priority")), fallback)}
+
+def owner_priority_one(+keydir: String, +name: String, +fallback: U32) -> IO(OwnerPriority):
+  do IO<OwnerPriority>:
+    +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/owners/" ++ name))
+    +pid : U32 <- IO.pure(U32, status_number(field(text, "pid")))
+    live : U32 <- Bool.pick(IO(U32), U32.is_gt(pid, 0),
+      IO.try(U32, L.CompileQueueLifecycle.alive(pid, field(text, "starttime"))),
+      IO.pure(U32, 0))
+    IO.pure(OwnerPriority, owner_priority_value(text, fallback, U32.min(live, 1)))
+
+def owner_priority_merge(best: OwnerPriority, one: OwnerPriority) -> OwnerPriority:
+  match best:
+    case OwnerPriority{+best_live, +best_priority}:
+      match one:
+        case OwnerPriority{+one_live, +one_priority}:
+          Bool.pick(OwnerPriority, U32.is_eq(one_live, 0), OwnerPriority{best_live, best_priority},
+            Bool.pick(OwnerPriority, Bool.or(U32.is_eq(best_live, 0), U32.is_gt(one_priority, best_priority)),
+              OwnerPriority{1, one_priority}, OwnerPriority{best_live, best_priority}))
+
+def owner_priority_scan(+keydir: String, names: List<&1,String>, +fallback: U32, +best: OwnerPriority) -> IO(OwnerPriority):
+  match names:
+    case Nil{}: IO.pure(OwnerPriority, best)
+    case Con{+name, rest}:
+      do IO<OwnerPriority>:
+        +one : OwnerPriority <- owner_priority_one(keydir, name, fallback)
+        owner_priority_scan(keydir, rest, fallback, owner_priority_merge(best, one))
+
+def owner_priority_result(best: OwnerPriority, fallback: U32) -> U32:
+  match best:
+    case OwnerPriority{live, priority}: Bool.pick(U32, U32.is_eq(live, 0), fallback, priority)
+
+def owner_priority_locked(+keydir: String, +fallback: U32) -> IO(U32):
+  do IO<U32>:
+    gate : U32 <- owner_lock(keydir)
+    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(keydir ++ "/owners"))
+    best : OwnerPriority <- owner_priority_scan(keydir, Tx.split_nul(names), fallback, OwnerPriority{0, 0})
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+    IO.pure(U32, owner_priority_result(best, fallback))
+
+# One pass of a waiting supervisor: the effective priority is derived again from
+# the live owners, and the two tickets of the supervisor are replaced when it
+# differs from the priority they carry. A priority joined by a later requester
+# raises the tickets, and the cancellation or loss of that owner lowers them again,
+# through the same owners.lock scan. This runs before the admission lock is taken;
+# no caller holds the admission lock or the key lock here.
+def refresh_priority(+attempt: String, +keydir: String, +state: String, +kind: String, +key: String,
+                     +token: String, +pid: U32, +start: String, +current: U32) -> IO(U32):
+  do IO<U32>:
+    meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
+    +meta : String <- IO.pure(String, peak_text_result(meta_result))
+    +effective : U32 <- owner_priority_locked(keydir, status_number(field(meta, "priority")))
+    +history_group : String <- attempt_group(attempt)
+    +ticket : String <- IO.pure(String, waiters_ticket_text(effective, pid, start, key, history_group, token))
+    replaced : Unit <- Bool.pick(IO(Unit), U32.is_eq(effective, current), IO.pure(Unit, Unit{}),
+      do IO<Unit>:
+        wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
+          kind_waiters_dir(state, kind) ++ "/" ++ token, ticket))
+        wrote_admission : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
+          admission_root(state) ++ "/waiting/" ++ token, ticket))
+        IO.pure(Unit, Unit{}))
+    IO.pure(U32, effective)
+
+@unsafe
+def acquire_accounted_after_heavy(~again: (@+attempt: String -> @+keydir: String -> @+state: String -> @+kind: String -> @+key: String -> @+group: String -> @+token: String -> @+priority: U32 -> @+pid: U32 -> @+start: String -> @+delay: U32 -> IO(AdmissionGate)),
+                                 +attempt: String, +keydir: String, +state: String, +kind: String,
+                                 +key: String, +group: String, +token: String, +priority: U32,
+                                 +pid: U32, +start: String, +delay: U32, +guard: U32,
+                                 heavy: Maybe<&2,U32>, +need: U32, +history: U32) -> IO(AdmissionGate):
+  match heavy:
+    case None{}:
+      do IO<AdmissionGate>:
+        released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
+        slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
+        again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000))
+    case Some{+shared}:
+      admission_publish_claim(state,kind,key,token,pid,start,need,history,guard,Some{shared})
+
+@unsafe
+def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state: String -> @+kind: String -> @+key: String -> @+group: String -> @+token: String -> @+priority: U32 -> @+pid: U32 -> @+start: String -> @+delay: U32 -> IO(AdmissionGate)),
+                       +attempt: String, +keydir: String, +state: String, +kind: String, +key: String, +group: String,
+                       +token: String, +current: U32, +pid: U32, +start: String, +delay: U32) -> IO(AdmissionGate):
+  do IO<AdmissionGate>:
+    +priority : U32 <- refresh_priority(attempt,keydir,state,kind,key,token,pid,start,current)
+    +guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
+    +meminfo : String <- IO.try(String, admission_meminfo(state))
+    +available : U32 <- IO.pure(U32,status_number(field(meminfo,"available_kb")))
+    +total : U32 <- IO.pure(U32,status_number(field(meminfo,"total_kb")))
+    +stats : ClaimStats <- admission_claims(state,group)
+    legacy_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.exclusive_lock_pid(state ++ "/heavy.lock")
+    +legacy_pid : U32 <- IO.pure(U32,admission_legacy_pid(legacy_result))
+    higher : Bool <- admission_waiters_higher(state,token,priority,stats,available,total,legacy_pid)
+    +history_group : String <- attempt_group(attempt)
+    +history : U32 <- admission_history(state,key,history_group)
+    +need : U32 <- IO.pure(U32,admission_need(history,stats))
+    +fits : Bool <- IO.pure(Bool, Bool.and(Bool.not(higher),Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)), admission_can_start(kind,history,need,stats,available,legacy_pid))))
+    Bool.pick(IO(AdmissionGate), fits,
+      do IO<AdmissionGate>:
+        heavy : Maybe<&2,U32> <- IO.try(Maybe<&2,U32>, L.CompileQueueLifecycle.lock_shared_try(state ++ "/heavy.lock"))
+        acquire_accounted_after_heavy(again,attempt,keydir,state,kind,key,group,token,priority,pid,start,delay,guard,heavy,need,history),
+      do IO<AdmissionGate>:
+        released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
+        slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
+        again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000)))
+
+def acquire_accounted_loop(+attempt: String, +keydir: String, +state: String, +kind: String, +key: String, +group: String,
+                           +token: String, +priority: U32, +pid: U32, +start: String, +delay: U32) -> IO(AdmissionGate):
+  acquire_accounted(acquire_accounted_loop,attempt,keydir,state,kind,key,group,token,priority,pid,start,delay)
+
+def transfer_claim(+claim: U32) -> IO(Unit):
+  transfer_lock(claim,10)
+
+def transfer_cc_execution(is_cc: Bool, keydir: String) -> IO(Unit):
+  Bool.pick(IO(Unit),is_cc,
+    do IO<Unit>:
+      held : U32 <- IO.try(U32,L.CompileQueueLifecycle.lock_acquire(keydir ++ "/cc-execution.lock"))
+      transferred : Unit <- transfer_lock(held,11)
+      IO.try(Unit,L.CompileQueueLifecycle.set_env("BATON_QUEUE_CC_FD","11")),
+    IO.pure(Unit,Unit{}))
+
+def admission_fallback_ticket(+kind: String, +state: String, +token: String) -> IO(Unit):
+  Bool.pick(IO(Unit),Tx.str_eq(kind,"cc"),
+    do IO<Unit>:
+      ticket : String <- IO.try(String,L.CompileQueueLifecycle.read_text(kind_waiters_dir(state,kind) ++ "/" ++ token))
+      published : Unit <- IO.try(Unit,L.CompileQueueLifecycle.write_text(waiters_dir(state) ++ "/" ++ token,ticket))
+      IO.try(Unit,L.CompileQueueLifecycle.remove(kind_waiters_dir(state,kind) ++ "/" ++ token)),
+    IO.pure(Unit,Unit{}))
+
+def admission_fallback(+kind: String, keydir: String, +state: String, +token: String, priority: U32) -> IO(AdmissionGate):
+  do IO<AdmissionGate>:
+    moved : Unit <- admission_fallback_ticket(kind,state,token)
+    +held : U32 <- acquire_heavy_loop(waiters_dir(state),state ++ "/heavy.lock",token,priority,4)
+    IO.pure(AdmissionGate,AdmissionExclusive{held})
+
+def admission_probe_result(result: Result<&1,&1,U32 & String,String>, +attempt: String, +keydir: String,
+                           +state: String, +kind: String, +key: String, +token: String, +priority: U32,
+                           +pid: U32, +start: String) -> IO(AdmissionGate):
+  match result:
+    case Fail{error}: admission_fallback(kind,keydir,state,token,priority)
+    case Done{+text}:
+      +available = status_number(field(text,"available_kb"))
+      +total = status_number(field(text,"total_kb"))
+      Bool.pick(IO(AdmissionGate),Bool.and(U32.is_gt(available,0),U32.is_gt(total,0)),
+        do IO<AdmissionGate>:
+          made : Unit <- IO.try(Unit,L.CompileQueueLifecycle.mkdir_p(admission_root(state) ++ "/running"))
+          made_usage : Unit <- IO.try(Unit,L.CompileQueueLifecycle.mkdir_p(admission_root(state) ++ "/usage"))
+          made_waiting : Unit <- IO.try(Unit,L.CompileQueueLifecycle.mkdir_sticky(admission_root(state) ++ "/waiting"))
+          +history_group : String <- attempt_group(attempt)
+          admission_ticket : Unit <- IO.try(Unit,L.CompileQueueLifecycle.write_text(
+            admission_root(state) ++ "/waiting/" ++ token,
+            waiters_ticket_text(priority,pid,start,key,history_group,token)))
+          acquire_accounted_loop(attempt,keydir,state,kind,key,key,token,priority,pid,start,8),
+        admission_fallback(kind,keydir,state,token,priority))
+
+def admission_execution_lock(+keydir: String, heavy: Maybe<&2,U32>) -> IO(U32):
+  match heavy:
+    case Some{+shared}: IO.pure(U32,shared)
+    case None{}: IO.try(U32,L.CompileQueueLifecycle.lock_acquire(keydir ++ "/cc-execution.lock"))
+
+def supervise_gate(gate: AdmissionGate, +attempt: String, +keydir: String, +kind: String,
+                   +source_root: String, +entry: String, +key: String, +started: String,
+                   +names: List<&2,String>, +cwd: String, +state: String, +token: String,
+                   +priority: U32) -> IO(Unit):
+  match gate:
+    case AdmissionExclusive{+heavy}:
+      do IO<Unit>:
+        is_cc : Bool <- IO.pure(Bool,Tx.str_eq(kind,"cc"))
+        transferred : Unit <- transfer_heavy(heavy)
+        cc_transferred : Unit <- transfer_cc_execution(is_cc,keydir)
+        signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
+          "BATON_COMPILE_QUEUE_COMPILED",attempt ++ "/compiled")
+        supervise_marker_result(signaled,attempt,keydir,kind,source_root,entry,key,started,names,cwd)
+    case AdmissionAccounted{+claim,heavy}:
+      do IO<Unit>:
+        is_cc : Bool <- IO.pure(Bool,Tx.str_eq(kind,"cc"))
+        +execution : U32 <- admission_execution_lock(keydir,heavy)
+        transferred : Unit <- transfer_heavy(execution)
+        claim_transferred : Unit <- transfer_claim(claim)
+        claim_env : Unit <- IO.try(Unit,L.CompileQueueLifecycle.set_env("BATON_QUEUE_CLAIM_FD","10"))
+        cc_transferred : Unit <- transfer_cc_execution(is_cc,keydir)
+        signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
+          "BATON_COMPILE_QUEUE_COMPILED",attempt ++ "/compiled")
+        supervise_marker_result(signaled,attempt,keydir,kind,source_root,entry,key,started,names,cwd)
+
 def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
-                    entry: String, key: String, +started: String, names: List<&2,String>,
-                    cwd: String, pid: U32, start: String, +gate: U32) -> IO(Unit):
+                    entry: String, +key: String, +started: String, names: List<&2,String>,
+                    cwd: String, +pid: U32, +start: String, +gate: U32,
+                    +state: String, +token: String, +priority: U32) -> IO(Unit):
   do IO<Unit>:
     active_text : String <- IO.pure(String, "pid=" ++ U32.show(pid)
       ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
     active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-    admitted : Unit <- IO.try(Unit, L.CompileQueueLifecycle.admit(attempt, "", 0, ""))
-    signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
-      "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
-    supervise_marker_result(signaled, attempt, keydir, kind, source_root, entry, key, started, names, cwd)
+    probe : Result<&1,&1,U32 & String,String> <- admission_meminfo(state)
+    accounted : AdmissionGate <- admission_probe_result(probe,attempt,keydir,state,kind,key,token,priority,pid,start)
+    supervise_gate(accounted,attempt,keydir,kind,source_root,entry,key,started,names,cwd,state,token,priority)
 
 def supervise_owner_count(owners: U32, +attempt: String, +keydir: String, +kind: String,
                           source_root: String, entry: String, +key: String, +started: String,
                           +names: List<&2,String>, cwd: String, pid: U32, start: String,
-                          +gate: U32) -> IO(Unit):
+                          +gate: U32, +state: String, +token: String, +priority: U32) -> IO(Unit):
   Bool.pick(IO(Unit), U32.is_eq(owners, 0),
     do IO<Unit>:
       released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+      removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(kind_waiters_dir(state, kind) ++ "/" ++ token))
       write_failure(attempt, keydir, "canceled", 130, kind, key, started,
         "all requesters canceled before execution", names),
-    supervise_owned(attempt, keydir, kind, source_root, entry, key, started, names, cwd, pid, start, gate))
+    supervise_owned(attempt, keydir, kind, source_root, entry, key, started, names, cwd, pid, start, gate,
+      state, token, priority))
 
 def supervise(+attempt: String) -> IO(Unit):
   do IO<Unit>:
     +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
-    kind : String <- IO.pure(String, field(meta, "kind"))
+    +kind : String <- IO.pure(String, field(meta, "kind"))
     cwd : String <- IO.pure(String, field(meta, "cwd"))
+    +state : String <- IO.pure(String, field(meta, "state_root"))
     source_root : String <- IO.pure(String, field(meta, "source_root"))
     entry : String <- IO.pure(String, field(meta, "entry"))
-    key : String <- IO.pure(String, field(meta, "key"))
+    +key : String <- IO.pure(String, field(meta, "key"))
     +keydir : String <- IO.pure(String, field(meta, "keydir"))
+    +priority : U32 <- owner_priority_locked(keydir, status_number(field(meta, "priority")))
     names : List<&2,String> <- IO.pure(List<&2,String>, fields_all(meta, "artifact_name"))
-    started : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
+    +started : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
-    start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
+    +start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
+    +token : String <- IO.pure(String, started ++ "-" ++ U32.show(pid))
+    published : Unit <- Bool.pick(IO(Unit), String.is_empty(state), IO.pure(Unit, Unit{}),
+      do IO<Unit>:
+        made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(kind_waiters_dir(state, kind)))
+        +history_group : String <- attempt_group(attempt)
+        wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
+          kind_waiters_dir(state, kind) ++ "/" ++ token,
+          waiters_ticket_text(priority, pid, start, key, history_group, token)))
+        IO.pure(Unit, Unit{}))
     gate : U32 <- owner_lock(keydir)
     owners : U32 <- owner_count(keydir)
     supervise_owner_count(owners, attempt, keydir, kind, source_root, entry, key,
-      started, names, cwd, pid, start, gate)
-
-def takeover_finish(+old_pid: U32, +old_start: String) -> IO(Unit):
-  do IO<Unit>:
-    alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(old_pid, old_start))
-    Bool.pick(IO(Unit), U32.is_eq(alive, 1),
-      IO.try(Unit, L.CompileQueueLifecycle.signal_pid(old_pid, 9)),
-      IO.pure(Unit, Unit{}))
-
-# A successor for a supervisor of an older queue that waits for heavy.lock. The
-# older supervisor is stopped; this process waits for admission in the queue
-# position of the older one, runs the attempt, and then kills the older
-# supervisor, which lets the requester that waits for it read the result.
-def takeover_run(+attempt: String, +queued: String, +old_pid: U32, +old_start: String) -> IO(Unit):
-  do IO<Unit>:
-    +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
-    +kind : String <- IO.pure(String, field(meta, "kind"))
-    cwd : String <- IO.pure(String, field(meta, "cwd"))
-    source_root : String <- IO.pure(String, field(meta, "source_root"))
-    entry : String <- IO.pure(String, field(meta, "entry"))
-    key : String <- IO.pure(String, field(meta, "key"))
-    +keydir : String <- IO.pure(String, field(meta, "keydir"))
-    names : List<&2,String> <- IO.pure(List<&2,String>, fields_all(meta, "artifact_name"))
-    +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
-    start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
-    active_text : String <- IO.pure(String, "pid=" ++ U32.show(pid)
-      ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ queued ++ "\n")
-    active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
-    admitted : Unit <- IO.try(Unit, L.CompileQueueLifecycle.admit(attempt, queued, old_pid, old_start))
-    signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
-      "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
-    finished : Unit <- supervise_marker_result(signaled, attempt, keydir, kind, source_root, entry, key, queued, names, cwd)
-    takeover_finish(old_pid, old_start)
-
-def takeover_pid(parsed: Maybe<&2,U32>, attempt: String, old_start: String, queued: String) -> IO(Unit):
-  match parsed:
-    case None{}: IO.die(Unit, 2, "compile-queue: takeover pid is malformed")
-    case Some{+old_pid}: takeover_run(attempt, queued, old_pid, old_start)
-
-def takeover_supervisor(attempt: String, old_pid_text: String, old_start: String, queued: String) -> IO(Unit):
-  takeover_pid(U32.read(old_pid_text), attempt, old_start, queued)
+      started, names, cwd, pid, start, gate, state, token, priority)
 
 def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keydir: String,
-                                +attempt: String, +owner: String, now: String) -> IO(Unit):
+                                +attempt: String, +owner: String, now: String, +waited: String) -> IO(Unit):
   Bool.pick(IO(Unit), exists,
     do IO<Unit>:
+      receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write_failure(
+        field(text, "receipt"), attempt ++ "/result", owner))
       removed : Unit <- remove_token(keydir, owner)
       Result.CompileQueueResult.report_failure(attempt ++ "/result"),
     do IO<Unit>:
-      left : U32 <- owner_count(keydir)
+      left : U32 <- owner_count_locked(keydir)
       +was_canceled : Bool <- IO.pure(Bool, U32.is_eq(left, 0))
+      +signal : U32 <- IO.pure(U32, status_number(field(waited, "signal")))
+      +exit_code : U32 <- IO.pure(U32, status_number(field(waited, "exit")))
+      +signaled : Bool <- IO.pure(Bool, U32.is_gt(signal, 0))
+      +wait_error : String <- IO.pure(String, field(waited, "error"))
+      +wait_error_code : U32 <- IO.pure(U32, status_number(field(waited, "error_code")))
+      +wait_failed : Bool <- IO.pure(Bool, non_empty(wait_error))
+      +observed : Bool <- IO.pure(Bool, Bool.and(non_empty(waited), Bool.not(wait_failed)))
+      +missing_code : U32 <- IO.pure(U32,
+        Bool.pick(U32, signaled, U32.add(128, signal),
+          Bool.pick(U32, U32.is_eq(exit_code, 0), 1, exit_code)))
+      +missing_detail : String <- IO.pure(String,
+        Bool.pick(String, signaled,
+          "supervisor exited before publishing a terminal result; supervisor terminated by signal "
+            ++ U32.show(signal) ++ " (wait status " ++ U32.show(U32.add(128, signal)) ++ ")",
+          Bool.pick(String, wait_failed,
+            "supervisor wait failed (error " ++ U32.show(wait_error_code) ++ "): " ++ wait_error,
+            Bool.pick(String, observed,
+              "supervisor exited before publishing a terminal result; supervisor exit "
+                ++ U32.show(exit_code),
+              "supervisor exited before publishing a terminal result"))))
       wrote : Unit <- write_failure(attempt, keydir,
         Bool.pick(String, was_canceled, "canceled", "failed"),
-        Bool.pick(U32, was_canceled, 130, 1), field(text, "kind"), key, now,
+        Bool.pick(U32, was_canceled, 130, missing_code), field(text, "kind"), key, now,
         Bool.pick(String, was_canceled,
           "all requesters canceled before a terminal result",
-          "supervisor exited before publishing a terminal result"),
+          missing_detail),
         artifact_names(artifact_rows(text)))
+      receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write_failure(
+        field(text, "receipt"), attempt ++ "/result", owner))
       removed : Unit <- remove_token(keydir, owner)
       Result.CompileQueueResult.report_failure(attempt ++ "/result"))
 
 def start_attempt_missing_result(text: String, key: String, keydir: String,
-                                +attempt: String, +owner: String, now: String) -> IO(Unit):
+                                +attempt: String, +owner: String, now: String, waited: String) -> IO(Unit):
   do IO<Unit>:
     exists : Bool <- regular(attempt ++ "/result")
-    start_attempt_result_exists(exists, text, key, keydir, attempt, owner, now)
+    start_attempt_result_exists(exists, text, key, keydir, attempt, owner, now, waited)
+
+def wait_supervisor_result(result_exists: Bool, waited: String) -> String:
+  Bool.pick(String, result_exists, "running=0\nexit=0\nsignal=0\n", waited)
+
+def wait_supervisor(attempt: String, pid: U32, start: String) -> IO(String):
+  do IO<String>:
+    waited : String <- IO.try(String, L.CompileQueueLifecycle.wait_supervisor(pid))
+    result_exists : Bool <- regular(attempt ++ "/result")
+    IO.pure(String, wait_supervisor_result(result_exists, waited))
+
+def wait_supervisor_identity(info: ExitMarker, attempt: String) -> IO(String):
+  match info:
+    case ExitMarker{pid, start}:
+      wait_supervisor(attempt, status_number(pid), start)
+
+def copy_artifacts_locked(state: String, keydir: String, rows: String) -> IO(Unit):
+  do IO<Unit>:
+    +lock : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(state ++ "/artifact-publication.lock"))
+    copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, rows))
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
+    IO.pure(Unit, Unit{})
 
 def start_attempt_completed(completed: Bool, +text: String, +key: String,
-                            +keydir: String, +attempt: String, +owner: String, now: String) -> IO(Unit):
+                            +keydir: String, +attempt: String, +owner: String, now: String, waited: String) -> IO(Unit):
   match completed:
     case True{}:
       do IO<Unit>:
-        copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, artifact_pairs_text(artifact_rows(text))))
+        copied : Unit <- copy_artifacts_locked(field(text, "state_root"), keydir, artifact_pairs_text(artifact_rows(text)))
         receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write(field(text, "receipt"), "completed", key, "0", owner, artifact_pairs_text(artifact_rows(text))))
         removed : Unit <- remove_token(keydir, owner)
         IO.pure(Unit, Unit{})
-    case False{}: start_attempt_missing_result(text, key, keydir, attempt, owner, now)
+    case False{}: start_attempt_missing_result(text, key, keydir, attempt, owner, now, waited)
 
 def start_attempt_config(config: Config, +text: String, +key: String, +keydir: String,
                          +lock: U32, owner: String) -> IO(Unit):
@@ -1053,12 +2241,13 @@ def start_attempt_config(config: Config, +text: String, +key: String, +keydir: S
     prepared : Unit <- write_attempt_files(config, key, keydir, attempt)
     +heavy : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_open(state ++ "/heavy.lock"))
     args : String <- IO.pure(String, P.argv(Con{"--", Con{"__supervise", Con{attempt, Nil{}}}}))
-    supervisor : U32 <- IO.try(U32, L.CompileQueueLifecycle.spawn_detached(args, lock, heavy))
+    supervisor_text : String <- IO.try(String, L.CompileQueueLifecycle.spawn_detached_identity(args, lock, heavy))
+    supervisor_info : ExitMarker <- IO.pure(ExitMarker, exit_marker_fields(Tx.split_lines(supervisor_text), ExitMarker{"", ""}))
     released_lock : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(lock))
     released_heavy : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(heavy))
-    waited : U32 <- IO.try(U32, L.CompileQueueLifecycle.wait_pid(supervisor))
+    waited : String <- wait_supervisor_identity(supervisor_info, attempt)
     completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
-    start_attempt_completed(completed, text, key, keydir, attempt, owner, now)
+    start_attempt_completed(completed, text, key, keydir, attempt, owner, now, waited)
 
 def start_attempt(+config: Config, key: String, keydir: String, lock: U32, owner: String) -> IO(Unit):
   match config:
@@ -1107,12 +2296,28 @@ def run_completed_fresh(+state: U32, +keydir: String, +text: String, +parsed: Co
     do IO<Unit>:
       +completed_path : String <- IO.pure(String, keydir ++ "/completed/result")
       existing : Bool <- regular(completed_path)
-      Bool.pick(IO(Unit), existing,
+      external_keep : Bool <- Bool.pick(IO(Bool), existing,
+        do IO<Bool>:
+          result : String <- IO.try(String, L.CompileQueueLifecycle.read_text(completed_path))
+          Bool.pick(IO(Bool), Tx.str_eq(field(result, "external"), "1"),
+            do IO<Bool>:
+              adoption_exists : Bool <- regular(keydir ++ "/adoption")
+              Bool.pick(IO(Bool), adoption_exists,
+                do IO<Bool>:
+                  +adoption : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/adoption"))
+                  Bool.pick(IO(Bool), non_empty(adoption),
+                    IO.try(Bool, Result.CompileQueueResult.verify_adoption(keydir, adoption)),
+                    IO.pure(Bool, False{})),
+                IO.pure(Bool, False{})),
+            IO.pure(Bool, False{})),
+        IO.pure(Bool, False{}))
+      Bool.pick(IO(Unit), external_keep,
         do IO<Unit>:
           removed : Unit <- remove_token(keydir, owner)
           released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
-          IO.die(Unit, 1, "compile-queue: completed result exists but is not reusable; only adopt may reuse an external result"),
+          IO.die(Unit, 1, "compile-queue: completed result is a verified external adoption; only adopt may reuse it"),
         do IO<Unit>:
+          cleaned : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove_tree(keydir ++ "/completed"))
           latest : String <- IO.try(String, Result.CompileQueueResult.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
           run_latest_result(latest, parsed, key, keydir, lock, owner)),
     do IO<Unit>:
@@ -1130,7 +2335,7 @@ def run_completed_result(completed: Bool, state: U32, +text: String, +parsed: Co
   match completed:
     case True{}:
       do IO<Unit>:
-        copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, artifact_pairs_text(artifact_rows(text))))
+        copied : Unit <- copy_artifacts_locked(field(text, "state_root"), keydir, artifact_pairs_text(artifact_rows(text)))
         receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write(field(text, "receipt"), "completed", key, "1", owner, artifact_pairs_text(artifact_rows(text))))
         removed : Unit <- remove_token(keydir, owner)
         released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
@@ -1141,15 +2346,19 @@ def run_config_locked(parsed: Config, +text: String, +key: String) -> IO(Unit):
   do IO<Unit>:
     state : String <- IO.pure(String, field(text, "state_root"))
     +keydir : String <- IO.pure(String, keydir_of(state, key))
-    +owner : String <- publish_token(keydir, field(text, "token"))
-    raised : Unit <- raise_priority(keydir, field(text, "priority"))
+    +requested : String <- IO.pure(String, priority_text(text))
+    +owner : String <- publish_token(keydir, field(text, "token"), requested)
+    +effective : U32 <- owner_priority_locked(keydir, status_number(requested))
     owner_line : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_stderr("owner=" ++ owner ++ "\n"))
+    priority_line : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_stderr(
+      "priority=" ++ requested ++ " effective=" ++ U32.show(effective) ++ "\n"))
     wait_start : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     present : Bool <- regular(keydir ++ "/active")
     made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(keydir ++ "/runs"))
     lock : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/lock"))
     active : U32 <- active_state(keydir)
     cleaned : Unit <- clean_stale_active(keydir)
+    pruned : Unit <- prune_stale_owners(keydir)
     completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
     run_completed_result(completed, active, text, parsed, key, keydir, owner, wait_start, present, lock)
 
@@ -1198,6 +2407,12 @@ def parse_state_key(args: List<&2,String>, +state: String, +key: String) -> IO(S
     case "--state-root" <> value <> rest: parse_state_key(rest, value, key)
     case "--key" <> value <> rest: parse_state_key(rest, state, value)
     case +option <> rest: IO.die(StateKey, 2, "compile-queue: unknown option " ++ option)
+
+def history_rebuild_command(args: List<&2,String>) -> IO(Unit):
+  do IO<Unit>:
+    state : String <- default_state_root()
+    parsed : StateKey <- parse_state_key(args,state,"")
+    history_import_parsed(parsed)
 
 def wait_result_path(latest: String, key: String, lock: U32) -> IO(Unit):
   match latest:
@@ -1260,20 +2475,30 @@ def parse_cancel(args: List<&2,String>, +state: String, +key: String, +token: St
     case "--token" <> value <> rest: parse_cancel(rest, state, key, value)
     case +option <> rest: IO.die(CancelArgs, 2, "compile-queue: unknown option " ++ option)
 
+def process_start_matches(result: Result<&1,&1,U32 & String,String>, +expected: String) -> Bool:
+  match result:
+    case Fail{error}: False{}
+    case Done{observed}: Tx.str_eq(observed, expected)
+
 def cancel_active_signal(+pid: U32, +start: String, +key: String, +token: String, +mode: String) -> IO(String):
   do IO<String>:
     external : Bool <- IO.pure(Bool, Bool.or(Tx.str_eq(mode, "external"), Tx.str_eq(mode, "starting")))
     Bool.pick(IO(String), external,
       IO.pure(String, "canceled=refused\nkey=" ++ key ++ "\nreason=external-or-starting\n"),
       do IO<String>:
-        signaled : Unit <- Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
-          IO.try(Unit, L.CompileQueueLifecycle.signal_group(pid, 15)), IO.try(Unit, L.CompileQueueLifecycle.signal_pid(pid, 15)))
-        slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(3000))
-        alive2 : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
-        escalated : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive2, 0), IO.pure(Unit, Unit{}),
-          Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
-            IO.try(Unit, L.CompileQueueLifecycle.signal_group(pid, 9)), IO.try(Unit, L.CompileQueueLifecycle.signal_pid(pid, 9))))
-        IO.pure(String, "canceled=requested\nkey=" ++ key ++ "\npid=" ++ U32.show(pid) ++ "\ntoken=" ++ token ++ "\n"))
+        identity : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.starttime(pid)
+        Bool.pick(IO(String), process_start_matches(identity, start),
+          do IO<String>:
+            signaled : Unit <- Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
+              IO.try(Unit, L.CompileQueueLifecycle.signal_group_verified(pid, start, 15)), IO.try(Unit, L.CompileQueueLifecycle.signal_pid_verified(pid, start, 15)))
+            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(3000))
+            identity_after_term : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.starttime(pid)
+            escalated : Unit <- Bool.pick(IO(Unit), process_start_matches(identity_after_term, start),
+              Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
+                IO.try(Unit, L.CompileQueueLifecycle.signal_group_verified(pid, start, 9)), IO.try(Unit, L.CompileQueueLifecycle.signal_pid_verified(pid, start, 9))),
+              IO.pure(Unit, Unit{}))
+            IO.pure(String, "canceled=requested\nkey=" ++ key ++ "\npid=" ++ U32.show(pid) ++ "\ntoken=" ++ token ++ "\n"),
+          IO.pure(String, "canceled=refused\nkey=" ++ key ++ "\nreason=process-identity-not-confirmed\n")))
 
 def cancel_active_alive(alive: U32, +pid: U32, +start: String, +key: String,
                         +token: String, +text: String) -> IO(String):
@@ -1356,7 +2581,8 @@ def status_row_selected(selected: Bool, state_root: String, +key: String) -> IO(
           ++ " kind=" ++ field(text, "kind") ++ " setsid=" ++ field(text, "setsid")
           ++ " started_ns=" ++ field(text, "started_ns") ++ "\n"),
         IO.pure(Unit, Unit{}))
-      completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
+      +record : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/completed/result"))
+      completed : Bool <- IO.pure(Bool, Result.CompileQueueResult.recorded_completed(record, key))
       present : Bool <- regular(keydir ++ "/completed/result")
       status_cache_row(present, completed, keydir, key),
     IO.pure(Unit, Unit{}))
@@ -1375,8 +2601,6 @@ def status_state_key(parsed: StateKey) -> IO(Unit):
     case StateKey{+state, filter}:
       do IO<Unit>:
         IO.write("state_root=" ++ state ++ "\n")
-        admission : String <- IO.try(String, L.CompileQueueLifecycle.admission_status(state))
-        IO.write(admission)
         names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(state ++ "/keys"))
         status_rows(state, filter, Tx.split_nul(names))
 
@@ -1385,34 +2609,6 @@ def status_command(args: List<&2,String>) -> IO(Unit):
     state : String <- default_state_root()
     parsed : StateKey <- parse_state_key(args, state, "")
     status_state_key(parsed)
-
-def takeover_parsed(parsed: StateKey) -> IO(Unit):
-  match parsed:
-    case StateKey{+state, key}:
-      do IO<Unit>:
-        ready : Unit <- require_state_root(state)
-        report : String <- IO.try(String, L.CompileQueueLifecycle.takeover(state))
-        IO.write(report)
-
-def takeover_command(args: List<&2,String>) -> IO(Unit):
-  do IO<Unit>:
-    state : String <- default_state_root()
-    parsed : StateKey <- parse_state_key(args, state, "")
-    takeover_parsed(parsed)
-
-def backfill_parsed(parsed: StateKey) -> IO(Unit):
-  match parsed:
-    case StateKey{+state, key}:
-      do IO<Unit>:
-        ready : Unit <- require_state_root(state)
-        report : String <- IO.try(String, L.CompileQueueLifecycle.backfill(state))
-        IO.write(report)
-
-def backfill_command(args: List<&2,String>) -> IO(Unit):
-  do IO<Unit>:
-    state : String <- default_state_root()
-    parsed : StateKey <- parse_state_key(args, state, "")
-    backfill_parsed(parsed)
 
 def output_of_argv(argv: List<&2,String>) -> String:
   match argv:
@@ -1593,7 +2789,7 @@ def parse_adopt(args: List<&2,String>, +config: Config) -> IO(Config):
     case "--option" <> value <> rest: parse_adopt(rest, config_line(config, "option", value))
     case +option <> rest: IO.die(Config, 2, "compile-queue: unknown option " ++ option)
 
-def adopt_heavy_result(heavy: Maybe<U32>, +key: String, +keydir: String, +lock: U32,
+def adopt_heavy_result(heavy: Maybe<&2,U32>, +key: String, +keydir: String, +lock: U32,
                        +pid_text: String, +start: String, +cwd: String, +output: String,
                        +compiler: String, +entry: String, +argv: List<&2,String>, +inputs: List<&2,Input>,
                        +name: String, +path: String) -> IO(Unit):
@@ -1615,7 +2811,7 @@ def adopt_heavy_result(heavy: Maybe<U32>, +key: String, +keydir: String, +lock: 
           ++ "\nguard=" ++ U32.show(guard_pid) ++ "\nartifact=" ++ path ++ "\n")
 
 def adopt_completed_result(present: Bool, state: String, +key: String, +keydir: String, +lock: U32,
-                           +pid_text: String, start: String, cwd: String, output: String,
+                           pid_text: String, start: String, cwd: String, output: String,
                            compiler: String, entry: String, argv: List<&2,String>, inputs: List<&2,Input>,
                            name: String, path: String) -> IO(Unit):
   match present:
@@ -1632,8 +2828,8 @@ def adopt_completed_result(present: Bool, state: String, +key: String, +keydir: 
             IO.die(Unit, 2, "compile-queue: completed result is not a verified adoption record"))
     case False{}:
       do IO<Unit>:
-        claim : U32 <- IO.try(U32, L.CompileQueueLifecycle.admit_external(keydir, pid_text))
-        adopt_heavy_result(Some{claim}, key, keydir, lock, pid_text, start, cwd, output,
+        heavy : Maybe<&2,U32> <- IO.try(Maybe<&2,U32>, L.CompileQueueLifecycle.lock_try(state ++ "/heavy.lock"))
+        adopt_heavy_result(heavy, key, keydir, lock, pid_text, start, cwd, output,
           compiler, entry, argv, inputs, name, path)
 
 def adopt_live(pid: U32, +pid_text: String, +start: String, +cwd: String,
@@ -1720,14 +2916,13 @@ def adopt_command(args: List<&2,String>) -> IO(Unit):
     adopt_parsed_config(parsed)
 
 def usage() -> String:
-  "usage: compile-queue.sh run --kind cgen|cc --state-root DIR --cwd DIR [--priority extreme|high|rest] [options] -- COMMAND...\n"
-  ++ "       compile-queue.sh key --kind cgen|cc [options]\n"
+  "usage: compile-queue.sh run --kind cgen|cc|check --state-root DIR --cwd DIR [options] -- COMMAND...\n"
+  ++ "       compile-queue.sh key --kind cgen|cc|check [options]\n"
   ++ "       compile-queue.sh cancel --state-root DIR --key KEY --token TOKEN\n"
   ++ "       compile-queue.sh wait --state-root DIR --key KEY\n"
   ++ "       compile-queue.sh status --state-root DIR [--key KEY]\n"
   ++ "       compile-queue.sh adopt --pid PID --state-root DIR --artifact NAME=PATH\n"
-  ++ "       compile-queue.sh takeover --state-root DIR\n"
-  ++ "       compile-queue.sh backfill --state-root DIR\n"
+  ++ "       compile-queue.sh history-rebuild --state-root DIR [--key KEY]\n"
 
 def main_args(args: List<&2,String>) -> IO(Unit):
   match args:
@@ -1737,13 +2932,10 @@ def main_args(args: List<&2,String>) -> IO(Unit):
     case "cancel" <> rest: cancel_command(rest)
     case "status" <> rest: status_command(rest)
     case "adopt" <> rest: adopt_command(rest)
-    case "takeover" <> rest: takeover_command(rest)
-    case "backfill" <> rest: backfill_command(rest)
+    case "history-rebuild" <> rest: history_rebuild_command(rest)
     case "__supervise" <> attempt <> Nil{}: supervise(attempt)
-    case "__takeover" <> attempt <> pid_text <> start <> queued <> Nil{}:
-      takeover_supervisor(attempt, pid_text, start, queued)
-    case "__watch-heavy" <> attempt <> pid_text <> start <> Nil{}:
-      watch_heavy_pid(U32.read(pid_text), attempt, start)
+    case "__watch-heavy" <> attempt <> pid_text <> start <> supervisor <> supervisor_start <> Nil{}:
+      watch_heavy_pid(U32.read(pid_text), attempt, start, supervisor, supervisor_start)
     case "__guard" <> keydir <> pid <> start <> name <> path <> Nil{}:
       guard(keydir, pid, start, name, path)
     case other: IO.die(Unit, 2, usage())

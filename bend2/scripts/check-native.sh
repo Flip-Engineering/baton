@@ -8,8 +8,28 @@ else
   PYTHON3=/usr/bin/python3
 fi
 "$PYTHON3" bend2/test/queue-native-checks.py
+"$PYTHON3" bend2/test/bootstrap-compile-queue-cancel.py
+compiler=${BEND:-"$root/.bend/bin/bend"}
+if [ ! -x "$compiler" ]; then
+  compiler="$root/node_modules/.bend/bin/bend"
+fi
+. "$root/bend2/scripts/queue-entry.sh"
+(
+  ulimit -s unlimited 2>/dev/null || true
+  BEND="$compiler" BEND_NO_TELEMETRY=1 \
+    BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
+    sh bend2/scripts/check-entry.sh bend2/src/coordinator/laws.bend
+)
 sh bend2/scripts/build-native.sh
+sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry
+sh bend2/scripts/build-native.sh bend2/test/prompt-status-entry.bend .scratch/bend2/prompt-status-entry
+"$PYTHON3" bend2/test/sqlite-read-reuse.py
+BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/stop.py \
+  Stop.test_retained_dsh_stop_preserves_work_and_exits_native_and_tool \
+  Stop.test_explicit_force_reconciles_dsh_attempt_after_observer_loss
 "$PYTHON3" bend2/test/package-receiver-layout.py
+"$PYTHON3" bend2/test/omp-completion-extension.py
+"$PYTHON3" bend2/test/package-licenses.py
 "$PYTHON3" bend2/test/record-native-checks.py
 sh bend2/test/bend-launch-guard.sh
 sh bend2/scripts/build-native.sh bend2/test/process.bend .scratch/bend2/process-test
@@ -22,7 +42,36 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
 sh bend2/scripts/build-native.sh bend2/tests/storage.bend .scratch/bend2/storage-test
-.scratch/bend2/storage-test
+case "$(uname -s)" in
+  Linux)
+    # The reference-scan and Cargo fixtures read the Linux proc filesystem and
+    # Linux mount identity. Other platforms keep the production
+    # unknown:non-linux answer, which preserves every candidate.
+    BATON2_STORAGE_TEST="$root/.scratch/bend2/storage-test" "$PYTHON3" bend2/test/storage-process-refs.py
+    ;;
+  *)
+    echo "storage reference fixtures run on Linux only; running the native storage checks" >&2
+    .scratch/bend2/storage-test
+    ;;
+esac
+sh bend2/scripts/build-native.sh bend2/tests/storage-cargo.bend .scratch/bend2/storage-cargo-test
+case "$(uname -s)" in
+  Linux)
+    BATON2_STORAGE_CARGO_TEST="$root/.scratch/bend2/storage-cargo-test" \
+    BATON2_TEST_CARGO="${BATON2_TEST_CARGO:-$(command -v cargo || printf '%s/.cargo/bin/cargo' "$HOME")}" \
+    BATON2_TEST_RUSTC="${BATON2_TEST_RUSTC:-$(command -v rustc || printf '%s/.cargo/bin/rustc' "$HOME")}" \
+    "$PYTHON3" bend2/test/storage-cargo.py
+    ;;
+  *)
+    echo "Cargo release fixture runs on Linux only; Darwin validation not performed here" >&2
+    ;;
+esac
+sh bend2/scripts/build-native.sh bend2/src/coordinator/storage-focused.bend .scratch/bend2/storage-focused
+if .scratch/bend2/storage-focused > /dev/null 2>&1; then
+  echo "storage-focused accepted no arguments" >&2
+  exit 1
+fi
+"$PYTHON3" bend2/test/stage-storage-clean.py
 sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
 .scratch/bend2/subscription-profiles-test
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
@@ -35,16 +84,38 @@ sh bend2/scripts/build-native.sh bend2/test/api-key-spec.bend .scratch/bend2/api
 BATON2_API_KEY_SPEC="$root/.scratch/bend2/api-key-spec" "$PYTHON3" bend2/test/api-key-spec.py
 sh bend2/scripts/build-native.sh bend2/test/account-credits-entry.bend .scratch/bend2/account-credits-entry
 BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" "$PYTHON3" bend2/test/account-credits-focused.py
+sh bend2/scripts/build-native.sh bend2/test/account-order-entry.bend .scratch/bend2/account-order-entry
+BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-order-entry" "$PYTHON3" bend2/test/account-order-fallback.py
 sh bend2/scripts/build-native.sh bend2/harness/claude-credit-observe.bend .scratch/bend2/claude-credit-observe
 BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py
-BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/native-helper-install.py
-sh bend2/scripts/build-native.sh bend2/test/usage-windows.bend .scratch/bend2/usage-windows-test
-.scratch/bend2/usage-windows-test
-sh bend2/scripts/build-native.sh bend2/test/usage-windows-long.bend .scratch/bend2/usage-windows-long-test
-.scratch/bend2/usage-windows-long-test
+sh bend2/scripts/build-native.sh bend2/harness/usage-read.bend .scratch/bend2/usage-read
+"$PYTHON3" bend2/test/usage-read-codex.py "$root/.scratch/bend2/usage-read"
+BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" BATON2_USAGE_READ="$root/.scratch/bend2/usage-read" "$PYTHON3" bend2/test/native-helper-install.py
+sh bend2/scripts/build-native.sh bend2/test/zai-quota.bend .scratch/bend2/zai-quota-test
+.scratch/bend2/zai-quota-test
+sh bend2/scripts/build-native.sh bend2/test/codex-rate-limits.bend .scratch/bend2/codex-rate-limits-test
+.scratch/bend2/codex-rate-limits-test
+sh bend2/scripts/build-native.sh bend2/test/deepseek-usage.bend .scratch/bend2/deepseek-usage-test
+rm -f .scratch/bend2/deepseek-usage.db
+.scratch/bend2/deepseek-usage-test .scratch/bend2/deepseek-usage.db
+"$PYTHON3" bend2/test/usage-read-deepseek.py "$root/.scratch/bend2/usage-read"
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
-.scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
+.scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db
+sh bend2/scripts/build-native.sh bend2/test/usage-hold-error-text.bend .scratch/bend2/usage-hold-error-text-test
+rm -f .scratch/bend2/usage-hold-error-text.db
+.scratch/bend2/usage-hold-error-text-test .scratch/bend2/usage-hold-error-text.db
+sh bend2/scripts/build-native.sh bend2/test/usage-live-reads.bend .scratch/bend2/usage-live-reads-test
+rm -f .scratch/bend2/usage-live-reads.db .scratch/bend2/usage-live-reads.db.answer
+.scratch/bend2/usage-live-reads-test .scratch/bend2/usage-live-reads.db bend2/test/fake-usage-read
+# Every case named in the fixture's regression dispatch runs on its own database.
+usage_live_cases=$(sed -n '/^def regression(/,/^    case _:/s/^    case "\([a-z-]*\)": .*/\1/p' bend2/test/usage-live-reads.bend)
+[ -n "$usage_live_cases" ] || { echo 'bend2/test/usage-live-reads.bend names no regression case' >&2; exit 1; }
+for usage_live_case in $usage_live_cases; do
+  rm -rf .scratch/bend2/usage-live-reads-case.db .scratch/bend2/usage-live-reads-case.db.answer \
+    .scratch/bend2/usage-live-reads-case.db.wake-complete .scratch/bend2/usage-live-reads-case.db.serial
+  .scratch/bend2/usage-live-reads-test --case "$usage_live_case" .scratch/bend2/usage-live-reads-case.db bend2/test/fake-usage-read
+done
 sh bend2/scripts/build-native.sh bend2/test/clear-stop-quota.bend .scratch/bend2/clear-stop-quota-test
 clear_stop_quota_db=$(mktemp "$root/.scratch/bend2/clear-stop-quota.XXXXXXXX")
 rm -f "$clear_stop_quota_db"
@@ -95,9 +166,14 @@ rm -f .scratch/bend2/usage-windows-wake.db
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake-path.bend .scratch/bend2/usage-windows-wake-path-test
 rm -f .scratch/bend2/usage-windows-wake-path.db
 .scratch/bend2/usage-windows-wake-path-test .scratch/bend2/usage-windows-wake-path.db
+sh bend2/scripts/build-native.sh bend2/test/route-change-identity.bend .scratch/bend2/route-change-identity-test
+rm -f .scratch/bend2/route-change-identity.db
+.scratch/bend2/route-change-identity-test .scratch/bend2/route-change-identity.db
 sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch/bend2/quota-exhaustion-reset-test
 rm -f .scratch/bend2/quota-exhaustion-reset.db
 .scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db
+sh bend2/scripts/build-native.sh bend2/test/stop-dsh.bend .scratch/bend2/stop-dsh-test
+BATON2_STOP_DSH_FIXTURE="$root/.scratch/bend2/stop-dsh-test" "$PYTHON3" bend2/test/stop-dsh.py
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
@@ -109,8 +185,13 @@ BATON2_EXE="$root/.scratch/bend2/launch-store-retained-test" "$PYTHON3" bend2/te
 "$PYTHON3" bend2/test/check-install-dispatch-runtime.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-player.bend .scratch/bend2/dsh-player-test
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-player.py
+# The canary and the hook test use the official dsh when DSH_CLI names it or dsh is on PATH.
+BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-canary.py
+BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-hooks.py
+BATON2_STOP_HOOK_FIXTURE="$root/.scratch/bend2/stop-hook-entry" "$PYTHON3" bend2/test/stop-hook-entry.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test
 BATON2_EXE="$root/.scratch/bend2/dsh-retained-test" "$PYTHON3" bend2/test/dsh-retained.py
+"$PYTHON3" bend2/test/dsh-worker.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-turn.bend .scratch/bend2/dsh-turn-test
 BATON2_EXE="$root/.scratch/bend2/dsh-turn-test" "$PYTHON3" bend2/test/dsh-turn.py
 sh bend2/scripts/build-native.sh bend2/test/agy-player.bend .scratch/bend2/agy-player-test
@@ -125,3 +206,7 @@ sh bend2/scripts/build-native.sh bend2/test/account-credits.bend .scratch/bend2/
 .scratch/bend2/account-credits-test
 sh bend2/scripts/build-native.sh bend2/test/account-binding-smoke.bend .scratch/bend2/account-binding-smoke
 BATON2_ACCOUNT_BINDING_SMOKE="$root/.scratch/bend2/account-binding-smoke" BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/test/account-binding-smoke.py
+sh bend2/scripts/build-native.sh bend2/test/refusal-recovery-focused.bend .scratch/bend2/refusal-recovery-focused
+rm -f .scratch/bend2/refusal-recovery-focused.db
+.scratch/bend2/refusal-recovery-focused .scratch/bend2/refusal-recovery-focused.db
+BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/refusal-recovery.py

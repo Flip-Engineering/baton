@@ -105,7 +105,7 @@ only from the `actualProcess` observation and defaults to
   `unknown` when the field is absent. Recorded execution state
   never stands in for process liveness.
 - `lastTurnId`, `latestReportId`: strings, empty means none.
-- `pendingCount`, `unacknowledgedCount`: integers.
+- `pendingCount`, `unreadCount`: integers.
 - `ownedEnsembles`, `memberEnsembles`: arrays of ensemble ids.
 - `liveReceiver`, `endpointRegistered`, `reference`: boolean or
   null. Null means no authoritative fact exists and renders as
@@ -152,9 +152,9 @@ from the next event after a reconnect. Event types:
 - `transition`: one transition object, prepended to the list.
   Transitions carry no message bodies.
 - `pending`: `{"session": "<player id>",
-  "pendingCount": n, "unacknowledgedCount": n,
+  "pendingCount": n, "unreadCount": n,
   "lastTurnId": "...", "latestReportId": "..."}`. The backend
-  emits `pending` for message inserts, receipt updates, and
+  emits `pending` for message inserts, read records, and
   turn/stop/execution/role changes, applied to any session.
 
 ## Reconnect rule

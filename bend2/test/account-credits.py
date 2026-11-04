@@ -394,7 +394,8 @@ class AccountCredits(unittest.TestCase):
             "SELECT body FROM messages WHERE body LIKE 'account handoff:%'")]
         self.assertEqual(len(handoff), 1, handoff)
         owed_rows = self.rows(
-            "SELECT receipt IS NOT NULL AS acknowledged FROM messages "
+            "SELECT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id "
+            "AND r.recipient=messages.recipient) AS acknowledged FROM messages "
             "WHERE recipient='leaf' AND kind='task' AND body LIKE '%λ review%'")
         self.assertEqual([row['acknowledged'] for row in owed_rows], [1])
         self.finish(second)

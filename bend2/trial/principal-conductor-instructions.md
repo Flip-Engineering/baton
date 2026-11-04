@@ -52,9 +52,9 @@ Replace the capitalized assignment placeholders before dispatching. The command
 configures the receiver and transcript, stores complete input and setup results,
 and returns the recorded session state.
 Use `task-input-read --current` in the selected actor context to inspect its latest
-dispatch. Read complete owed messages with `inbox`. Successful native settlement
-records handling of the exact consumed input. Use `acknowledge` to record handling
-explicitly; Baton selects the owned reads and creates their receipts. Pending
+dispatch. Read complete owed messages with `inbox`. Baton records delivery
+and each complete read internally; a read persists even if the turn later fails
+or is interrupted. Pending
 input and explicit stops remain recorded. Each Associate Conductor response is
 delivered to its parent through the registered receiver.
 

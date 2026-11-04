@@ -6,7 +6,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 typedef struct { char *directory,*suffix,*path; int error; } BatonFindFile;
@@ -155,6 +158,44 @@ static Term baton_file_mode_run(Env e,Term *f,IoWork *w) {
   return io_work(w,baton_file_mode_call,baton_file_mode_pack);
 }
 static void __attribute__((constructor)) baton_file_mode_use(void) {io_eff(CID_FILES_MODE_OF,baton_file_mode_run,0);}
+#endif
+
+#ifdef CID_FILES_LISTENING
+/* A connect probe on a Unix socket: a process that accepts on it answers the
+   connect. The child changes into the socket's directory and connects by the
+   file name, so the full path may exceed sun_path. The child makes only
+   async-signal-safe calls; its exit status carries the connect errno. */
+static void baton_file_listening_call(IoWork *w) {
+  BatonFileOp *call=(BatonFileOp *)w->data;
+  char *slash=strrchr(call->path,'/');
+  const char *name=slash?slash+1:call->path;
+  struct sockaddr_un address;
+  memset(&address,0,sizeof(address));address.sun_family=AF_UNIX;
+  if(!*name || strlen(name)>=sizeof(address.sun_path)) {call->error=ENAMETOOLONG;return;}
+  memcpy(address.sun_path,name,strlen(name)+1);
+  if(slash) *slash='\0';
+  const char *directory=slash?(call->path[0]?call->path:"/"):".";
+  pid_t child=fork();
+  if(child<0) {call->error=errno;return;}
+  if(child==0) {
+    if(chdir(directory)) _exit(errno&0xff);
+    int fd=socket(AF_UNIX,SOCK_STREAM,0);
+    if(fd<0) _exit(errno&0xff);
+    if(connect(fd,(struct sockaddr *)&address,sizeof(address))) _exit(errno&0xff);
+    close(fd);
+    _exit(0);
+  }
+  int status=0;
+  while(waitpid(child,&status,0)<0) if(errno!=EINTR) {call->error=errno;return;}
+  call->error=WIFEXITED(status)?WEXITSTATUS(status):EIO;
+}
+static Term baton_file_listening_run(Env e,Term *f,IoWork *w) {
+  BatonFileOp *call=baton_file_op(e,f,w,1);
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  if(call->error) return baton_file_unit_pack(e,w);
+  return io_work(w,baton_file_listening_call,baton_file_unit_pack);
+}
+static void __attribute__((constructor)) baton_file_listening_use(void) {io_eff(CID_FILES_LISTENING,baton_file_listening_run,0);}
 #endif
 
 #ifdef CID_FILES_WRITE_PRIVATE
@@ -484,6 +525,18 @@ typedef struct {
   int operation,error;
 } BatonPathCall;
 
+static int baton_group_directory_mode(int fd) {
+  struct stat info;
+  if(fstat(fd,&info))return errno;
+  if(!S_ISDIR(info.st_mode))return EPERM;
+  if((info.st_mode&07777)!=02770) {
+    if(fchmod(fd,02770))return errno;
+    if(fstat(fd,&info))return errno;
+  }
+  if(!S_ISDIR(info.st_mode) || (info.st_mode&07777)!=02770)return EPERM;
+  return 0;
+}
+
 static void baton_path_work(IoWork *work) {
   BatonPathCall *call=(BatonPathCall *)work->data;
   if(call->operation==1) {
@@ -557,6 +610,15 @@ static void baton_path_work(IoWork *work) {
     mode_t previous=umask(0007);
     int result=mkdir(call->path,0770);
     int saved=errno;
+    if(!result) {
+      int fd=open(call->path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+      if(fd<0) {result=-1;saved=errno;}
+      else {
+        int mode_error=baton_group_directory_mode(fd);
+        if(close(fd) && !mode_error) mode_error=errno;
+        if(mode_error) {result=-1;saved=mode_error;}
+      }
+    }
     umask(previous);
     if(result) call->error=saved;
   }
@@ -689,6 +751,21 @@ static void baton_data_work(IoWork *work) {
     if(!call->error && rename(temporary,call->first)) call->error=errno;
     if(call->error) unlink(temporary);
     free(temporary);
+  } else if(call->operation==9) {
+    size_t length=strlen(call->first)+48;
+    char *temporary=malloc(length);
+    if(!temporary) {call->error=ENOMEM;return;}
+    snprintf(temporary,length,"%s.tmp.%u",call->first,(unsigned)getpid());
+    unlink(temporary);
+    int fd=open(temporary,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0640);
+    if(fd<0) {call->error=errno;free(temporary);return;}
+    if(fchmod(fd,0640)) call->error=errno;
+    if(!call->error) call->error=baton_data_write(fd,call->second,call->length);
+    if(!call->error && fsync(fd)) call->error=errno;
+    if(close(fd) && !call->error) call->error=errno;
+    if(!call->error && rename(temporary,call->first)) call->error=errno;
+    if(call->error) unlink(temporary);
+    free(temporary);
   } else if(call->operation==7) {
     int fd=open(call->first,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
     if(fd<0) {call->error=errno;return;}
@@ -738,9 +815,9 @@ static Term baton_data_run(Env env,Term *fields,IoWork *work,int operation) {
   call->first=io_cstr(env,fields[0],&length);
   if(!call->first || strlen(call->first)!=length) call->error=EINVAL;
   if(operation==1 || operation==2) call->mode=(u32)fields[1];
-  if(operation==4 || operation==5 || operation==6 || operation==8) {
+  if(operation==4 || operation==5 || operation==6 || operation==8 || operation==9) {
     call->second=io_cstr(env,fields[1],&length);call->length=(size_t)length;
-    if(!call->second || (operation!=6 && strlen(call->second)!=length)) call->error=EINVAL;
+    if(!call->second || (operation!=6 && operation!=9 && strlen(call->second)!=length)) call->error=EINVAL;
   }
   work->data=(char *)call;
   if(call->error) return baton_data_pack(env,work);
@@ -770,6 +847,10 @@ static void __attribute__((constructor)) baton_data_copy_use(void) {io_eff(CID_F
 #ifdef CID_FILES_WRITE_SHARED
 static Term baton_data_write_run(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,6);}
 static void __attribute__((constructor)) baton_data_write_use(void) {io_eff(CID_FILES_WRITE_SHARED,baton_data_write_run,0);}
+#endif
+#ifdef CID_FILES_WRITE_GROUP_READ
+static Term baton_data_write_group_read_run(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,9);}
+static void __attribute__((constructor)) baton_data_write_group_read_use(void) {io_eff(CID_FILES_WRITE_GROUP_READ,baton_data_write_group_read_run,0);}
 #endif
 #ifdef CID_FILES_BYTE_PROPERTIES
 static Term baton_data_properties(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,7);}

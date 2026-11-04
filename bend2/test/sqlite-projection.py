@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -22,22 +23,28 @@ SCRATCH = ROOT / '.scratch/bend2'
 FIXTURE = SCRATCH / 'sqlite-projection'
 
 
-def build_fixture():
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    lines = SQLITE_C.read_text().splitlines(keepends=True)
-    start = next(i for i, line in enumerate(lines)
-                 if line.startswith('static int baton_sql_install_projection'))
+def function_end(lines, start):
     end = start
     while lines[end].rstrip() != '}':
         end += 1
+    return end
+
+
+def build_fixture():
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    lines = SQLITE_C.read_text().splitlines(keepends=True)
     busy = next(i for i, line in enumerate(lines)
                 if line.startswith('static int baton_sql_busy'))
-    busy_end = busy
-    while lines[busy_end].rstrip() != '}':
-        busy_end += 1
+    busy_end = function_end(lines, busy)
+    encoding = next(i for i, line in enumerate(lines)
+                    if line.startswith('#define BATON_SQL_NOT_UTF8'))
+    read = next(i for i, line in enumerate(lines)
+                if line.startswith('static void baton_sql_read_call'))
+    read_end = function_end(lines, read)
     combined = SCRATCH / 'sqlite-projection-combined.c'
-    combined.write_text(''.join(lines[:end + 1])
-                        + ''.join(lines[busy:busy_end + 1])
+    combined.write_text(''.join(lines[:busy_end + 1])
+                        + 'typedef struct { void *data; } IoWork;\n\n'
+                        + ''.join(lines[encoding:read_end + 1])
                         + FIXTURE_MAIN.read_text())
     result = subprocess.run(
         [os.environ.get('CC', 'cc'), '-Wall', '-Wextra', '-O2',
@@ -131,7 +138,7 @@ class SqliteProjection(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'native_changes_%'"), 37)
+            "AND name LIKE 'native_changes_%'"), 38)
         self.assertEqual(self.query(
             'SELECT count(*) FROM baton_projection_state WHERE id=1'), 1)
         self.assertEqual(
@@ -139,7 +146,7 @@ class SqliteProjection(unittest.TestCase):
             self.query('PRAGMA schema_version'))
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='index' "
-            "AND name='messages_pending'"), 1)
+            "AND name='messages_recipient_seq'"), 1)
         state = self.install('state')
         self.assertEqual(state.returncode, 0, state.stdout + state.stderr)
         self.assertIn('current=1', state.stdout)
@@ -181,6 +188,58 @@ class SqliteProjection(unittest.TestCase):
                              result.stdout + result.stderr)
         finally:
             self.stop(holder)
+
+    def test_noncurrent_install_waits_for_retained_reader(self):
+        self.assertEqual(self.install().returncode, 0)
+        conn = sqlite3.connect(self.db)
+        try:
+            conn.execute('DROP TRIGGER native_changes_knowledge_insert')
+            conn.commit()
+        finally:
+            conn.close()
+        holder = self.hold('hold-read', 2)
+        try:
+            installer = self.start('install-busy')
+            time.sleep(0.5)
+            self.assertIsNone(
+                installer.poll(),
+                'installer did not wait for the retained read transaction')
+            code, out, err = self.finish(installer, timeout=10)
+            self.assertEqual(code, 0, out + err)
+        finally:
+            self.stop(holder)
+
+    def test_read_transaction_release_unblocks_commit(self):
+        self.assertEqual(self.install().returncode, 0)
+        conn = sqlite3.connect(self.db)
+        try:
+            conn.execute('DROP TRIGGER native_changes_knowledge_insert')
+            conn.commit()
+        finally:
+            conn.close()
+        reader = sqlite3.connect(self.db, timeout=0, isolation_level=None)
+        writer = sqlite3.connect(self.db, timeout=0, isolation_level=None)
+        self.addCleanup(reader.close)
+        self.addCleanup(writer.close)
+        reader.execute('BEGIN')
+        reader.execute('SELECT count(*) FROM messages').fetchone()
+        writer.execute('BEGIN IMMEDIATE')
+        writer.execute('CREATE TABLE release_probe(x)')
+        with self.assertRaises(sqlite3.OperationalError):
+            writer.execute('COMMIT')
+        reader.execute('ROLLBACK')
+        writer.execute('COMMIT')
+        self.assertEqual(self.query(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' "
+            "AND name='release_probe'"), 1)
+
+    def test_read_call_allows_subsequent_write(self):
+        self.assertEqual(self.install().returncode, 0)
+        result = self.install('read-call')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('read_call=1', result.stdout)
+        self.assertIn('output=0', result.stdout)
+        self.assertIn('writer_commit=ok', result.stdout)
 
     def test_module_native_change_trigger_does_not_force_reinstall(self):
         self.assertEqual(self.install().returncode, 0)
@@ -236,7 +295,7 @@ class SqliteProjection(unittest.TestCase):
             self.assertEqual(code, 0, out + err)
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'native_changes_%'"), 37)
+            "AND name LIKE 'native_changes_%'"), 38)
         self.assertEqual(self.query(
             'SELECT count(*) FROM baton_projection_state WHERE id=1'), 1)
         self.assertEqual(
@@ -258,7 +317,7 @@ class SqliteProjection(unittest.TestCase):
         self.assertIn('read_rc=0', out)
         self.assertIn('settle_rc=0', out)
         self.assertEqual(
-            self.query("SELECT receipt FROM messages WHERE id='m1'"), 'accepted')
+            self.query("SELECT count(*) FROM message_reads WHERE message='m1' AND recipient='root'"), 1)
 
     def test_missing_application_table_is_repaired(self):
         self.assertEqual(self.install().returncode, 0)
@@ -326,7 +385,7 @@ class SqliteProjection(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'native_changes_%'"), 37)
+            "AND name LIKE 'native_changes_%'"), 38)
         self.assertEqual(
             self.query('SELECT schema_version FROM baton_projection_state WHERE id=1'),
             self.query('PRAGMA schema_version'))
@@ -353,7 +412,7 @@ class SqliteProjection(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'native_changes_%'"), 37)
+            "AND name LIKE 'native_changes_%'"), 38)
 
     def test_old_marker_table_is_migrated(self):
         self.assertEqual(self.install().returncode, 0)

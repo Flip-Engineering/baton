@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Series-scoped Git environment and GitHub App HTTPS credential helper.
 import { constants as cryptoConstants, sign } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { accessSync, constants, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import https from 'node:https';
 import { homedir } from 'node:os';
@@ -10,14 +11,24 @@ import { fileURLToPath } from 'node:url';
 export const REPOSITORY_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const PERMISSIONS = { contents: 'write', pull_requests: 'write', metadata: 'read' };
 export const WORKFLOW_PERMISSIONS = { ...PERMISSIONS, workflows: 'write' };
+export const GH_PERMISSIONS = { ...PERMISSIONS, issues: 'write', actions: 'read',
+  checks: 'read', statuses: 'read' };
 export const API_ROOT = 'https://api.github.com';
 export const SERIES = ['gpt', 'muse', 'deepseek', 'claude', 'glm', 'kimi'];
 export const SERIES_LABELS = { gpt: 'GPT', muse: 'Muse', deepseek: 'DeepSeek',
   claude: 'Claude', glm: 'GLM', kimi: 'Kimi' };
+const GH_BIN = fileURLToPath(new URL('./git-series-bin/', import.meta.url));
 
 export class Refusal extends Error {}
 // GitHub answered 404 for the requested resource.
 export class Missing extends Refusal {}
+// A repository lookup supplied GitHub's numeric canonical resource path.
+export class Moved extends Refusal {
+  constructor(api_path) {
+    super('GitHub authentication responses must not redirect.');
+    this.api_path = api_path;
+  }
+}
 
 function require(condition, message) {
   if (!condition) throw new Refusal(message);
@@ -185,8 +196,8 @@ export function runtime_pairs(environment) {
   return pairs;
 }
 
-// An assigned repository limits the helper to that repository. Without one, the
-// helper takes the repository from each credential request's path.
+// Git credential requests select repositories by path. The workflow-write profile
+// remains restricted to the selected repository.
 export function scoped_environment(registry_path, series_key, github, inherited,
   author_email = github.commitEmail, author_name = 'Flip Baton - ' + SERIES_LABELS[series_key],
   repository = null, profile = 'git') {
@@ -203,8 +214,9 @@ export function scoped_environment(registry_path, series_key, github, inherited,
   if (profile !== 'git') scope.push('--profile', profile);
   const helper = '!' + [process.execPath, fileURLToPath(import.meta.url), 'helper',
     '--registry', registry_path, '--series-key', series_key, ...scope].map(shell_quote).join(' ');
-  const contexts = selected === null ? ['https://github.com']
-    : ['https://github.com/' + selected, 'https://github.com/' + selected + '.git'];
+  const contexts = selected !== null && profile === 'workflow-write'
+    ? ['https://github.com/' + selected, 'https://github.com/' + selected + '.git']
+    : ['https://github.com'];
   pairs.push(['credential.helper', ''], ['credential.interactive', 'false'],
     ['http.extraHeader', ''], ['http.https://github.com/.extraHeader', '']);
   for (const repository_context of contexts) {
@@ -258,6 +270,9 @@ export function launch(args, inherited = process.env, execute = exec_command) {
     args.model_key, args.series_key, profile, args.repository ?? null);
   const environment = scoped_environment(registry_path, series_key, github, inherited,
     author_email, author_name, args.repository, profile);
+  environment.PATH = GH_BIN + delimiter + (environment.PATH ?? '/bin:/usr/bin');
+  environment.BATON2_GH_REGISTRY = registry_path;
+  environment.BATON2_GH_SERIES = series_key;
   if (series_key === 'gpt') {
     delete environment.OPENAI_API_KEY;
     delete environment.CODEX_API_KEY;
@@ -265,37 +280,52 @@ export function launch(args, inherited = process.env, execute = exec_command) {
   execute(command[0], command, environment);
 }
 
-// Resolve the configured series identity for an exact model key without
-// launching a command. The coordinator runs this before it stores an endpoint or
-// a native turn that embeds the key, so an unmapped model is reported at the
-// configuration command that names it.
-export function check(args) {
-  selected_identity(path(args.registry), args.model_key, null, args.profile ?? 'git', args.repository ?? null);
+// Resolve the configured series identity and optional repository installation
+// before the coordinator stores an endpoint or launches a native turn.
+export async function check(args, jwt = app_jwt, request = api) {
+  const [, directory, github] = selected_identity(path(args.registry), args.model_key, null,
+    args.profile ?? 'git', args.repository ?? null);
+  if (args.repository !== null && args.repository !== undefined) {
+    const permissions = profile_permissions(args.profile ?? 'git', args.repository);
+    await repository_installation(directory, github, args.repository, permissions, jwt, request,
+      args.profile === 'workflow-write' ? permissions : null);
+  }
 }
 
 export async function api(api_path, authorization, body = null, request = https.request) {
   require(api_path.startsWith('/') && !api_path.startsWith('//'), 'The GitHub API path is invalid.');
   return new Promise((accept, refuse) => {
-    const failed = () => refuse(new Refusal('The GitHub API request or response verification failed.'));
+    const method = body === null ? 'GET' : 'POST';
+    const failed = error => refuse(new Refusal(`GitHub API ${method} ${api_path} failed`
+      + (error?.message ? `: ${error.message}` : ' during request or response verification.')));
     try {
       const outgoing = request(API_ROOT + api_path, {
-        method: body === null ? 'GET' : 'POST',
+        method,
         headers: { Authorization: 'Bearer ' + authorization, Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2026-03-10', 'Content-Type': 'application/json', 'User-Agent': 'Baton2-series-git' },
       }, incoming => {
         if (incoming.statusCode >= 300 && incoming.statusCode < 400) {
-          refuse(new Refusal('GitHub authentication responses must not redirect.'));
-          incoming.resume();
-          return;
-        }
-        if (incoming.statusCode === 404) {
-          refuse(new Missing('GitHub reported no matching resource.'));
+          const source = /^\/repos\/[^/]+\/[^/]+(\/installation)?$/.exec(api_path);
+          const target = typeof incoming.headers.location === 'string'
+            && /^https:\/\/api\.github\.com(\/repositories\/[1-9][0-9]*(\/installation)?)$/.exec(incoming.headers.location);
+          refuse(incoming.statusCode === 301 && body === null && source && target
+            && (source[1] ?? '') === (target[2] ?? '') ? new Moved(target[1])
+            : new Refusal('GitHub authentication responses must not redirect.'));
           incoming.resume();
           return;
         }
         if (incoming.statusCode < 200 || incoming.statusCode >= 300) {
-          failed();
-          incoming.resume();
+          const chunks = [];
+          incoming.on('error', failed);
+          incoming.on('aborted', failed);
+          incoming.on('data', chunk => chunks.push(Buffer.from(chunk)));
+          incoming.on('end', () => {
+            let detail = '';
+            try { detail = JSON.parse(Buffer.concat(chunks).toString('utf8')).message ?? ''; } catch {}
+            const message = `GitHub API ${method} ${api_path} returned HTTP ${incoming.statusCode}`
+              + (detail ? `: ${detail}` : '.');
+            refuse(incoming.statusCode === 404 ? new Missing(message) : new Refusal(message));
+          });
           return;
         }
         const chunks = [];
@@ -336,6 +366,44 @@ function verify_installation(installation, github, owner, permissions) {
   minimum_permissions(installation.permissions, 'The GitHub installation', permissions);
 }
 
+async function repository_installation(directory, github, repository, permissions, jwt, request,
+  registration_permissions = null) {
+  const requested = repository_path(repository);
+  const owner = requested.split('/')[0];
+  const signed = jwt(directory, github), app = await request('/app', signed);
+  require(app.id === github.appId && app.slug === github.slug,
+    'The signing key authenticated another GitHub App.');
+  if (Object.hasOwn(app, 'client_id')) require(app.client_id === github.clientId, 'The GitHub App client ID differs.');
+  if (registration_permissions !== null) {
+    minimum_permissions(app.permissions, 'The GitHub App registration', registration_permissions);
+  }
+  let installation, canonical = requested;
+  try {
+    installation = await request('/repos/' + repository + '/installation', signed);
+  } catch (error) {
+    let metadata;
+    if (error instanceof Missing) {
+      try { metadata = await renamed_repository(github, signed, requested, request, permissions); }
+      catch (resolve_error) {
+        if (resolve_error instanceof Missing) throw new Refusal(`${github.slug} cannot access ${requested}; checked `
+          + `the App installation for account ${owner}. ${resolve_error.message}`);
+        throw resolve_error;
+      }
+      installation = await request('/repositories/' + metadata.id + '/installation', signed);
+    } else if (error instanceof Moved) {
+      const moved = /^\/repositories\/([1-9][0-9]*)\/installation$/.exec(error.api_path);
+      require(moved, 'The canonical installation path is invalid.');
+      installation = await request(error.api_path, signed);
+      verify_installation(installation, github, installation.account?.login ?? '', permissions);
+      const token = await issued_token(installation, signed, request, PERMISSIONS);
+      metadata = await repository_metadata('/repositories/' + moved[1], token, request);
+    } else throw error;
+    canonical = metadata.full_name;
+  }
+  verify_installation(installation, github, canonical.split('/')[0], permissions);
+  return { installation, signed, repository: canonical };
+}
+
 function valid_expiration(value) {
   if (typeof value !== 'string') return false;
   const fields = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
@@ -350,26 +418,13 @@ function valid_expiration(value) {
     && Date.parse(value) > Date.now();
 }
 
-// Each account owner has its own installation. The workflow-write profile
-// requests a token restricted to the selected repository.
-export async function installation_token(directory, github, repository, jwt = app_jwt, request = api, profile = 'git') {
-  const permissions = profile_permissions(profile, repository);
-  minimum_permissions(github.permissions, 'The App identity', permissions);
-  const signed = jwt(directory, github), app = await request('/app', signed);
-  require(app.id === github.appId && app.slug === github.slug,
-    'The signing key authenticated another GitHub App.');
-  if (Object.hasOwn(app, 'client_id')) require(app.client_id === github.clientId, 'The GitHub App client ID differs.');
-  if (profile === 'workflow-write') minimum_permissions(app.permissions, 'The GitHub App registration', permissions);
-  const owner = repository_path(repository).split('/')[0];
-  const installation = await request('/repos/' + repository + '/installation', signed).catch(error => {
-    if (error instanceof Missing) throw new Refusal(`The GitHub App ${github.slug} is not installed for ${owner}; `
-      + `install it on ${owner} to grant access to ${repository}.`);
-    throw error;
-  });
-  verify_installation(installation, github, owner, permissions);
-  const body = { permissions };
-  if (profile === 'workflow-write') body.repositories = [repository.split('/')[1]];
-  const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, body);
+async function issued_token(installation, signed, request, permissions, body,
+  profile = 'git', repository = null) {
+  const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, body)
+    .catch(error => {
+      if (error instanceof Missing || !(error instanceof Refusal)) throw error;
+      throw new Refusal(`${error.message} The token request serves ${repository}.`);
+    });
   minimum_permissions(issued.permissions, 'The issued token', permissions);
   if (profile === 'workflow-write') {
     require(issued.repository_selection === 'selected' && Array.isArray(issued.repositories)
@@ -381,6 +436,115 @@ export async function installation_token(directory, github, repository, jwt = ap
     'GitHub returned an invalid installation token.');
   require(valid_expiration(issued.expires_at), 'GitHub returned an expired installation token.');
   return issued.token;
+}
+
+async function repository_metadata(api_path, token, request) {
+  let resolved = api_path, metadata;
+  try { metadata = await request(api_path, token); }
+  catch (error) {
+    if (!(error instanceof Moved)) throw error;
+    require(/^\/repositories\/[1-9][0-9]*$/.test(error.api_path),
+      'The canonical repository path is invalid.');
+    resolved = error.api_path;
+    metadata = await request(resolved, token);
+  }
+  const full_name = repository_path(metadata.full_name);
+  require(Number.isSafeInteger(metadata.id) && metadata.id > 0
+    && typeof metadata.owner?.login === 'string'
+    && same_repository(metadata.owner.login, full_name.split('/')[0])
+    && (!resolved.startsWith('/repositories/') || resolved === '/repositories/' + metadata.id),
+  'The canonical repository identity is invalid.');
+  return { ...metadata, full_name };
+}
+
+async function renamed_repository(github, signed, repository, request, permissions) {
+  for (let page = 1; ; page++) {
+    const installations = await request(`/app/installations?per_page=100&page=${page}`, signed);
+    require(Array.isArray(installations), 'GitHub returned an invalid installation list.');
+    for (const installation of installations) {
+      if (installation.suspended_at) continue;
+      const owner = installation.account?.login ?? '';
+      verify_installation(installation, github, owner, PERMISSIONS);
+      const token = await issued_token(installation, signed, request, PERMISSIONS,
+        { permissions: PERMISSIONS });
+      try { return await repository_metadata('/repos/' + repository, token, request); }
+      catch (error) { if (!(error instanceof Missing)) throw error; }
+    }
+    if (installations.length < 100) {
+      throw new Missing(`GitHub API GET /repos/${repository} returned HTTP 404: Not Found.`);
+    }
+  }
+}
+
+async function repository_token(directory, github, repository, permissions, body, jwt, request, profile = 'git') {
+  minimum_permissions(github.permissions, 'The App identity', profile === 'gh' ? PERMISSIONS : permissions);
+  const { installation, signed, repository: canonical } = await repository_installation(directory, github, repository,
+    permissions, jwt, request, profile === 'workflow-write' ? permissions : null);
+  if (profile === 'workflow-write') body = { ...body, repositories: [canonical.split('/')[1]] };
+  return issued_token(installation, signed, request, permissions, body, profile, canonical);
+}
+
+// Each account owner has its own installation. The workflow-write profile
+// requests a token restricted to the selected repository.
+export function installation_token(directory, github, repository, jwt = app_jwt, request = api, profile = 'git') {
+  const permissions = profile_permissions(profile, repository);
+  const body = { permissions };
+  if (profile === 'workflow-write') body.repositories = [repository.split('/')[1]];
+  return repository_token(directory, github, repository, permissions, body, jwt, request, profile);
+}
+
+// Each gh command receives the installation's full grant for its target owner.
+export function gh_installation_token(directory, github, repository, jwt = app_jwt, request = api) {
+  return repository_token(directory, github, repository, GH_PERMISSIONS, {}, jwt, request, 'gh');
+}
+
+function origin_repository(environment) {
+  try {
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'],
+      { env: environment, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)\/?$/.exec(remote);
+    return match ? match[1].replace(/\.git$/, '') : null;
+  } catch { return null; }
+}
+
+export function gh_repository(command, environment, origin = origin_repository) {
+  let selected = null;
+  for (let index = 0; index < command.length && command[index] !== '--'; index++) {
+    const option = command[index];
+    if (option === '-R' || option === '--repo') {
+      selected = command[++index];
+      require(selected !== undefined, 'The gh repository option requires OWNER/NAME.');
+    } else if (option.startsWith('--repo=')) selected = option.slice(7);
+    else if (option.startsWith('-R')) selected = option.slice(2);
+  }
+  selected ??= environment.GH_REPO ?? origin(environment);
+  require(selected !== null && selected !== undefined,
+    'The gh repository owner could not be resolved; set -R/--repo OWNER/NAME, GH_REPO or a GitHub origin remote.');
+  return repository_path(selected);
+}
+
+function real_gh(environment) {
+  for (const directory of (environment.PATH ?? '/bin:/usr/bin').split(delimiter)) {
+    const filename = resolve(directory || '.', 'gh');
+    try {
+      accessSync(filename, constants.X_OK);
+      if (statSync(filename).isFile() && !realpathSync(filename).endsWith('/git-series-bin/gh')) return filename;
+    } catch {}
+  }
+  throw new Refusal('The gh wrapper requires an executable gh on the inherited PATH.');
+}
+
+export async function gh(command, inherited = process.env, execute = exec_command,
+  issue = gh_installation_token, origin = origin_repository) {
+  const repository = gh_repository(command, inherited, origin);
+  const program = real_gh(inherited);
+  require(inherited.BATON2_GH_REGISTRY && inherited.BATON2_GH_SERIES,
+    'The gh wrapper requires a series launch environment.');
+  const [, directory, github] = selected_identity(path(inherited.BATON2_GH_REGISTRY), null, inherited.BATON2_GH_SERIES);
+  const environment = { ...inherited };
+  delete environment.GITHUB_TOKEN;
+  environment.GH_TOKEN = await issue(directory, github, repository);
+  execute(program, [program, ...command], environment);
 }
 
 function credential_fields(input) {
@@ -400,22 +564,15 @@ function credential_fields(input) {
   return fields;
 }
 
-function credential_repository(fields, repository) {
-  const selected = repository_path(repository);
-  require([selected, selected + '.git'].some(candidate => same_repository(fields.get('path'), candidate)),
-    'Git credentials are restricted to the assigned HTTPS repository.');
-}
-
 // The request path names the repository as OWNER/NAME or OWNER/NAME.git.
-function credential_path(fields) {
-  const value = fields.get('path') ?? '';
+function credential_path(fields, fallback = null) {
+  const value = fields.get('path') || fallback || '';
   return repository_path(value.endsWith('.git') ? value.slice(0, -4) : value);
 }
 
 export function credential_context(input, repository = null) {
   const fields = credential_fields(input);
-  if (repository === null) credential_path(fields);
-  else credential_repository(fields, repository);
+  credential_path(fields, repository);
 }
 
 export async function helper(args, input = process.stdin, output = process.stdout, issue = installation_token) {
@@ -430,8 +587,11 @@ export async function helper(args, input = process.stdin, output = process.stdou
   const fields = credential_fields(context), assigned = args.repository ?? null;
   const profile = args.profile ?? 'git';
   profile_permissions(profile, assigned);
-  if (assigned !== null) credential_repository(fields, assigned);
-  const repository = assigned ?? credential_path(fields);
+  const repository = credential_path(fields, assigned);
+  if (profile === 'workflow-write' && assigned !== null) {
+    require(same_repository(repository, assigned),
+      'Workflow-write credentials are restricted to the assigned HTTPS repository.');
+  }
   const [, directory, github] = selected_identity(path(args.registry), null, args.series_key, profile, assigned);
   const token = await issue(directory, github, repository, undefined, undefined, profile);
   output.write('username=x-access-token\npassword=' + token + '\n\n');
@@ -474,13 +634,17 @@ export function parse(argv) {
 
 export async function main(argv = process.argv.slice(2)) {
   try {
+    if (argv[0] === 'gh') {
+      await gh(argv.slice(1));
+      return 0;
+    }
     const args = parse(argv);
     if (args.help) {
       process.stdout.write('git-series.mjs launch --registry FILE [--model-key MODEL] [--series-key SERIES] [--repository OWNER/REPO] [--profile git|workflow-write] [--native-model] -- COMMAND...\n'
         + 'git-series.mjs check --registry FILE --model-key MODEL [--repository OWNER/REPO] [--profile git|workflow-write]\n'
         + 'git-series.mjs helper --registry FILE --series-key SERIES [--repository OWNER/REPO] [--profile git|workflow-write] get|store|erase\n');
     } else if (args.verb === 'launch') launch(args);
-    else if (args.verb === 'check') check(args);
+    else if (args.verb === 'check') await check(args);
     else if (args.verb === 'helper') await helper(args);
     else return 1;
     return 0;

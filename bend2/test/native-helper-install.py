@@ -31,8 +31,9 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 def main():
     key_exec = os.environ.get('BATON2_API_KEY_EXEC')
     observe = os.environ.get('BATON2_CREDIT_OBSERVE')
-    if not key_exec or not observe:
-        raise SystemExit('BATON2_API_KEY_EXEC and BATON2_CREDIT_OBSERVE must name the built helpers')
+    usage_read = os.environ.get('BATON2_USAGE_READ')
+    if not key_exec or not observe or not usage_read:
+        raise SystemExit('BATON2_API_KEY_EXEC, BATON2_CREDIT_OBSERVE and BATON2_USAGE_READ must name the built helpers')
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
@@ -70,6 +71,22 @@ def main():
             assert record['document']['id'] == 'org-install-fixture'
             assert 'sk-install-fixture' not in observed.stdout + observed.stderr
 
+            # The usage-read helper answers an explicit unreadable read for a provider
+            # it has no reader for, and refuses a bad invocation.
+            installed_usage = prefix / 'usage-read'
+            shutil.copyfile(usage_read, installed_usage)
+            installed_usage.chmod(0o755)
+            unread = subprocess.run([str(installed_usage), 'fixture-provider', 'file:' + str(secret)],
+                                    capture_output=True, text=True, check=False)
+            assert unread.returncode == 0, (unread.returncode, unread.stderr)
+            document = json.loads(unread.stdout)
+            assert document['schema'] == 'baton2-usage-read-v1'
+            assert (document['provider'], document['state']) == ('fixture-provider', 'unreadable')
+            assert document['reason'] == 'no usage reader for provider fixture-provider is in this build'
+            assert 'sk-install-fixture' not in unread.stdout + unread.stderr
+            refused = subprocess.run([str(installed_usage)], capture_output=True, text=True, check=False)
+            assert refused.returncode == 2, (refused.returncode, refused.stdout)
+
             spec = importlib.util.spec_from_file_location(
                 'package_native', pathlib.Path('bend2/scripts/package-native.py'))
             package = importlib.util.module_from_spec(spec)
@@ -79,6 +96,7 @@ def main():
             installed = payload / 'libexec' / 'baton2'
             assert (installed / 'api-key-exec').is_file()
             assert (installed / 'claude-credit-observe').is_file()
+            assert (installed / 'usage-read').is_file()
             assert not (installed / 'claude-credit-observe.mjs').exists()
             print('native-helper-install-ok')
     finally:

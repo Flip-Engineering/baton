@@ -30,6 +30,15 @@ class Recruit(unittest.TestCase):
     def git(self,*args):
         return subprocess.run(['git','-C',str(self.repo),*args],check=True,text=True,capture_output=True).stdout
 
+    def read_count(self, ident, recipient=None):
+        with closing(sqlite3.connect(self.db)) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
+
     def call(self,*args,ok=True,cwd=None,exit_code=None):
         p=subprocess.run([str(EXE),str(self.db),*map(str,args)],text=True,capture_output=True,cwd=cwd or ROOT)
         self.assertEqual(p.returncode==0,ok,p.stderr)
@@ -206,7 +215,7 @@ class Recruit(unittest.TestCase):
             'exe,db,log,*arguments=sys.argv[1:]\n'
             'with pathlib.Path(log).open("a") as output:\n'
             ' output.write(json.dumps(arguments,ensure_ascii=False)+"\\n")\n'
-            'result=subprocess.run([exe,db,"ack",arguments[-1],"worker","accepted"],capture_output=True)\n'
+            'result=subprocess.run([exe,db,"as","worker","read",arguments[-1]],capture_output=True)\n'
             'sys.stdout.buffer.write(result.stdout)\n'
             'sys.stderr.buffer.write(result.stderr)\n'
             'raise SystemExit(result.returncode)\n')
@@ -271,7 +280,8 @@ class Recruit(unittest.TestCase):
         self.assertEqual(json.loads(self.deliveries.read_text()),self.arguments+['pending-task'])
         delivered=self.call('delivery','pending-task')
         self.assertEqual(delivered['body'],task[-1])
-        self.assertEqual(delivered['receipt'],'accepted')
+        self.assertIsNone(delivered['receipt'])
+        self.assertGreater(self.read_count('retained-task', 'worker'), 0)
         self.assertEqual(delivered['endpoint'],endpoint)
         self.assertEqual(self.call('inbox','worker'),[])
         with closing(sqlite3.connect(self.db)) as db:

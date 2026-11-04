@@ -8,10 +8,10 @@ absolute paths for `B2`, `DB`, `TRIAL_REPO`, `TRIAL_STATE`, `TRIAL_OMP`,
 among your Players and coordinate overlapping edits in the shared checkout.
 
 Baton resolves your current actor and records it as each new Player's
-parent. Read complete owed tasks and reports with `inbox`. Successful
-native settlement records handling of the exact consumed input. Use `acknowledge`
-for explicit handling; Baton selects your complete owned reads and creates their
-receipts. Your supervisor delivers your final response to your immediate parent.
+parent. Read complete owed tasks and reports with `inbox`. Baton records
+delivery and each complete read internally; a read persists even if the turn
+later fails or is interrupted. Your supervisor delivers your final response to
+your immediate parent.
 State completed behavior, published work and unfinished implementation in that
 response. Use `completion-request --text SUMMARY` when your assignment is ready
 for the Principal's review.

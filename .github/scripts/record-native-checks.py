@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Record selected unittest outcomes during the native suite and compare trees."""
+"""Record completed unittest outcomes during the native suite and compare trees."""
 import hashlib
 import json
 import os
 import pathlib
 import runpy
 import shlex
-import subprocess
 import sys
 import traceback
 import unittest
@@ -15,8 +14,10 @@ SELECTED = (
     'root-wake.py', 'coordinator.py', 'receive.py', 'turn.py',
     'receive-output.py', 'fixed-coordinator.py',
     'agent-actions.py', 'agent-input.py', 'task-start.py', 'mcp-command.py',
-    'mcp-contract.py', 'mcp-root.py',
+    'mcp-contract.py', 'mcp-root.py', 'stop-hook-entry.py',
     'control.py', 'control-identity.py', 'configure.py', 'account-credits.py',
+    'omp-completion-extension.py', 'package-licenses.py', 'stop.py', 'stop-dsh.py',
+    'root-channel.py', 'launch-store-retained.py', 'pending-guidance-replay.py',
 )
 
 
@@ -33,12 +34,21 @@ def shim(directory, output):
     executable.chmod(0o755)
 
 
+def run_row(result, expected):
+    failures = [(test.id(), 'assertion') for test, _ in result.failures]
+    failures.extend((test.id(), 'error') for test, _ in result.errors)
+    failures.extend((test.id(), 'unexpected-success') for test in result.unexpectedSuccesses)
+    return {'expected_tests': expected, 'tests_run': result.testsRun, 'failures': failures,
+            'skipped': [test.id() for test, _ in result.skipped],
+            'expected_failures': [test.id() for test, _ in result.expectedFailures]}
+
+
 def observe(output, argv):
     if argv[:1] == ['--']:
         argv = argv[1:]
     selected = {str(pathlib.Path('bend2/test', name).resolve()): name for name in SELECTED}
-    path = pathlib.Path(argv[0]).resolve() if argv else None
-    if path is None or str(path) not in selected:
+    path = pathlib.Path(argv[0]).resolve() if argv and argv[0].endswith('.py') else None
+    if path is None or str(path) not in selected or not path.is_file():
         os.execv(sys.executable, [sys.executable, *argv])
     name = selected[str(path)]
     document = {'file': 'bend2/test/' + name, 'argv': argv,
@@ -48,13 +58,7 @@ def observe(output, argv):
     def record(runner, suite):
         expected = suite.countTestCases()
         result = original(runner, suite)
-        failures = [(test.id(), 'assertion') for test, _ in result.failures]
-        failures.extend((test.id(), 'error') for test, _ in result.errors)
-        failures.extend((test.id(), 'unexpected-success') for test in result.unexpectedSuccesses)
-        document['runs'].append({'expected_tests': expected, 'tests_run': result.testsRun,
-                                 'failures': failures,
-                                 'skipped': [test.id() for test, _ in result.skipped],
-                                 'expected_failures': [test.id() for test, _ in result.expectedFailures]})
+        document['runs'].append(run_row(result, expected))
         return result
 
     unittest.TextTestRunner.run = record
@@ -69,11 +73,12 @@ def observe(output, argv):
         traceback.print_exc()
         status = 1
     finally:
+        unittest.TextTestRunner.run = original
+        failures = [failure for row in document['runs'] for failure in row['failures']]
         document['exit_code'] = status
         document['judged'] = bool(document['runs']) and all(
             row['expected_tests'] > 0 and row['tests_run'] == row['expected_tests'] and not row['skipped']
             for row in document['runs'])
-        failures = [failure for row in document['runs'] for failure in row['failures']]
         document['judged'] = document['judged'] and (
             (status == 0 and not failures) or (status == 1 and bool(failures)))
         write(output / (name + '.json'), document)

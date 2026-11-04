@@ -78,7 +78,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         reports = [report for report in self.coord('inbox', 'root')
                    if report['id'] == turns[1]['id']]
         self.assertEqual([report['body'] for report in reports], ['Aborted episode body.'])
-        self.assertEqual(self.coord('delivery', 'boundary-guidance')['receipt'], 'native-reviewed')
+        self.assertTrue(RECEIVE.read_recorded(self.db, 'boundary-guidance'))
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('boundary fixtures did not exit')
@@ -137,7 +137,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertNotIn('[id: replay-guidance]', event['prompt'])
         self.action(stream)
         self.assertEqual(stream.readline(), b'')
-        self.eventually(lambda: self.coord('delivery', 'replay-guidance')['receipt'] is not None,
+        self.eventually(lambda: RECEIVE.read_recorded(self.db, 'replay-guidance'),
                         'the fixture handling receipt was not retained')
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
@@ -162,6 +162,26 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('boundary fixtures did not exit')
 
+    def test_same_event_replay_is_not_republished_but_later_identical_text_is(self):
+        observer, stream, started, sealed = self.sealed_attempt(
+            'replay-terminal-task', 'Sealed terminal report.')
+        replay = late_terminal('Repeated terminal text.')
+        self.frame(stream, replay)
+        self.frame(stream, replay)
+        later = late_terminal('Repeated terminal text.')
+        later['id'] = 'later-repeated-terminal'
+        self.frame(stream, later)
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns],
+                         ['Sealed terminal report.', 'Repeated terminal text.',
+                          'Repeated terminal text.'])
+        self.assertEqual(len({turn['id'] for turn in turns}), 3)
+        self.assertEqual(self.coord('delivery', sealed)['body'], 'Sealed terminal report.')
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        self.shutdown_idle_database_owner('replay terminal fixtures did not exit')
+
     def test_pending_guidance_named_like_the_note_keeps_the_later_report(self):
         observer, stream, started, sealed = self.sealed_attempt(
             'recorded-task', 'Sealed report before the later terminal.', 'recorded')
@@ -184,7 +204,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
                    if report['id'] == turns[1]['id']]
         self.assertEqual([report['body'] for report in reports],
                          ['Later episode with the recorded guidance pending.'])
-        self.assertEqual(self.coord('delivery', 'recorded')['receipt'], 'native-reviewed')
+        self.assertTrue(RECEIVE.read_recorded(self.db, 'recorded'))
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('boundary fixtures did not exit')
 

@@ -62,7 +62,7 @@
    "reference": false,
    "role": "principal-conductor",
    "stop": null,
-   "unacknowledgedCount": 0,
+   "unreadCount": 0,
    "workspace": "",
    "actualProcess": "unknown"
   },
@@ -103,7 +103,7 @@
    "reference": false,
    "role": "associate-conductor",
    "stop": null,
-   "unacknowledgedCount": 3,
+   "unreadCount": 3,
    "workspace": "/tmp/fixture/worktrees/b",
    "actualProcess": "unknown"
   },
@@ -141,7 +141,7 @@
    "reference": false,
    "role": "player",
    "stop": null,
-   "unacknowledgedCount": 0,
+   "unreadCount": 0,
    "workspace": "/tmp/fixture/worktrees/p1",
    "actualProcess": "unknown"
   },
@@ -176,7 +176,7 @@
    "reference": null,
    "role": "player",
    "stop": null,
-   "unacknowledgedCount": 1,
+   "unreadCount": 1,
    "workspace": "",
    "actualProcess": "unknown"
   },
@@ -206,7 +206,7 @@
    "reference": false,
    "role": "player",
    "stop": null,
-   "unacknowledgedCount": 2,
+   "unreadCount": 2,
    "workspace": "/tmp/fixture/worktrees/p3",
    "actualProcess": "unknown"
   },
@@ -239,7 +239,7 @@
     "reportId": "",
     "status": "stopped"
    },
-   "unacknowledgedCount": 0,
+   "unreadCount": 0,
    "workspace": "",
    "actualProcess": "unknown"
   }
