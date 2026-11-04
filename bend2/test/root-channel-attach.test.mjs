@@ -218,7 +218,7 @@ test('a connect probe that sends nothing gets no answer', async (t) => {
   assert.equal(JSON.parse(probe.stdout), '');
 });
 
-test('retained root backlog produces a stored-input pointer and preserves every unread body', async (t) => {
+test('retained root backlog sends the oldest complete body and preserves every unread body', async (t) => {
   const retained = 7136;
   const body = 'Retained report body. λ🙂\n'.repeat(40) + 'Complete tail.';
   const calls = await attach(t, 'operator', (db) => {
@@ -232,8 +232,8 @@ test('retained root backlog produces a stored-input pointer and preserves every 
   await channel.until(() => channel.notes().length > 0, 'retained input notice');
   const notice = channel.notes()[0];
   assert.deepEqual(JSON.parse(notice.params.meta.messageIds), ['retained-0']);
+  assert.ok(notice.params.content.includes(body));
   assert.match(notice.params.content, /baton2_delivery/);
-  assert.ok(!notice.params.content.includes(body));
   assert.ok(!notice.params.content.includes(`retained-${retained - 1}`));
   const db = new DatabaseSync(calls.database, { readOnly: true });
   assert.equal(db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
@@ -270,6 +270,31 @@ test('a complete recipient read advances the root backlog without a clearing act
   assert.ok(actions.every((args) => !['ack', 'acknowledge'].includes(args[1])));
 });
 
+test('a root completion request notice contains its full review prompt', async (t) => {
+  const body = 'Completed the assigned change. Evidence: commit abc123 and the selected fixture result.';
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET native=? WHERE id=?').run('retained-native', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('completion-1', 'lead', 'operator', 'completion-request', body);
+  });
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'completion request notice');
+  const notice = channel.notes()[0];
+  assert.deepEqual(JSON.parse(notice.params.meta.messageIds), ['completion-1']);
+  assert.match(notice.params.content, /Message \(completion-request\) from lead \[id: completion-1\]:/);
+  assert.ok(notice.params.content.includes(body));
+  assert.ok(notice.params.content.includes('Review the work against lead\'s assignment and the supplied evidence.'));
+  assert.ok(notice.params.content.includes('Confirm with completion-confirmed --to lead when the assignment is satisfied.'));
+  assert.ok(notice.params.content.includes('Otherwise use guide --to lead --text TEXT to state what is missing and direct the remaining work.'));
+  const result = await channel.call('read-completion', 'baton2_delivery', { id: 'completion-1' });
+  assert.equal(JSON.parse(result.content[0].text).body, body);
+  const db = new DatabaseSync(calls.database, { readOnly: true });
+  assert.deepEqual(db.prepare('SELECT message,native FROM message_reads').all().map((row) => ({ ...row })),
+    [{ message: 'completion-1', native: 'retained-native' }]);
+  db.close();
+});
+
 test('an unread notice returns on native prompt changes and respects an explicit stop', async (t) => {
   const calls = await attach(t, 'operator', (db) => {
     db.prepare('UPDATE sessions SET native=? WHERE id=?').run('retained-native', 'operator');
@@ -303,7 +328,7 @@ test('an unread notice returns on native prompt changes and respects an explicit
   db.close();
 });
 
-test('new committed input has a pointer while older unread history stays recoverable', async (t) => {
+test('new committed input sends its full body while older unread history stays recoverable', async (t) => {
   const calls = await attach(t, 'operator', (db) => {
     db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
       .run('old-report', 'worker', 'operator', 'report', 'Older unread history.');
@@ -318,7 +343,7 @@ test('new committed input has a pointer while older unread history stays recover
   await channel.barrier('new-input');
   const latest = channel.notes().at(-1);
   assert.deepEqual(JSON.parse(latest.params.meta.messageIds), ['new-guidance']);
-  assert.ok(!latest.params.content.includes('New committed guidance.'));
+  assert.ok(latest.params.content.includes('New committed guidance.'));
   await channel.call('read-new', 'baton2_delivery', { id: 'new-guidance' });
   await channel.barrier('old-input-remains');
   assert.deepEqual(JSON.parse(channel.notes().at(-1).params.meta.messageIds), ['old-report']);

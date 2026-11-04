@@ -910,7 +910,7 @@ function pendingConductorMessage(messageId = null) {
   if (!conn) return null;
   try {
     return conn.prepare(
-      `SELECT m.id, s.native
+      `SELECT m.id, m.sender, m.kind, m.body, s.native
        FROM messages m
        JOIN sessions s ON s.id = m.recipient
        WHERE s.id = ?
@@ -935,9 +935,12 @@ function notifyPending(messageId = null) {
   }
   const key = JSON.stringify([message.native, nativePrompt, message.id]);
   if (inputNotice?.key === key) return;
-  // The notice selects a stored message. Its complete read advances delivery.
+  const review = message.kind === 'completion-request'
+    ? `\nReview the work against ${message.sender}'s assignment and the supplied evidence. Confirm with completion-confirmed --to ${message.sender} when the assignment is satisfied. Otherwise use guide --to ${message.sender} --text TEXT to state what is missing and direct the remaining work.`
+    : '';
+  const content = `Message (${message.kind}) from ${message.sender} [id: ${message.id}]:\n${message.body}${review}`;
   sendNotification('notifications/claude/channel', {
-    content: `Baton holds unread input. Read the complete stored message with baton2_delivery ${JSON.stringify({ id: message.id })}. Baton records the read and supplies the next unread input.`,
+    content: `${content}\n\nBaton records the read when you call baton2_delivery ${JSON.stringify({ id: message.id })}.`,
     meta: { recipient: sessionId, messageIds: JSON.stringify([message.id]) },
   });
   inputNotice = { key, id: message.id, native: message.native };

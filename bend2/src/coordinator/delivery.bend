@@ -107,7 +107,7 @@ def queue_claim_sql(+id: String, +condition: String, +recipient: String, +native
   ++ "CREATE TRIGGER IF NOT EXISTS codex_inbox_wake_read AFTER INSERT ON message_reads BEGIN DELETE FROM codex_inbox_wakes WHERE session=NEW.recipient;END;"
   ++ "DELETE FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ " AND native<>" ++ C.q(native) ++ ";"
   ++ queue_retry_sql(recipient,retry)
-  ++ "DELETE FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.recipient=codex_inbox_wakes.session AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ " AND (m.kind IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed','question') OR EXISTS(SELECT 1 FROM session_roles r WHERE r.session=m.sender AND r.role='operator') OR CASE WHEN " ++ queue_metadata_sql("codex_inbox_wakes.cause") ++ " THEN json_type(codex_inbox_wakes.cause,'$.cause') IS NOT NULL ELSE codex_inbox_wakes.cause<>'' END) AND m.seq>CASE WHEN " ++ queue_metadata_sql("codex_inbox_wakes.cause") ++ " THEN json_extract(codex_inbox_wakes.cause,'$.inputSeq') ELSE (SELECT max(seq) FROM messages WHERE recipient=codex_inbox_wakes.session AND seq<m.seq) END);"
+  ++ "DELETE FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.recipient=codex_inbox_wakes.session AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ " AND (m.kind IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed','completion-request','question') OR EXISTS(SELECT 1 FROM session_roles r WHERE r.session=m.sender AND r.role='operator') OR CASE WHEN " ++ queue_metadata_sql("codex_inbox_wakes.cause") ++ " THEN json_type(codex_inbox_wakes.cause,'$.cause') IS NOT NULL ELSE codex_inbox_wakes.cause<>'' END) AND m.seq>CASE WHEN " ++ queue_metadata_sql("codex_inbox_wakes.cause") ++ " THEN json_extract(codex_inbox_wakes.cause,'$.inputSeq') ELSE (SELECT max(seq) FROM messages WHERE recipient=codex_inbox_wakes.session AND seq<m.seq) END);"
   ++ "INSERT INTO codex_inbox_wakes(session,native,token,cause) SELECT s.id,s.native,lower(hex(randomblob(16))),json_object('inputSeq',(SELECT max(seq) FROM messages WHERE recipient=s.id)) FROM sessions s WHERE s.id=" ++ C.q(recipient) ++ " AND s.harness='codex' AND s.native=" ++ C.q(native) ++ " AND NOT " ++ C.stopped_session_sql("s.id") ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.recipient=s.id AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ ") ON CONFLICT(session) DO NOTHING;"
   ++ "SELECT CASE WHEN changes()=1 THEN (SELECT token FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ ") ELSE '' END;COMMIT;"
 
@@ -232,13 +232,78 @@ def codex_queue_mode(+db: String, +id: String, +condition: String, saved: String
 def codex_queue(db: String, id: String, condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   codex_queue_mode(db,id,condition,saved,True{})
 
+def dispatch_canonical(executable: String, canonical_result: Result<&1,&1,U32 & String,String>, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match canonical_result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{+canonical}: Process.Process.run(Tx.enc_argv([executable,"--dispatch-message",canonical,id]),".")
+
+def dispatch_argv(executable_result: Result<&1,&1,U32 & String,String>, canonical_result: Result<&1,&1,U32 & String,String>, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match executable_result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{+executable}: dispatch_canonical(executable,canonical_result,id)
+
+def dispatch_existing(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    executable_result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
+    canonical_result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(db)
+    dispatch_argv(executable_result,canonical_result,id)
+
+def failure_report_result(saved: Result<&1,&1,U32 & String,String>, +db: String, +id: String) -> IO(Unit):
+  match saved:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{output}: do IO<Unit>:
+      dispatched : Result<&1,&1,U32 & String,String> <- dispatch_existing(db,id)
+      IO.pure(Unit,Unit{})
+
+# An endpointless recipient that is not a Codex session has no route for its
+# committed input (#1217). The report to the recipient's coordinator names the
+# cause and the owed count. One report exists for each oldest owed input, so
+# further input to the same recipient adds no report until that input is read.
+def endpointless_cause_sql() -> String:
+  C.blocked_cause_sql("owed.recipient")
+
+def endpointless_unrouted_sql(+id: String) -> String:
+  "owed.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("owed") ++ " AND " ++ endpointless_cause_sql() ++ " IN ('endpoint-absent','harness-unsupported') AND " ++ C.blocked_owner_sql("owed.recipient") ++ " IS NOT NULL"
+
+def endpointless_report_id_sql(+id: String) -> String:
+  "SELECT coalesce((SELECT 'endpointless:' || owed.recipient || ':' || (SELECT min(first.seq) FROM messages first WHERE first.recipient=owed.recipient AND " ++ C.owed_sql("first") ++ ") FROM messages owed WHERE " ++ endpointless_unrouted_sql(id) ++ "),'');"
+
+def endpointless_report_sql(+id: String, +report: String) -> String:
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(report) ++ ",owed.recipient," ++ C.blocked_owner_sql("owed.recipient") ++ ",'report','Input ' || owed.id || ' for ' || owed.recipient || ' was committed and cannot be delivered because ' || CASE " ++ endpointless_cause_sql() ++ " WHEN 'endpoint-absent' THEN 'the session has no recorded endpoint' ELSE 'its harness is not supported' END || '. ' || owed.recipient || ' has ' || (SELECT count(*) FROM messages pending WHERE pending.recipient=owed.recipient AND " ++ C.owed_sql("pending") ++ ") || ' owed inputs and no turn started for them. Record an endpoint with baton connect --endpoint JSON_ARGV --session ' || owed.recipient || ', or stop the session.' FROM messages owed WHERE " ++ endpointless_unrouted_sql(id) ++ ";SELECT changes();"
+
+def endpointless_dispatched(+db: String, +report: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match saved:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{+output}:
+      Bool.pick(IO(Unit),String.eq(Tx.trim_nl(output),"1"),
+        (do IO<Unit>:
+          dispatched : Result<&1,&1,U32 & String,String> <- dispatch_existing(db,report)
+          IO.pure(Unit,Unit{})),
+        IO.pure(Unit,Unit{}))
+
+def endpointless_inserted(+db: String, +id: String, +report: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,endpointless_report_sql(id,report))
+    endpointless_dispatched(db,report,saved)
+
+def endpointless_report(+db: String, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    row : String <- IO.try(String,DB.Sql.query(db,endpointless_report_id_sql(id)))
+    +report : String <- IO.pure(String,Tx.trim_nl(row))
+    Bool.pick(IO(Unit),String.is_empty(report),IO.pure(Unit,Unit{}),endpointless_inserted(db,id,report))
+
+def endpointless_unreported(+db: String, +id: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    reported : Unit <- endpointless_report(db,id)
+    IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
 def endpointless(+db: String, +id: String, +condition: String, +saved: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     harness_row : String <- IO.try(String,DB.Sql.query(db,endpointless_harness_sql(id,condition)))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_row))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(harness,"codex"),
       codex_queue_mode(db,id,condition,saved,retry),
-      IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}))
+      endpointless_unreported(db,id,saved))
 
 def inbox_endpoint_launch(+db: String, id: String, saved: String, argv: String, recipient: String, +token: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
@@ -292,29 +357,6 @@ def deliver(db: String, id: String, condition: String, saved: String) -> IO(Resu
 # An explicit resume retries the retained failed admission through its current route.
 def redeliver(db: String, id: String, condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   deliver_mode(db,id,condition,saved,True{})
-
-def dispatch_canonical(executable: String, canonical_result: Result<&1,&1,U32 & String,String>, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match canonical_result:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{+canonical}: Process.Process.run(Tx.enc_argv([executable,"--dispatch-message",canonical,id]),".")
-
-def dispatch_argv(executable_result: Result<&1,&1,U32 & String,String>, canonical_result: Result<&1,&1,U32 & String,String>, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match executable_result:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{+executable}: dispatch_canonical(executable,canonical_result,id)
-
-def dispatch_existing(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
-  do IO<Result<&1,&1,U32 & String,String>>:
-    executable_result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
-    canonical_result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(db)
-    dispatch_argv(executable_result,canonical_result,id)
-
-def failure_report_result(saved: Result<&1,&1,U32 & String,String>, +db: String, +id: String) -> IO(Unit):
-  match saved:
-    case Fail{error}: IO.pure(Unit,Unit{})
-    case Done{output}: do IO<Unit>:
-      dispatched : Result<&1,&1,U32 & String,String> <- dispatch_existing(db,id)
-      IO.pure(Unit,Unit{})
 
 # A failure report is inserted first. Dispatch runs the existing self
 # --dispatch-message entry only after a successful insert; that subprocess keeps

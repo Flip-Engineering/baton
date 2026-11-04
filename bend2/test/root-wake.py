@@ -1358,6 +1358,24 @@ while True:
         self.assertEqual(len(inbox), 3)
         self.assert_consumed_once_and_by_its_recipient(['root', 'lead', 'child'])
 
+    def test_completion_request_replaces_a_held_codex_root_wake(self):
+        queued, _ = self.public_proxy()
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.recruit('child', 'root', 'omp')
+        first = self.coord_raw('report', 'held-child-report', 'child', 'Report while the root app is active.')
+        self.assertNotEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+
+        body = 'Completion request: review the child work and confirm or guide the player.'
+        admitted = self.coord_raw('message', 'child-completion-request', 'child', 'root',
+                                  'completion-request', body)
+        self.assertEqual(admitted.returncode, 0, admitted.stdout + admitted.stderr)
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 2, calls)
+        notice = calls[-1]['params']['input'][0]['text']
+        self.assertIn('child-completion-request', notice)
+
     def test_receiver_requires_a_model_and_directory_and_records_the_supplied_directory(self):
         # An existing Codex session is registered for wake by recording the model,
         # effort and working directory its turns need, or by passing the directory.
