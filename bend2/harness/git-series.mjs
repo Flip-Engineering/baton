@@ -11,8 +11,6 @@ import { fileURLToPath } from 'node:url';
 export const REPOSITORY_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const PERMISSIONS = { contents: 'write', pull_requests: 'write', metadata: 'read' };
 export const WORKFLOW_PERMISSIONS = { ...PERMISSIONS, workflows: 'write' };
-export const GH_PERMISSIONS = { ...PERMISSIONS, issues: 'write', actions: 'read',
-  checks: 'read', statuses: 'read' };
 export const API_ROOT = 'https://api.github.com';
 export const SERIES = ['gpt', 'muse', 'deepseek', 'claude', 'glm', 'kimi'];
 export const SERIES_LABELS = { gpt: 'GPT', muse: 'Muse', deepseek: 'DeepSeek',
@@ -477,7 +475,7 @@ async function renamed_repository(github, signed, repository, request, permissio
 }
 
 async function repository_token(directory, github, repository, permissions, body, jwt, request, profile = 'git') {
-  minimum_permissions(github.permissions, 'The App identity', profile === 'gh' ? PERMISSIONS : permissions);
+  minimum_permissions(github.permissions, 'The App identity', permissions);
   const { installation, signed, repository: canonical } = await repository_installation(directory, github, repository,
     permissions, jwt, request, profile === 'workflow-write' ? permissions : null);
   if (profile === 'workflow-write') body = { ...body, repositories: [canonical.split('/')[1]] };
@@ -493,9 +491,15 @@ export function installation_token(directory, github, repository, jwt = app_jwt,
   return repository_token(directory, github, repository, permissions, body, jwt, request, profile);
 }
 
-// Each gh command receives the installation's full grant for its target owner.
+// Each gh command receives the installation's granted permissions for its
+// target owner. The token request omits the permissions field, so GitHub
+// returns the installation's full grant. The identity, installation and issued
+// token must include the base Git permissions in PERMISSIONS. A missing or
+// weaker base permission produces a refusal naming that permission. Additional
+// grants are accepted. An operation that requires an additional grant the
+// installation lacks is refused by GitHub for that operation.
 export function gh_installation_token(directory, github, repository, jwt = app_jwt, request = api) {
-  return repository_token(directory, github, repository, GH_PERMISSIONS, {}, jwt, request, 'gh');
+  return repository_token(directory, github, repository, PERMISSIONS, {}, jwt, request, 'gh');
 }
 
 function origin_repository(environment) {
