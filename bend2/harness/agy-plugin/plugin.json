@@ -1,0 +1,4 @@
+{
+  "name": "baton",
+  "description": "Baton message delivery and assignment completion hooks for Antigravity CLI."
+}

@@ -7,6 +7,7 @@ import ./message-status.bend as Status
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ./input-hook.bend as InputHook
+import ./agy-hook.bend as AgyHook
 
 def owed_sql() -> String:
   "(SELECT count(*) FROM json_each((SELECT value FROM owed)))"
@@ -49,8 +50,17 @@ def decided(+db: String, +session: String, +input: String, unknown: Bool) -> IO(
   match unknown:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      event : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(input) ++ ") THEN json_extract(" ++ C.q(input) ++ ",'$.hook_event_name') ELSE '' END;")
-      route(db,session,String.eq(Tx.trim_nl(input_text(event)),"PostToolUse"))
+      event : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(input) ++ ") THEN CASE WHEN json_type(" ++ C.q(input) ++ ",'$.invocationNum')='integer' THEN 'agy-pre-invocation' WHEN json_type(" ++ C.q(input) ++ ",'$.terminationReason')='text' THEN 'agy-stop' ELSE coalesce(json_extract(" ++ C.q(input) ++ ",'$.hook_event_name'),'') END ELSE '' END;")
+      route_event(db,session,Tx.trim_nl(input_text(event)))
+
+def route_event(+db: String, +session: String, event: String) -> IO(Unit):
+  match event:
+    case "agy-pre-invocation": AgyHook.pre_invocation(db,session)
+    case "agy-stop": AgyHook.stop(db,session)
+    case "PostToolUse": InputHook.run(db,session)
+    case other: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,decision_sql(session))
+      answered(result)
 
 def run() -> IO(Unit):
   do IO<Unit>:
