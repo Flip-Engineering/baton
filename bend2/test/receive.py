@@ -434,8 +434,10 @@ dsh=args[:2]==['--profile','headless']
 if dsh:
     patches=[args[index+1] for index,argument in enumerate(args[:-1]) if argument=='--patch']
     model=re.search(r"^    model: '([^']*)'$",pathlib.Path(patches[1]).read_text(),re.M).group(1)
+    tools_patch=pathlib.Path(patches[0]).read_text()
 else:
     model=args[args.index('--model')+1]
+    tools_patch=''
 session=os.environ.get('BATON_SESSION',model)
 native_args=args[:]
 while native_args[:1]==['-c'] and len(native_args)>1: native_args=native_args[2:]
@@ -554,7 +556,8 @@ if config.get('inspect_session_guard'):
 reply({'pid':os.getpid(),'ppid':os.getppid(),'session':session,'native':native,'resume':resume,'args':args,'prompt':prompt,
        'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME',''),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ],
        'claudeAuthVariablesPresent':[key for key in ('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN') if key in os.environ],
-       'sessionGuardDescriptors':guard_descriptors})
+       'sessionGuardDescriptors':guard_descriptors,
+       'dshBridge':os.environ.get('BATON_DSH_WORKER_BRIDGE',''),'dshTools':tools_patch})
 while True:
     line=stream.readline()
     if not line: break
@@ -5190,6 +5193,47 @@ class Receive(unittest.TestCase):
         self.assertTrue(read_recorded(self.db, 'assignment', 'parent'))
         self.assertTrue(read_recorded(self.db, 'note', 'parent'))
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
+
+    def start_dsh_task(self, body='Complete the input.'):
+        self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player(harness='dsh')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config.update(record_launches=True, read_root=False)
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('first', 'parent', body, kind='task')
+        self.connect('parent')
+        receiver = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept_child(receiver, 'parent', 'receiver exited before the dsh stub started')
+        return receiver, control, started
+
+    def test_dsh_launch_resolves_the_worker_bridge_and_mounts_the_input_plugin(self):
+        """Every DSH launch resolves the packaged worker bridge and mounts the
+        Baton input plugin beside it (#1215). The bridge lookup runs before
+        spawn, so a missing file stops the launch."""
+        receiver, control, started = self.start_dsh_task()
+        scripts = (ROOT / 'bend2/scripts').resolve()
+        self.assertEqual(started['dshBridge'], str(scripts / 'dsh-worker.mjs'))
+        tools = started['dshTools']
+        self.assertIn("    - id: baton-hooks\n      name: '" + str(scripts / 'dsh-baton-hooks.mjs') + "'\n", tools)
+        self.assertLess(tools.index('- id: baton-hooks'), tools.index('- id: baton-worker'))
+        self.action(control, body='The DSH seat started with its bridge.', read=['first'], ack=False, complete_task=False)
+        self.assertEqual(control.readline(), b'')
+        self.finish(receiver)
+
+    def test_dsh_prompt_reads_are_recorded_at_the_session_frame(self):
+        """The DSH session frame is the native identity: the reads for the
+        input in its prompt are recorded then, so a turn that has started no
+        longer shows that input as owed (#1094)."""
+        receiver, control, started = self.start_dsh_task()
+        self.assertIn('[id: first]', started['prompt'])
+        self.eventually(lambda: read_recorded(self.db, 'first', 'parent'),
+                        'the prompt read was not recorded at the DSH session frame')
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.action(control, body='The DSH turn completed.', read=[], ack=False, complete_task=False)
+        self.assertEqual(control.readline(), b'')
+        self.finish(receiver)
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
 
     def test_direct_receive_behind_a_live_child_starts_no_second_turn(self):
