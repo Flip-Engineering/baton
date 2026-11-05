@@ -4630,6 +4630,15 @@ export function book_valid(book: Book, done: number = 0): void {
       continue;
     }
     if (fin && tld.v === null && tld.b !== true && !tld.i) {
+      const span = (tld.T as { s?: Span }).s;
+      const occurrences = book.order.flatMap((name, index) => name === k ? [index] : []);
+      console.error("OPEN_DEF " + JSON.stringify({
+        key: k,
+        order_index: i,
+        occurrences,
+        line: span === undefined ? null : span.src.slice(0, span.beg).split(String.fromCharCode(10)).length,
+        excerpt: span === undefined ? null : span.src.slice(span.beg, Math.min(span.src.length, span.end + 120)),
+      }));
       book.open += 1;
     }
     book.tlds[k] = dec;
