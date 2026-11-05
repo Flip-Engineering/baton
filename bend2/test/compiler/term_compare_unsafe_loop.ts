@@ -1,5 +1,5 @@
-// term_compare compares two calls of one definition by their arguments before
-// unfolding either. A law that reached an @unsafe loop recursing under a lambda
+// term_compare compares two calls of one @unsafe definition by their arguments and
+// does not unfold them. A law that reached an @unsafe loop recursing under a lambda
 // otherwise unfolded the loop without end: no error, and about 1 GB of memory per
 // minute until the host ran out (#1447). Each fixture runs in a child process
 // stopped at RESIDENT_CAP_KB or CHECK_MILLISECONDS, so a regression fails this test
