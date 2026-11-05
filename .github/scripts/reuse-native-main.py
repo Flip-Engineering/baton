@@ -23,6 +23,18 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
     },
+    '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957': {
+        'name': 'Bend 2.0.25 with compiler worker reuse and checked-store cleanup',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '4d8a487d5a9471154cc6a2e530560419ad29d285',
+        'source_tree': '8a7ba06a3f97bb5367731cba6f478e7c8bd85a02',
+        'source_lock_sha256': '9409738c6e4274ee544b27780a28e3bdbed8ea83215db62126e7fa27657591bc',
+        'source_manifest_sha256': 'df9a900c3d286206ec5d99a7d94fe9f744e75f80732bf0af9cc16d47f34c38e0',
+        'source_metadata_sha256': 'b4faea6aa40243f14e0890ee2244f9c597b28a1f62b6e417499f4e3ccbc28c9c',
+        'source_input_count': 84,
+    },
     '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d': {
         'name': 'Bend 2.0.25 with measured unit processes and checked-store cleanup',
         'official_release_artifact': False,
@@ -346,7 +358,9 @@ def verify_production_transition(origin, proof, current):
 
 
 def distribution(archive, home):
-    require(digest(archive) in COMPILER_ARCHIVES, 'Compiler archive differs from the pinned distributions.')
+    archive_sha = digest(archive)
+    require(archive_sha in COMPILER_ARCHIVES, 'Compiler archive differs from the pinned distributions.')
+    identity = COMPILER_ARCHIVES[archive_sha]
     expected = {}
     with tarfile.open(archive, 'r:gz') as source:
         for member in source:
@@ -377,6 +391,40 @@ def distribution(archive, home):
             expected[str(relative)] = row
     actual = {str(path.relative_to(home)) for path in home.rglob('*') if path.is_file() or path.is_symlink()}
     require(actual == set(expected), 'Extracted compiler distribution has missing or additional files.')
+    if 'source_commit' in identity:
+        manifest_path = home / 'fork-manifest.json'
+        source_path = home / 'provenance/source.json'
+        validation_path = home / 'provenance/validation.json'
+        require(digest(manifest_path) == identity['source_manifest_sha256'],
+                'Retained compiler source manifest differs from its registered SHA256.')
+        manifest = json.loads(manifest_path.read_text())
+        source = json.loads(source_path.read_text())
+        validation = json.loads(validation_path.read_text())
+        require(manifest.get('source_commit') == identity['source_commit']
+                and manifest.get('source_tree') == identity['source_tree']
+                and manifest.get('source_lock_sha256') == identity['source_lock_sha256'],
+                'Retained compiler manifest source identity differs from its registry entry.')
+        require(source.get('source_commit') == identity['source_commit']
+                and source.get('source_tree') == identity['source_tree']
+                and source.get('lock_sha256') == identity['source_lock_sha256']
+                and source.get('input_count') == identity['source_input_count']
+                and digest(source_path) == identity['source_metadata_sha256'],
+                'Retained compiler source metadata differs from its registry entry.')
+        require(validation.get('status') == 'not_run'
+                and validation.get('source_commit') == identity['source_commit']
+                and validation.get('source_tree') == identity['source_tree'],
+                'Retained compiler validation metadata does not identify unrun current source.')
+        lock_path = home / source['lock_path']
+        require(digest(lock_path) == identity['source_lock_sha256'],
+                'Retained compiler source lock differs from its registered SHA256.')
+        lock = json.loads(lock_path.read_text())
+        require(manifest.get('source_files') == lock.get('files'),
+                'Retained compiler source manifest differs from its lock.')
+        for row in manifest['source_files']:
+            path = home / 'bend2' / row['path']
+            require(path.is_file() and path.stat().st_size == row['bytes']
+                    and digest(path) == row['sha256'],
+                    'Retained compiler source file differs from its manifest: ' + row['path'])
     return [expected[key] for key in sorted(expected)]
 
 
