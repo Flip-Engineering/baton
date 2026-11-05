@@ -69,7 +69,7 @@ class NoticeMemory(receive.Receive):
             steered.append(json.loads(control.readline())['steer_received']['id'])
         self.assertEqual(steered.count('guidance'), 1)
         journal = attempt / 'guidance-forwarded'
-        self.eventually(lambda: len(journal.read_text().splitlines()) == len(steered),
+        self.eventually(lambda: journal.is_file() and len(journal.read_text().splitlines()) == len(steered),
                         'The forwarded guidance was not journaled.')
         sequence = journal.read_text().splitlines()[-1]
         with journal.open('a') as output:
