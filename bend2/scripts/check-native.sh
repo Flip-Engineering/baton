@@ -99,6 +99,10 @@ sh bend2/scripts/build-native.sh bend2/test/deepseek-usage.bend .scratch/bend2/d
 rm -f .scratch/bend2/deepseek-usage.db
 .scratch/bend2/deepseek-usage-test .scratch/bend2/deepseek-usage.db
 "$PYTHON3" bend2/test/usage-read-deepseek.py "$root/.scratch/bend2/usage-read"
+sh bend2/scripts/build-native.sh bend2/test/muse-usage.bend .scratch/bend2/muse-usage-test
+rm -f .scratch/bend2/muse-usage.db
+.scratch/bend2/muse-usage-test .scratch/bend2/muse-usage.db
+"$PYTHON3" bend2/test/usage-read-muse.py "$root/.scratch/bend2/usage-read"
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
 .scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db
