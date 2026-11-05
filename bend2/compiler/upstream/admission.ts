@@ -14,9 +14,7 @@ export interface Workers {
   next(): { pid: number | undefined } | null;
   // The largest resident size a worker reached while it started, or null before any worker has.
   baseline(): number | null;
-  // Resident bytes of the idle workers that retire() may stop: all idle workers but the next one.
-  retirable(): number;
-  // Stop the largest of those workers. False when no such worker exists.
+  // Stop one idle worker other than the next one. False when no such worker exists.
   retire(): Promise<boolean>;
 }
 type Observe = (event: string, details: Record<string, unknown>) => void;
@@ -77,7 +75,7 @@ export class Admission {
     const active = new Map<number, Active>(), values: T[] = new Array(jobs.length);
     const failures: unknown[] = [];
     let next = 0, plan: { forecast: Profile | undefined; started: number; ceiling: number } | undefined;
-    const evaluate = (): { allowed: boolean; limit: "memory" | "other" | null; shortfall: number } => {
+    const evaluate = (): { allowed: boolean; limit: "memory" | "other" | null } => {
       const name = key(jobs[next]), measured = this.profiles.get(name);
       const memory = available(), cpus = os.availableParallelism();
       let growth = 0, readable = true, measuring = false, observed = 0;
@@ -112,21 +110,16 @@ export class Admission {
       this.observe("admission", { key: name, allowed, measuring: measured === undefined,
         forecast, cpus, available: memory, reserved_growth: growth, need, residents,
         reuse: reuse !== null, baseline, coordinator: process.memoryUsage() });
-      return { allowed, limit: allowed || fits ? null : room && !fits_memory ? "memory" : "other",
-        shortfall: room ? need! + growth - memory.bytes! : 0 };
+      return { allowed, limit: allowed || fits ? null : room && !fits_memory ? "memory" : "other" };
     };
-    // Idle workers are stopped before a unit waits for memory, and only when the
-    // memory they hold covers what the unit lacks; stopping them otherwise would
-    // lose initialized workers and still leave the unit waiting.
+    // Memory held by idle workers is returned before a unit waits for it.
     const admit = async (): Promise<boolean> => {
       for (;;) {
         const decision = evaluate();
         if (decision.limit !== "memory") return decision.allowed;
-        const retirable = workers.retirable();
-        if (decision.shortfall > retirable) return false;
         const before = workers.next();
         if (!await workers.retire()) return false;
-        this.observe("retire", { kept: before?.pid, shortfall: decision.shortfall, retirable });
+        this.observe("retire", { kept: before?.pid });
       }
     };
     const start = (index: number): void => {

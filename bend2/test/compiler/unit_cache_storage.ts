@@ -35,13 +35,18 @@ function fixture(name: string, inputs = false) {
     unit: "main", segs: [], spins: [], statics: [], tabs: [], clos: [], lend: [], bytes: code.length }));
   const body = path.join(program, "body.json"), bodyText = "checked body";
   fs.writeFileSync(body, bodyText);
+  const header = JSON.stringify({ tld: {}, ctr: {}, src: {}, sites: {}, masks: {}, local: {}, bangs: [],
+    field: {}, show: hash("show"), wide: false });
+  fs.writeFileSync(path.join(program, "entries.json"), header);
   fs.writeFileSync(path.join(program, "index.json"), JSON.stringify({ compiler: hash("compiler"),
     header: { sha256: hash("header") }, tables: { sha256: hash("tables") },
-    bodies: inputs ? [["main", { file: "body.json", mode: "flat", sha256: hash(bodyText) }]] : [] }));
+    entries: { file: "entries.json", sha256: hash(header), bytes: header.length, nodes: 0 },
+    bodies: inputs ? [["main", { file: "body.json", mode: "flat", sha256: hash(bodyText), content: hash("content " + bodyText) }]] : [] }));
   process.env.XDG_CACHE_HOME = path.join(own, "cache");
   const cache = new UnitCache(program, own), job = { key: "main", facts_only: false, initial: Fact.empty() };
   const data = { unit: "main", facts_only: false, trace: [], lend: [], masks: [], refs: [], edges: [],
-    inputs: inputs ? [{ name: "main", mode: "flat", sha256: hash(bodyText) }] : [], fragment };
+    inputs: inputs ? [{ name: "main", mode: "flat", content: hash("content " + bodyText) }] : [],
+    reads: { names: [], listed: [] }, fragment };
   return { own, program, fragment, code, body, cache, job, data };
 }
 

@@ -26,8 +26,12 @@ const observations: Record<string, unknown>[] = [];
 function program(parent: string, name: string) {
   const program = path.join(parent, name); fs.mkdirSync(program);
   fs.mkdirSync(path.join(program, "fragments"));
+  const header = JSON.stringify({ tld: {}, ctr: {}, src: {}, sites: {}, masks: {}, local: {}, bangs: [],
+    field: {}, show: hash("show"), wide: false });
+  fs.writeFileSync(path.join(program, "entries.json"), header);
   fs.writeFileSync(path.join(program, "index.json"), JSON.stringify({ compiler: hash("compiler"),
-    header: { sha256: hash("header") }, tables: { sha256: hash("tables") }, bodies: [] }));
+    header: { sha256: hash("header") }, tables: { sha256: hash("tables") },
+    entries: { file: "entries.json", sha256: hash(header), bytes: header.length, nodes: 0 }, bodies: [] }));
   return program;
 }
 
@@ -37,7 +41,7 @@ function unit(program: string, name: string, bytes: number) {
   fs.writeFileSync(path.join(fragment, "metadata.json"), JSON.stringify({ directory: fragment,
     unit: name, segs: [], spins: [], statics: [], tabs: [], clos: [], lend: [], bytes: text.length }));
   const job = { key: name, facts_only: false, initial: Fact.empty() };
-  const data = { unit: name, facts_only: false, trace: [], lend: [], masks: [], refs: [], edges: [], inputs: [], fragment };
+  const data = { unit: name, facts_only: false, trace: [], lend: [], masks: [], refs: [], edges: [], inputs: [], reads: { names: [], listed: [] }, fragment };
   return { job, data, text, sha256: hash(text) };
 }
 
