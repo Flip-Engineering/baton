@@ -52,6 +52,16 @@ def run(+db: String, +attempt: String, +fresh: String) -> IO(Unit):
     check("fresh attempt cursor", "0", fresh_start)
     +first : String <- select(db,fresh_start)
     check("fresh attempt first pending", "1", first)
+    # Everything is forwarded: the query answers with the cursor itself and a
+    # trailing newline, which is the same position, so nothing is sent again. Raw
+    # text comparison re-sent the last message on every wake (#1443).
+    last : Unit <- Guidance.record_forwarded(attempt,"4")
+    +caught_up : String <- Guidance.replay_cursor(db,attempt,"0")
+    check("caught up cursor", "4", caught_up)
+    +answer : String <- IO.try(String,DB.Sql.query(db,Guidance.pending_sql("player",caught_up)))
+    check("query repeats the cursor with a newline", "4\n", answer)
+    check("caught up is one position", "same", Bool.pick(String,Guidance.same_position(caught_up,answer),"same","different"))
+    check("later input is another position", "different", Bool.pick(String,Guidance.same_position("3","4\n"),"same","different"))
     +owed : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient='player' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient);"))
     check("pending queue preserved", "4\n", owed)
     IO.pure(Unit,Unit{})

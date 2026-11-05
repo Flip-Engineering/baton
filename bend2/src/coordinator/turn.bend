@@ -241,7 +241,7 @@ def generation_log(+log: String, +id: String) -> String:
 # finish delivers the settled turn to its recorded coordinator.
 def recovery_observe(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
 
 def refusal_observed(+db: String, +player: String, +id: String, +event: String) -> IO(Unit):
   do IO<Unit>:
@@ -251,7 +251,7 @@ def refusal_observed(+db: String, +player: String, +id: String, +event: String) 
 
 def recovery_after(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
 
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
@@ -1241,19 +1241,21 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,written)))
       +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
       +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
-      +forwarded_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,drained,spool,Bool.and(String.eq(harness,"omp\n"),relevant),"",monitor)
       +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
       +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
       +terminal_frame : Bool <- primary_terminal(db,event,"",False{})
       +settled : Bool <- IO.pure(Bool,Bool.or(Bool.not(String.is_empty(terminal)),terminal_frame))
       +claude_mode : String <- IO.pure(String,Guidance.claude_mode(claude,settled,Guidance.background_live(activity)))
-      +next_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,forwarded_cursor,spool,Bool.and(claude,settled),claude_mode,monitor)
       +admitted : Bool <- terminal_admitted(db,event,next_primary,terminal_frame,String.eq(harness,"muse\n"))
       +state : String <- completion_state_event(db,id,player,event,Bool.and(admitted,Bool.not(sealed)))
       +observation_sealed : Bool <- IO.pure(Bool,terminal_observation_sealed(sealed,terminal_frame,admitted,state))
       conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
       +episode : String <- deferred_note(db,player,id,event,terminal,next_primary,next_current,Observer.episode(checkpoint_state),Bool.and(sealed,terminal_frame),String.eq(harness,"muse\n"),Tx.trim_nl(harness))
       +observed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed),Tx.trim_nl(harness)))
+      # The observation records the initial read from the identity frame, so the
+      # forward that follows selects only input the prompt did not carry (#1444).
+      +forwarded_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,drained,spool,Bool.and(String.eq(harness,"omp\n"),relevant),"",monitor)
+      +next_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,forwarded_cursor,spool,Bool.and(claude,settled),claude_mode,monitor)
       +terminal_selected : Bool <- IO.pure(Bool,Bool.and(relevant,Bool.and(admitted,Bool.not(sealed))))
       +ended : String <- terminal_event(event,terminal,terminal_selected)
       +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.and(Bool.not(monitor),Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended)))))))
@@ -1368,7 +1370,7 @@ def retained_output_state(+db: String, +player: String, +id: String, +log: Strin
     +spool : String <- IO.pure(String,directory ++ "/stdout")
     +spanned : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),Bool.or(String.eq(harness,"omp\n"),String.eq(harness,"codex\n"))))
     first : Result<&1,&1,U32 & String,WakeRead> <- next_wake(spool,handle,wake_sub,wake_on,spanned)
-    cursor : String <- IO.pure(String,Observer.cursor(checkpoint_state))
+    cursor : String <- Guidance.replay_cursor(db,attempt,Observer.cursor(checkpoint_state))
     last_message : String <- IO.pure(String,Observer.last_message(checkpoint_state))
     primary : String <- IO.pure(String,Observer.muse_primary(checkpoint_state))
     current : String <- IO.pure(String,Observer.muse_current(checkpoint_state))

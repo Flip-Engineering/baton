@@ -455,9 +455,10 @@ if config.get('early_failure'):
     sys.exit(1)
 native='native-'+model
 if omp:
-    json.loads(sys.stdin.readline())
-    state=json.loads(sys.stdin.readline())
-    prompt=json.loads(sys.stdin.readline())['message']
+    frames=[json.loads(sys.stdin.readline())]
+    while frames[-1]['type']!='prompt': frames.append(json.loads(sys.stdin.readline()))
+    state=next(frame for frame in frames if frame['type']=='get_state')
+    prompt=frames[-1]['message']
     storage=pathlib.Path(args[args.index('--session-dir')+1])
     storage.mkdir(parents=True,exist_ok=True)
     if resume:
@@ -1239,8 +1240,8 @@ class Receive(unittest.TestCase):
                     'INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
                     (f'guidance-{index}', 'root', 'parent', 'guidance',
                      body + f' marker-{index}'))
+        # The committed task's delivery starts the connected endpoint's receive.
         self.connect('parent')
-        observer = self.spawn(*self.receive_args('parent'))
         native, started = self.accept('parent')
         prompt = started['prompt']
         self.assertIn('[id: task-836-guidance]', prompt)
@@ -1253,7 +1254,8 @@ class Receive(unittest.TestCase):
         self.assertLess(len(prompt), 100_000,
                         'pending guidance bodies were expanded into the prompt')
         self.action(native, exit_fixture=True)
-        self.finish(observer, ok=False)
+        self.eventually(lambda: self.execution('parent')[0] == 'exited',
+                        'the delivered receive did not settle the native exit')
         pending = [row['id'] for row in self.coord('inbox', 'parent')]
         self.assertIn('guidance-0', pending)
         self.assertEqual(self.coord('delivery', 'guidance-0')['body'], body + ' marker-0')

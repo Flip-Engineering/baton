@@ -44,7 +44,8 @@ def forwarded_high(db: String, +attempt: String) -> IO(String):
     IO.pure(String,"0"))
 
 # The position a replay resumes guidance from: the send cursor, unless this
-# attempt already forwarded more.
+# attempt already forwarded more. The observer reads it once when it attaches.
+# It then holds the position itself, so a commit notice reads no journal (#1443).
 def replay_cursor(+db: String, +attempt: String, +cursor: String) -> IO(String):
   do IO<String>:
     high : String <- forwarded_high(db,attempt)
@@ -91,10 +92,16 @@ def outstanding_sql(+player: String) -> String:
 def pending_sql(+player: String, +cursor: String) -> String:
   "SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(player) ++ " AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"
 
+# A cursor holds a message sequence as text. A cursor from a query ends in a
+# newline and one from `replay_cursor` does not, so positions compare without it.
+# Comparing the raw text sent the last forwarded message again on every wake (#1443).
+def same_position(+cursor: String, +next: String) -> Bool:
+  String.eq(Tx.trim_nl(cursor),Tx.trim_nl(next))
+
 def pending(+db: String, +player: String, handle: U32, +attempt: String, +cursor: String) -> IO(String):
   do IO<String>:
     +next : String <- IO.try(String,DB.Sql.query(db,pending_sql(player,cursor)))
-    send(db,player,handle,attempt,cursor,next,String.eq(cursor,next))
+    send(db,player,handle,attempt,cursor,next,same_position(cursor,next))
 
 # An attempt with closed input keeps its current forwarding cursor.
 def pending_live(db: String, player: String, handle: U32, attempt: String, cursor: String, closed: U32) -> IO(String):
@@ -236,9 +243,7 @@ def drain_pending(+db: String, +player: String, +handle: U32, +attempt: String, 
 def awake_pending(+db: String, player: String, handle: U32, +attempt: String, +cursor: String, woke: Bool) -> IO(String):
   match woke:
     case False{}: IO.pure(String,cursor)
-    case True{}: do IO<String>:
-      start : String <- replay_cursor(db,attempt,cursor)
-      drain_pending(db,player,handle,attempt,start)
+    case True{}: drain_pending(db,player,handle,attempt,cursor)
 
 def terminal_sql(+value: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal(value) ++ " THEN 1 ELSE 0 END;"
