@@ -425,6 +425,12 @@ def connect_sql(+id: String, native: String, +endpoint: String) -> String:
 def configure_matches(session: String, harness: String, model: String, effort: String) -> String:
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ ")"
 
+# A usage hold is announced as one report message from the held seat, and the
+# matching release message ends it. A hold message without its release is
+# durable evidence that the seat waits on a provider usage window (#1016).
+def usage_held_sql(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM messages h WHERE h.sender=" ++ q(session) ++ " AND h.kind='report' AND h.id GLOB 'usage-read:*:hold:*' AND NOT EXISTS(SELECT 1 FROM messages x WHERE x.id=replace(h.id,':hold:',':release:')))"
+
 def configure_admitted(+session: String, +harness: String, +model: String, +endpoint: String, +expected_harness: String, +expected_model: String, expected_effort: String) -> String:
   "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh','antigravity') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
   ++ " AND (" ++ q(endpoint) ++ "='' OR " ++ endpoint_admitted(endpoint) ++ ")"

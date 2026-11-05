@@ -267,7 +267,8 @@ def configure_endpoint(+db: String, +id: String, +harness: String, +cmd: String,
 # A starting retained attempt whose native custody is absent cannot run. The
 # route change releases it in the same transaction that records the new route,
 # so a refused route change leaves the attempt and its owed input untouched.
-# Stop.starting_stranded supplies the custody evidence; a live prelaunch owner
+# Stop.starting_stranded supplies the custody evidence, and an unreleased usage
+# hold announces a start that parked before it launched; a live prelaunch owner
 # holds the session lock and cannot reach this lock holder.
 def starting_attempt_snapshot_sql(+session: String) -> String:
   "SELECT coalesce((SELECT id || char(9) || directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained' AND phase='starting'),'');"
@@ -278,6 +279,16 @@ def configure_release_write(+db: String, +id: String, +harness: String, +model: 
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql_releasing(id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,attempt,directory) ++ "COMMIT;"))
     migrated : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,"codex"),Bool.not(Tx.starts_with(saved,"{\"error\":\"configure-refused\""))),CodexRoute.normalize(db,id),IO.pure(String,""))
     IO.pure(String,saved)
+
+# A start parked by a usage hold never launched, so its recorded directory may
+# not exist and the custody files carry no evidence. The unreleased hold
+# announcement is durable evidence instead, and this change holds the session
+# lock that a live prelaunch owner would hold, so the parked row releases with
+# the route change and its owed input is admitted on the new route (#1016).
+def starting_usage_held(+db: String, +session: String) -> IO(Bool):
+  do IO<Bool>:
+    value : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN " ++ C.usage_held_sql(session) ++ " THEN '1' ELSE '0' END;"))
+    IO.pure(Bool,String.eq(value,"1\n"))
 
 
 # A successful route change releases the hold recorded on the previous route.
@@ -310,7 +321,11 @@ def configure_starting_fields(+db: String, +id: String, +harness: String, +model
       stranded : Bool <- Stop.starting_stranded(directory)
       Bool.pick(IO(String),stranded,
         configure_release_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,attempt,directory),
-        configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort))
+        do IO<String>:
+          usage_held : Bool <- starting_usage_held(db,id)
+          Bool.pick(IO(String),usage_held,
+            configure_release_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,attempt,directory),
+            configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort)))
     case other: configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort)
 
 def configure_starting_write(+db: String, +id: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String, snapshot: String) -> IO(String):

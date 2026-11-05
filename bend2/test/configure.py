@@ -224,6 +224,54 @@ class Configure(unittest.TestCase):
         self.assertEqual([(row['id'], row['phase'], row['status']) for row in execution],
                          [('attempt-held', 'exited', 'start failed')])
 
+    def test_route_change_releases_a_usage_held_starting_attempt(self):
+        self.root()
+        self.recruit('leaf')
+        parked = self.directory / 'usage-held-attempt'
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('leaf','attempt-usage','retained',?,'starting','')",
+                       (str(parked),))
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES("
+                       "'usage-read:7:hold:leaf','leaf','root','report',"
+                       "'usage hold: seat leaf (model kimi-code/k3) is held by a provider window.')")
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES("
+                       "'held-task','root','leaf','task',?)", (self.task.read_text(),))
+            db.commit()
+        changed = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
+                             ('omp', 'kimi-code/k3', 'low'))
+        self.assertEqual(changed['model'], 'gpt-6-astra')
+        self.assertFalse(parked.exists())
+        self.assertEqual([(row['id'], row['phase'], row['status']) for row in
+                          self.rows("SELECT * FROM executions WHERE session='leaf'")],
+                         [('attempt-usage', 'exited', 'start failed')])
+        self.assertEqual(self.call('delivery', 'held-task')['body'], self.task.read_text())
+
+    def test_route_change_keeps_a_starting_attempt_after_its_hold_released(self):
+        self.root()
+        self.recruit('leaf')
+        parked = self.directory / 'released-hold-attempt'
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('leaf','attempt-released','retained',?,'starting','')",
+                       (str(parked),))
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES("
+                       "'usage-read:7:hold:leaf','leaf','root','report',"
+                       "'usage hold: seat leaf (model kimi-code/k3) is held by a provider window.')")
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES("
+                       "'usage-read:7:release:leaf','leaf','root','report',"
+                       "'usage hold released: seat leaf. Owed input is admitted.')")
+            db.commit()
+        before = self.assignment('leaf')
+        refused = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
+                             ('omp', 'kimi-code/k3', 'low'), ok=False)
+        self.assertEqual(refused['code'], 2)
+        self.assertIn('configure-refused', refused['stderr'])
+        self.assertEqual(self.assignment('leaf'), before)
+        self.assertEqual([(row['id'], row['phase'], row['status']) for row in
+                          self.rows("SELECT * FROM executions WHERE session='leaf'")],
+                         [('attempt-released', 'starting', '')])
+
     def test_route_change_preserves_a_locked_prelaunch_attempt(self):
         self.root()
         self.recruit('leaf')
