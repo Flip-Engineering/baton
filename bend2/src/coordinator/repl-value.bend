@@ -8,7 +8,7 @@ import ../coordinator/commands.bend as C
 def checked_value_sql(+cell: String) -> String:
   "SELECT CASE WHEN json_valid(a.stdout) THEN CASE WHEN json_extract(a.stdout,'$.kind')='pure' AND json_extract(a.stdout,'$.type')='String' AND json_valid(json_extract(a.stdout,'$.value')) THEN CASE WHEN json_type(json_extract(a.stdout,'$.value'))='text' THEN json_extract(json_extract(a.stdout,'$.value'),'$') END END END FROM repl_attempts a WHERE a.cell=" ++ cell ++ " AND a.stage='compiler'"
 
-def checkpoint(+db: String, +actor: String, +cell: String) -> IO(Unit):
+def checkpoint_owned(+db: String, +actor: String, +cell: String) -> IO(Unit):
   do IO<Unit>:
     owned : String <- Context.cite(db,actor,cell)
     +value : String <- M.scalar(db,checked_value_sql(C.q(cell)))
@@ -20,6 +20,32 @@ def checkpoint(+db: String, +actor: String, +cell: String) -> IO(Unit):
     current : Unit <- M.check(db,"EXISTS(SELECT 1 FROM repl_context_bindings WHERE owner=" ++ C.q(actor) ++ " AND cell=" ++ C.q(cell) ++ ")","The context or session changed before its checkpoint committed.")
     body : String <- Context.cite(db,actor,cell)
     IO.write(body ++ "\n")
+
+# A recipient adopts one shared checkpointed version as its own context
+# binding. The binding names the owner's immutable cell; later owner
+# checkpoints create new cells and do not move the recipient's binding.
+# Adoption records the received share message through the owned-read path.
+def adopt(+db: String, +actor: String, +cell: String) -> IO(Unit):
+  do IO<Unit>:
+    message : String <- M.scalar(db,"SELECT m.id FROM repl_shares g JOIN messages m ON m.id=g.message JOIN repl_cells c ON c.id=g.cell JOIN repl_notebooks n ON n.id=c.notebook WHERE c.id=" ++ C.q(cell) ++ " AND m.recipient=" ++ C.q(actor) ++ " AND m.sender=n.owner AND m.kind='bend-repl' ORDER BY m.seq LIMIT 1")
+    observed : Unit <- Context.read_received(db,message)
+    +guard : String = "EXISTS(SELECT 1 FROM repl_context_values v JOIN repl_cells c ON c.id=v.cell JOIN repl_notebooks n ON n.id=c.notebook WHERE v.cell=" ++ C.q(cell) ++ " AND " ++ Context.visible_sql(actor) ++ ") AND NOT " ++ C.stopped_session_sql(C.q(actor))
+    saved : Unit <- M.write(db,
+      "INSERT INTO repl_context_bindings(owner,cell,version) SELECT " ++ C.q(actor) ++ "," ++ C.q(cell) ++ ",1 WHERE " ++ guard ++ " ON CONFLICT(owner) DO UPDATE SET cell=excluded.cell,version=repl_context_bindings.version+1 WHERE repl_context_bindings.cell<>excluded.cell;")
+    current : Unit <- M.check(db,"EXISTS(SELECT 1 FROM repl_context_bindings WHERE owner=" ++ C.q(actor) ++ " AND cell=" ++ C.q(cell) ++ ")","Select a checkpointed context value shared with this actor.")
+    body : String <- M.scalar(db,"SELECT " ++ Context.metadata_sql() ++ " FROM repl_cells c JOIN repl_notebooks n ON n.id=c.notebook WHERE c.id=" ++ C.q(cell))
+    IO.write(body ++ "\n")
+
+# Checkpoint resolves the reference in the actor's own notebook first. A
+# reference that names no owned cell resolves as an owned or received
+# citation: the owner checkpoints its checked String value, and a recipient
+# adopts the already checkpointed version.
+def checkpoint(+db: String, +actor: String, +notebook: String, +reference: String) -> IO(Unit):
+  do IO<Unit>:
+    +ownedCell : String <- M.scalar(db,"SELECT id FROM repl_cells WHERE notebook=" ++ C.q(notebook) ++ Bool.pick(String,String.is_empty(reference)," ORDER BY seq DESC LIMIT 1"," AND (id=" ++ C.q(reference) ++ " OR label=" ++ C.q(reference) ++ ") ORDER BY seq DESC LIMIT 1"))
+    +cell : String <- Bool.pick(IO(String),Bool.not(String.is_empty(ownedCell)),IO.pure(String,ownedCell),Context.selected(db,actor,reference))
+    owner : String <- M.scalar(db,"SELECT n.owner FROM repl_cells c JOIN repl_notebooks n ON n.id=c.notebook WHERE c.id=" ++ C.q(cell))
+    Bool.pick(IO(Unit),String.eq(owner,actor),checkpoint_owned(db,actor,cell),adopt(db,actor,cell))
 
 def bound(+db: String, +actor: String, +reference: String, +turn: String) -> IO(String):
   Bool.pick(IO(String),String.is_empty(turn),

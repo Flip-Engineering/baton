@@ -96,6 +96,45 @@ class ContextValues(fixture.ReplContext):
         self.assertEqual(self.query('SELECT turn,cell,version FROM repl_context_turns'),
                          [('context-turn-unbound', None, None)])
 
+    def test_recipient_adopts_shared_checkpoint_and_turns_pin_it(self):
+        cell, receipt = self.checkpoint({'step': 1, 'facts': ['transfer']})
+        self.repl('author', 'checkpoint', '--cell', receipt['citation'])
+        self.repl('recipient', 'checkpoint', '--cell', receipt['citation'], success=False)
+        self.assertEqual(self.query('SELECT count(*) FROM repl_context_bindings '
+                                    "WHERE owner='recipient'"), [(0,)])
+        self.share(cell)
+        adopted = json.loads(self.repl('recipient', 'checkpoint', '--cell',
+                                       receipt['citation']).stdout.strip().splitlines()[-1])
+        self.assertEqual(adopted['citation'], receipt['citation'])
+        self.assertEqual(self.query('SELECT cell,version FROM repl_context_bindings '
+                                    "WHERE owner='recipient'"), [(cell, 1)])
+        self.assertEqual(json.loads(self.projected('recipient')['fragment']),
+                         {'step': 1, 'facts': ['transfer']})
+        self.repl('recipient', 'checkpoint', '--cell', receipt['citation'])
+        self.assertEqual(self.query('SELECT cell,version FROM repl_context_bindings '
+                                    "WHERE owner='recipient'"), [(cell, 1)])
+        self.invoke('attach', 'coordinator', 'fixture', '', '')
+        with fixture.sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE sessions SET parent='coordinator' WHERE id='recipient'")
+        terminal = json.dumps({'type': 'result', 'subtype': 'success', 'result': 'adopted turn'})
+        self.observe('recipient', 'transfer-turn-1', terminal)
+        self.assertEqual(self.query('SELECT turn,cell,version FROM repl_context_turns'),
+                         [('transfer-turn-1', cell, 1)])
+        self.checkpoint({'step': 2})
+        self.assertEqual(json.loads(self.projected('recipient')['fragment']),
+                         {'step': 1, 'facts': ['transfer']})
+        self.repl('outsider', 'checkpoint', '--cell', receipt['citation'], success=False)
+        self.assertEqual(self.query('SELECT count(*) FROM repl_context_bindings '
+                                    "WHERE owner='outsider'"), [(0,)])
+
+    def test_recipient_cannot_adopt_uncheckpointed_or_unshared_value(self):
+        cell = self.context_cell({'step': 9})
+        citation = self.cite(cell)['citation']
+        self.share(cell)
+        self.repl('recipient', 'checkpoint', '--cell', citation, success=False)
+        self.assertEqual(self.query('SELECT count(*) FROM repl_context_bindings '
+                                    "WHERE owner='recipient'"), [(0,)])
+
     def test_invalid_context_cannot_replace_the_committed_value(self):
         cell, receipt = self.checkpoint({'valid': True})
         for expression, expected in [('42', 'U32'), ('"not json"', 'String')]:
