@@ -1406,6 +1406,27 @@ typedef struct {
   int identity;
 } BatonSqlReadCache;
 
+/* Caller SQL has the same connection lifetime it had before the read cache.
+   Some successful read-only statements still change connection-local state:
+   PRAGMAs can change connection settings, ATTACH and DETACH change the schema
+   set, and TEMP objects live on the connection. Mark those calls so the handle
+   is closed after returning their result. Ordinary reads keep using the cache. */
+static int baton_sql_read_connection_state(void *context, int action,
+                                           const char *first,
+                                           const char *second,
+                                           const char *database,
+                                           const char *trigger) {
+  (void)first;
+  (void)second;
+  (void)trigger;
+  int *discard = context;
+  if (action == SQLITE_PRAGMA || action == SQLITE_ATTACH ||
+      action == SQLITE_DETACH ||
+      (database && strcmp(database, "temp") == 0))
+    *discard = 1;
+  return SQLITE_OK;
+}
+
 static pthread_key_t baton_sql_read_key;
 static pthread_once_t baton_sql_read_once = PTHREAD_ONCE_INIT;
 static int baton_sql_read_key_ready;
@@ -1567,11 +1588,18 @@ static void baton_sql_read_call(IoWork *w) {
     return;
   }
   sqlite3_busy_handler(db, baton_sql_busy, NULL);
+  int discard_cache = 0;
   /* The read-only connection checks database encoding on open and checks
      foreign keys before each query. */
   call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, &error);
-  if (call->code == SQLITE_OK)
-    call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
+  if (call->code == SQLITE_OK) {
+    call->code = sqlite3_set_authorizer(db,
+        baton_sql_read_connection_state, &discard_cache);
+    if (call->code == SQLITE_OK)
+      call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
+    if (sqlite3_set_authorizer(db, NULL, NULL) != SQLITE_OK)
+      discard_cache = 1;
+  }
   if (call->code != SQLITE_OK) {
     call->error = strdup(error ? error : sqlite3_errmsg(db));
     sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
@@ -1598,6 +1626,11 @@ static void baton_sql_read_call(IoWork *w) {
     }
   }
   sqlite3_free(error);
+  if (db && cached && discard_cache) {
+    BatonSqlReadCache *cache = baton_sql_read_cache(0);
+    if (cache && cache->db == db) baton_sql_read_close(cache);
+    db = NULL;
+  }
   if (db && !cached) sqlite3_close(db);
 }
 

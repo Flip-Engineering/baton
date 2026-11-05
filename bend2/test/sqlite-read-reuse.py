@@ -108,6 +108,7 @@ class SqliteReadReuse(unittest.TestCase):
                       'replacement-before', 'replacement-after',
                       'multi-statement', 'busy-read', 'fork-forget-inherited',
                       'fork-tls-destructor', 'fork-parent-after',
+                      'connection-state-boundary',
                       'encoding-refusal', 'encoding-utf8',
                       'lifecycle'):
             self.assertIn('ok ' + label, result.stdout)
