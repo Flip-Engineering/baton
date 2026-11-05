@@ -78,6 +78,11 @@ def runtime_epoch_value(+epoch: String) -> String:
 def association_schema() -> String:
   "CREATE TABLE IF NOT EXISTS semantic_admissions (query_id TEXT PRIMARY KEY NOT NULL REFERENCES semantic_queries(id),plan_value TEXT NOT NULL,plan_identity TEXT NOT NULL,result_schema TEXT NOT NULL,origin_attempt TEXT,CHECK(json_valid(plan_value)));"
 
+# The managed runtime binds the verified invocation bytes to the exact immutable
+# bootstrap in the same transaction as the plan association.
+def managed_artifact_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS semantic_admission_artifacts (query_id TEXT PRIMARY KEY NOT NULL REFERENCES semantic_queries(id),artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256)=64),bootstrap_text TEXT NOT NULL CHECK(json_valid(bootstrap_text)));"
+
 def association_present(id: String) -> String:
   "EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ")"
 
@@ -94,7 +99,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS semantic_runtimes (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),origin_attempt TEXT,launch_query TEXT NOT NULL UNIQUE,adapter_id TEXT NOT NULL,state TEXT NOT NULL," ++ runtime_epoch_column() ++ ",pending_query TEXT,outcome_json TEXT,CHECK(outcome_json IS NULL OR json_valid(outcome_json)));"
   ++ "CREATE TABLE IF NOT EXISTS semantic_roles (query_id TEXT NOT NULL REFERENCES semantic_queries(id),role TEXT NOT NULL CHECK(role IN ('starter','target','adapter')),incarnation TEXT NOT NULL,keeper_path TEXT NOT NULL UNIQUE,guard_anchor TEXT NOT NULL,guard_key TEXT NOT NULL,guard_identity_json TEXT NOT NULL,recovery_argv_json TEXT NOT NULL,database_binding_json TEXT NOT NULL,phase TEXT NOT NULL,observer_identity_json TEXT,observer_cursor TEXT NOT NULL,exit_evidence_json TEXT,capture_json TEXT,release_intent_json TEXT,cleanup_phase TEXT NOT NULL,PRIMARY KEY(query_id,role,incarnation),CHECK(json_valid(guard_identity_json)),CHECK(json_valid(recovery_argv_json)),CHECK(json_valid(database_binding_json)),CHECK(observer_identity_json IS NULL OR json_valid(observer_identity_json)),CHECK(exit_evidence_json IS NULL OR json_valid(exit_evidence_json)),CHECK(capture_json IS NULL OR json_valid(capture_json)),CHECK(release_intent_json IS NULL OR json_valid(release_intent_json)));"
   ++ "CREATE INDEX IF NOT EXISTS semantic_queries_owner ON semantic_queries(owner);"
-  ++ "CREATE INDEX IF NOT EXISTS semantic_roles_keeper ON semantic_roles(guard_key);" ++ association_schema()
+  ++ "CREATE INDEX IF NOT EXISTS semantic_roles_keeper ON semantic_roles(guard_key);" ++ association_schema() ++ managed_artifact_schema()
 
 # The runtime epoch is a canonical unsigned decimal counter of arbitrary length; it
 # is stored and inserted as text so no SQLite numeric conversion can coerce it.
@@ -298,6 +303,11 @@ def text_or_null(+value: String) -> String:
 # rendering is the carrier, and the identity is what a replay compares without parsing.
 def association_insert_sql(+id: String, +planValue: String, +planIdentity: String, +resultSchema: String, +originAttempt: String) -> String:
   ("INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ ",") ++ (C.q(planValue) ++ "," ++ C.q(planIdentity) ++ "," ++ C.q(resultSchema) ++ "," ++ text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");")
+
+def managed_artifact_insert_sql(+id: String, +artifactSha256: String, +bootstrapText: String) -> String:
+  "INSERT INTO semantic_admission_artifacts(query_id,artifact_sha256,bootstrap_text) SELECT "
+  ++ C.q(id) ++ "," ++ C.q(artifactSha256) ++ "," ++ C.q(bootstrapText)
+  ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admission_artifacts WHERE query_id=" ++ C.q(id) ++ ");"
 
 # The repeated-ID rule of the store: the same ID, owner and canonical request text
 # replay the stored row; any other reuse aborts the transaction through the NOT NULL

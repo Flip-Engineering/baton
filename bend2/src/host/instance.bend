@@ -7,6 +7,11 @@ import ./process.bend as P
 def Instance.owner(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
+# Reads the live owner's token and epoch. Callers pass this witness to owner
+# work admissions so a restarted owner cannot accept stale authority.
+def Instance.owner_witness(database: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
 # Starts a native attempt under the database owner and joins it as its observer.
 # The result carries the attempt handle, or the reason no native child started.
 def Instance.admit_start(database: String, directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
@@ -14,19 +19,19 @@ def Instance.admit_start(database: String, directory: String, argv: String, cwd:
 
 # Prepares owner custody, attaches this observer, and returns after its ready acknowledgment.
 # The host binds the opaque managed-query bootstrap and reports its durable ready witness.
-def Instance.prepare_start(database: String, directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String, bootstrap: String) -> IO(Result<&1,&1,U32 & String,U32 & String & String>):
+def Instance.prepare_start(database: String, directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String, bootstrap: String, owner_witness: String) -> IO(Result<&1,&1,U32 & String,U32 & String & String>):
   import "./process-spawn.c"
 
 # The artifact bytes are sealed into attempt custody before the owner reports ready.
-def Instance.prepare_with_file_start(database: String, directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String, bootstrap: String) -> IO(Result<&1,&1,U32 & String,U32 & String & String>):
+def Instance.prepare_with_file_start(database: String, directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String, bootstrap: String, owner_witness: String) -> IO(Result<&1,&1,U32 & String,U32 & String & String>):
   import "./process-spawn.c"
 
 # Applies an accepted Core decision that the managed caller matched to the bootstrap.
-def Instance.start(handle: U32, bootstrap: String, decision: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def Instance.start(handle: U32, bootstrap: String, decision: String, owner_witness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
 # Applies a rejected Core decision before any start was latched.
-def Instance.cancel(handle: U32, bootstrap: String, decision: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def Instance.cancel(handle: U32, bootstrap: String, decision: String, owner_witness: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
 # Joins an existing attempt as its observer.

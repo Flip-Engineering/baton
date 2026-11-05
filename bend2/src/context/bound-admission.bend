@@ -41,6 +41,12 @@ type Association is Data:
   AssociationMissing{}
   AssociationMalformed{stage: String, answer: String}
 
+type ManagedAssociation is Data:
+  ManagedAssociationStored{planValue: String, planIdentity: String,
+    resultSchema: String, artifactSha256: String, bootstrapText: String}
+  ManagedAssociationMissing{}
+  ManagedAssociationMalformed{stage: String, answer: String}
+
 def hex_digit_ok(c: Char) -> Bool:
   +code = Char.to_u32(c)
   Bool.or(Bool.and(U32.is_lt(47, code), U32.is_lt(code, 58)),
@@ -102,6 +108,73 @@ def association_decode_lines(lines: List<String>, +answer: String) -> Associatio
 
 def association_decode(+row: String) -> Association:
   association_decode_lines(Tx.split_lines(row), row)
+
+def managed_association_scalars(plan: Request.Scalar, identity: Request.Scalar,
+                                schema: Request.Scalar, bootstrap: Request.Scalar,
+                                +artifact_sha: String, +answer: String) -> ManagedAssociation:
+  match plan:
+    case Request.ScalarText{plan_value}:
+      match identity:
+        case Request.ScalarText{plan_identity}:
+          match schema:
+            case Request.ScalarText{result_schema}:
+              match bootstrap:
+                case Request.ScalarText{bootstrap_text}:
+                  ManagedAssociationStored{plan_value, plan_identity,
+                    result_schema, artifact_sha, bootstrap_text}
+                case _: ManagedAssociationMalformed{"scalar", answer}
+            case _: ManagedAssociationMalformed{"scalar", answer}
+        case _: ManagedAssociationMalformed{"scalar", answer}
+    case _: ManagedAssociationMalformed{"scalar", answer}
+
+def managed_association_scalar(+plan: String, +identity: String, +schema: String,
+                               +artifact_sha: String, +bootstrap: String,
+                               +answer: String) -> ManagedAssociation:
+  managed_association_scalars(
+    Request.decode_scalar_utf8(ContextText.hex_decode(plan)),
+    Request.decode_scalar_utf8(ContextText.hex_decode(identity)),
+    Request.decode_scalar_utf8(ContextText.hex_decode(schema)),
+    Request.decode_scalar_utf8(ContextText.hex_decode(bootstrap)), artifact_sha, answer)
+
+def managed_association_mark(+mark: String, +plan: String, +identity: String,
+                             +schema: String, +artifact_mark: String,
+                             +artifact_sha: String, +bootstrap: String,
+                             +answer: String) -> ManagedAssociation:
+  Bool.pick(ManagedAssociation, String.eq(mark, "absent"),
+    Bool.pick(ManagedAssociation,
+      Bool.and(Bool.and(String.is_empty(plan), String.is_empty(identity)),
+        Bool.and(String.is_empty(schema),
+          Bool.and(String.eq(artifact_mark, "absent"),
+            Bool.and(String.is_empty(artifact_sha), String.is_empty(bootstrap))))),
+      ManagedAssociationMissing{}, ManagedAssociationMalformed{"absentShape", answer}),
+    Bool.pick(ManagedAssociation, String.eq(mark, "present"),
+      Bool.pick(ManagedAssociation,
+        Bool.and(Bool.and(hex_ok(plan), hex_ok(identity)),
+          Bool.and(Bool.and(hex_ok(schema), hex_ok(bootstrap)),
+            Bool.and(String.eq(artifact_mark, "present"),
+              Bool.and(Nat.is_eq(String.length(artifact_sha), 64n), hex_ok(artifact_sha))))),
+        managed_association_scalar(plan, identity, schema, artifact_sha, bootstrap, answer),
+        ManagedAssociationMalformed{"framing", answer}),
+      ManagedAssociationMalformed{"mark", answer}))
+
+def managed_association_fields(fields: List<String>, +answer: String) -> ManagedAssociation:
+  match fields:
+    case +mark <> +plan <> +identity <> +schema <> +artifact_mark <> +artifact_sha <> +bootstrap <> Nil{}:
+      managed_association_mark(mark, plan, identity, schema, artifact_mark,
+        artifact_sha, bootstrap, answer)
+    case Nil{}: ManagedAssociationMalformed{"empty", answer}
+    case other: ManagedAssociationMalformed{"shape", answer}
+
+def managed_association_lines(lines: List<String>, +answer: String) -> ManagedAssociation:
+  match lines:
+    case Nil{}: ManagedAssociationMalformed{"empty", answer}
+    case +line <> rest:
+      match rest:
+        case Nil{}: managed_association_fields(ContextText.split_tabs(line), answer)
+        case other: ManagedAssociationMalformed{"surplus", answer}
+
+def managed_association_decode(+row: String) -> ManagedAssociation:
+  managed_association_lines(Tx.split_lines(row), row)
 
 def admit_present(+id: String) -> String:
   "EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(id) ++ ")"
@@ -293,6 +366,34 @@ def admit_associated(+db: String, +binding: String, +id: String, +owner: String,
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, admit_associated_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, planIdentity, resultSchema))
     admit_after(result)
 
+def admit_managed_associated_sql(+id: String, +owner: String, +requestJson: String,
+                                 +keeperPath: String, +cwd: String,
+                                 +originAttempt: String, +artifactPath: String,
+                                 +planValue: String, +planIdentity: String,
+                                 +resultSchema: String, +artifactSha: String,
+                                 +bootstrapText: String) -> String:
+  "BEGIN IMMEDIATE;" ++ ContextStore.schema()
+  ++ admit_query_insert_sql(id, owner, requestJson, keeperPath, cwd,
+       originAttempt, artifactPath)
+  ++ ContextStore.association_insert_sql(id, planValue, planIdentity,
+       resultSchema, originAttempt)
+  ++ ContextStore.managed_artifact_insert_sql(id, artifactSha, bootstrapText)
+  ++ admit_row_sql(id) ++ "COMMIT;"
+
+def admit_managed_associated(+db: String, +binding: String, +id: String,
+                             +owner: String, +requestJson: String,
+                             +keeperPath: String, +cwd: String,
+                             +originAttempt: String, +artifactPath: String,
+                             +planValue: String, +planIdentity: String,
+                             +resultSchema: String, +artifactSha: String,
+                             +bootstrapText: String) -> IO(Result<&1,&1,U32 & String,Admission>):
+  do IO<Result<&1,&1,U32 & String,Admission>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      admit_managed_associated_sql(id, owner, requestJson, keeperPath, cwd,
+        originAttempt, artifactPath, planValue, planIdentity, resultSchema,
+        artifactSha, bootstrapText))
+    admit_after(result)
+
 
 def association_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Association>):
   match result:
@@ -303,6 +404,28 @@ def readback_association(+db: String, +binding: String, +id: String) -> IO(Resul
   do IO<Result<&1,&1,U32 & String,Association>>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, association_readback_sql(id))
     association_after(result)
+
+def managed_association_readback_sql(+id: String) -> String:
+  "BEGIN IMMEDIATE;" ++ ContextStore.schema()
+  ++ "SELECT CASE WHEN EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ") THEN 'present' ELSE 'absent' END,"
+  ++ "coalesce((SELECT hex(plan_value) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),''),"
+  ++ "coalesce((SELECT hex(plan_identity) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),''),"
+  ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),''),"
+  ++ "CASE WHEN EXISTS(SELECT 1 FROM semantic_admission_artifacts WHERE query_id=" ++ C.q(id) ++ ") THEN 'present' ELSE 'absent' END,"
+  ++ "coalesce((SELECT artifact_sha256 FROM semantic_admission_artifacts WHERE query_id=" ++ C.q(id) ++ "),''),"
+  ++ "coalesce((SELECT hex(bootstrap_text) FROM semantic_admission_artifacts WHERE query_id=" ++ C.q(id) ++ "),'');COMMIT;"
+
+def managed_association_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,ManagedAssociation>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,ManagedAssociation>, Fail{error})
+    case Done{+rows}: IO.pure(Result<&1,&1,U32 & String,ManagedAssociation>,
+      Done{managed_association_decode(rows)})
+
+def readback_managed_association(+db: String, +binding: String, +id: String) -> IO(Result<&1,&1,U32 & String,ManagedAssociation>):
+  do IO<Result<&1,&1,U32 & String,ManagedAssociation>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+      managed_association_readback_sql(id))
+    managed_association_after(result)
 
 # Whether a retained answer carries the caller's own owner and canonical request.
 # A different owner or request is a conflict the caller must refuse; this predicate

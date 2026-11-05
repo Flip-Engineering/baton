@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 
-import { installedModuleInventory, moduleDirectoryName, resolveSelectedPackageRoot } from '../scripts/context-provider.mjs';
+import { installedModuleInventory, moduleDirectoryName, resolveSelectedPackageRoot, verifyInvocationArtifact } from '../scripts/context-provider.mjs';
 
 test('installed provider resolves the module named by the frozen binding below its wrapper prefix', () => {
   const prefix = mkdtempSync(join(tmpdir(), 'baton2-installed-context-'));
@@ -117,5 +117,48 @@ test('generic project policy entry runs from Core assets with no selected module
     assert.deepEqual(JSON.parse(present.stdout).disabled, ['example.disabled']);
   } finally {
     rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+test('retained invocation file supplies the exact native provider request', () => {
+  const prefix = mkdtempSync(join(tmpdir(), 'baton2-invocation-artifact-'));
+  try {
+    const wrapperDir = join(prefix, 'libexec/baton2');
+    const attempt = join(prefix, 'attempt');
+    mkdirSync(wrapperDir, { recursive: true });
+    mkdirSync(attempt, { mode: 0o700 });
+    const wrapper = join(wrapperDir, 'context-provider.mjs');
+    copyFileSync(new URL('../scripts/context-provider.mjs', import.meta.url), wrapper);
+    const artifact = join(attempt, 'invocation.json');
+    writeFileSync(artifact, JSON.stringify({
+      version: 2,
+      query: 'q-artifact',
+      owner: 'owner-artifact',
+      moduleBinding: { id: 'uninstalled-provider', revision: '1', declarationDigest: 'a'.repeat(64),
+        protocolVersion: '2', operation: 'sourceAnalysis', artifactIdentities: [], schemaIdentities: [] },
+      request: {}, inputIdentities: [], operationPlan: [], role: 'starter', incarnation: '0',
+    }), { mode: 0o400 });
+    const result = spawnSync(process.execPath, [wrapper, '--invoke-file', artifact], {
+      input: 'invalid stdin', encoding: 'utf8',
+    });
+    assert.equal(result.status, 2, result.stderr + result.stdout);
+    assert.equal(JSON.parse(result.stdout).reason, 'selectedModulePackageUnavailable');
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+test('invocation artifact verification refuses writable files and malformed framing', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton2-verify-invocation-'));
+  try {
+    const writable = join(directory, 'writable.json');
+    writeFileSync(writable, '{}', { mode: 0o600 });
+    assert.equal(verifyInvocationArtifact(writable).reason, 'invocationArtifactFileInvalid');
+
+    const malformed = join(directory, 'malformed.json');
+    writeFileSync(malformed, '{\n}', { mode: 0o400 });
+    assert.equal(verifyInvocationArtifact(malformed).reason, 'invocationArtifactFramingInvalid');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
