@@ -96,7 +96,7 @@ identities. They remain available for integrations and exact replay:
 .scratch/bend2/baton2 state.db bind worker1 NATIVE_SESSION omp OBSERVED_MODEL high
 .scratch/bend2/baton2 state.db report turn1 worker1 BODY
 .scratch/bend2/baton2 state.db inbox root
-.scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch origin
+.scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch
 .scratch/bend2/baton2 state.db push /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db status
