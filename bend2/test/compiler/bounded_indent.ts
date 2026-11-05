@@ -1,7 +1,9 @@
 // Usage: bun bend2/test/compiler/bounded_indent.ts [REPOSITORY_ROOT]
 // Emitted C leading indentation is capped, and the capped source is
-// token-identical to the uncapped source for a deeply nested literal match.
-// The temp compiler disables the branch C literal lowering so this test isolates the indentation cap.
+// token-identical to the uncapped source for a deeply nested constructor match.
+// A six-subject String constructor match keeps its per-subject decision `if`
+// levels inline in one unit, so the uncapped output reaches 18 spaces while
+// the capped output stays at the 16-space cap.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
@@ -26,16 +28,21 @@ function instrument(source: string): string {
 
 const fixture = `import Base
 
-def dispatch(args: List<String>) -> IO(Unit):
+def dispatch(a: String, b: String, c: String, d: String, e: String, f: String) -> IO(Unit):
+  match a b c d e f:
+    case SNil{} SNil{} SNil{} SNil{} SNil{} SNil{}: IO.die(Unit, 21, "all-nil")
+    case SCon{_, t1} SCon{_, _} SCon{_, _} SCon{_, _} SCon{_, _} SCon{_, _}: IO.die(Unit, 22, t1)
+    case _ _ _ _ _ _: IO.die(Unit, 23, "other")
+
+def route(args: List<String>) -> IO(Unit):
   match args:
-    case +a <> "abcdefghijkl" <> +rest <> Nil{}: IO.die(Unit, 1, a)
-    case +db <> "zyxwvutsrqpo" <> +rest <> Nil{}: IO.die(Unit, 2, db)
-    case other: IO.die(Unit, 3, "fallback")
+    case Con{h1, Con{h2, Con{h3, Con{h4, Con{h5, Con{h6, _}}}}}}: dispatch(h1, h2, h3, h4, h5, h6)
+    case _: IO.print("shallow")
 
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    dispatch(args)
+    route(args)
 `;
 
 const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.."));
@@ -60,15 +67,6 @@ try {
       fs.writeFileSync(linker, text);
     }
   }
-  // The branch C literal lowering removes the deep decision tree. This test
-  // exercises the indentation cap, so use the generic lowering in its temp
-  // compiler copies. The branch C lowering has its own test.
-  const bendSource = fs.readFileSync(path.join(upstream, "bend.ts"), "utf8");
-  const lower = "literal_chain(p, body, vars, def, k)\n      ?? body_flatten(body, vars, () => p.sc.frs++));";
-  const generic = "body_flatten(body, vars, () => p.sc.frs++));";
-  fs.writeFileSync(path.join(temp, "bend.ts"),
-    bendSource.includes(lower)
-      ? replaceOnce(bendSource, lower, generic) : bendSource);
   const source = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");
   const capped = source.match(/function file_push\(fl: File, line: string\): void \{\n[\s\S]*?\n\}/)?.[0];
   assert.ok(capped !== undefined, "file_push definition");
@@ -79,16 +77,15 @@ ${capped.includes("fl.dry") ? "  if (fl.dry) return;\n" : ""}  fl.seg.lines.push
   fs.writeFileSync(path.join(temp, "uncapped.ts"),
     instrument(replaceOnce(source, capped, uncapped)));
   // The temp compiler copies are selected at run time, so these imports cannot be static.
-  const BendTmp = await import(pathToFileURL(path.join(temp, "bend.ts")).href) as typeof Bend;
   const cap = await import(pathToFileURL(path.join(temp, "capped.ts")).href) as Comp;
   const uncap = await import(pathToFileURL(path.join(temp, "uncapped.ts")).href) as Comp;
   const file = path.join(temp, "deep.bend");
   fs.writeFileSync(file, fixture);
   const load = async (Comp: Comp): Promise<string> => {
-    const book = BendTmp.book_nil();
-    await BendTmp.book_load(book, file, "", new Map());
-    BendTmp.book_valid(book);
-    return Comp.compile_book(book as Bend.Book);
+    const book = Bend.book_nil();
+    await Bend.book_load(book, file, "", new Map());
+    Bend.book_valid(book);
+    return Comp.compile_book(book);
   };
   const a = await load(uncap);
   const b = await load(cap);
