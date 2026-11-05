@@ -311,6 +311,10 @@ def failed_terminal_sql_expr(+event: String) -> String:
 # funded API-key route reports the Claude API credit stop: "Your credit balance is too
 # low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase
 # credits.", and Claude Code shows the footer "Credit balance too low · Add funds: ...".
+# An organization that disabled subscription access answers every request with a 403
+# (observed 2026-10-31 on claude-max-incognito): "403 Your organization has disabled
+# Claude subscription access for Claude Code"; that refusal is a funding fact of the
+# account, so it follows the account-refusal path with its own cause wording (#1420).
 # Not matched: the upstream "limit reached" header flag, "rate limit exceeded", the
 # context-window message, stream disconnection and timeouts.
 def exhausted_marker_sql(+text: String) -> String:
@@ -329,6 +333,11 @@ def exhausted_marker_sql(+text: String) -> String:
   ++ " OR instr(lower(" ++ text ++ "),'credit balance is too low')>0"
   ++ " OR instr(lower(" ++ text ++ "),'credit balance too low')>0 THEN 1 ELSE 0 END"
 
+# The provider's own wording for an organization-level access disable: the two
+# fragments together, so unrelated "disabled" diagnostics do not match.
+def access_disabled_sql(+text: String) -> String:
+  "CASE WHEN instr(lower(" ++ text ++ "),'organization has disabled')>0 AND instr(lower(" ++ text ++ "),'access')>0 THEN 1 ELSE 0 END"
+
 # Bind the complete terminal once and extract its diagnostic once for the
 # provider's subscription-limit wording, the returned cause, and the Claude
 # result frame's API status. A failed Claude result carrying api_error_status
@@ -336,7 +345,7 @@ def exhausted_marker_sql(+text: String) -> String:
 # funding fact for either route, and the documented tier-cap 429 and spend-limit
 # 400 shapes stay on wording until an observed fixture terminal names them.
 def exhausted_reason_sql(event: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,text,status_402) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.type')='result' AND json_extract(frame.value,'$.api_error_status')=402 THEN 1 ELSE 0 END FROM frame) SELECT CASE WHEN diagnostic.failed=0 THEN '' WHEN diagnostic.status_402=1 THEN 'provider-reported billing exhaustion (api_error_status 402): ' || diagnostic.text WHEN " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,text,status_402) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.type')='result' AND json_extract(frame.value,'$.api_error_status')=402 THEN 1 ELSE 0 END FROM frame) SELECT CASE WHEN diagnostic.failed=0 THEN '' WHEN diagnostic.status_402=1 THEN 'provider-reported billing exhaustion (api_error_status 402): ' || diagnostic.text WHEN " ++ access_disabled_sql("diagnostic.text") ++ "=1 THEN 'provider-reported subscription access disabled: ' || diagnostic.text WHEN " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
 
 # The operator list and the per-session record are plain files beside the database,
 # like the other coordinator sidecars: no schema, no daemon, no environment lookup.

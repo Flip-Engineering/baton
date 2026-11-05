@@ -19,6 +19,12 @@ CREDIT_EVENT = json.dumps({
     'result': 'Your credit balance is too low to access the Anthropic API.',
     'api_error_status': 402,
 })
+# The terminal every Claude Code attempt on claude-max-incognito returned after
+# its organization disabled subscription access (issue #1420).
+DISABLED_ORG_EVENT = json.dumps({
+    'type': 'result', 'is_error': True,
+    'result': '403 Your organization has disabled Claude subscription access for Claude Code',
+})
 
 
 class FocusedAccountCredits(unittest.TestCase):
@@ -232,7 +238,8 @@ class FocusedAccountCredits(unittest.TestCase):
         self.import_credit('claude-max', 'org-fixture', '200.00')
         pooled = self.json_account('pool')['organizations']
         self.assertEqual(len(pooled), 1)
-        self.assertEqual(sorted(pooled[0]['accounts']), ['claude-api', 'claude-max'])
+        self.assertEqual(sorted((row['id'], row['state']) for row in pooled[0]['accounts']),
+                         [('claude-api', 'active'), ('claude-max', 'active')])
 
     def test_selection_prefers_an_unavailable_free_organization_and_never_gates_on_a_balance(self):
         self.record('claude-max')
@@ -285,6 +292,85 @@ class FocusedAccountCredits(unittest.TestCase):
         self.handoff('leaf')
         self.assertEqual(self.query("SELECT body FROM messages WHERE id='task-1'"), [('original task',)])
         self.assertEqual(self.query("SELECT count(*) FROM messages WHERE kind='guidance' AND recipient='leaf'"), [(0,)])
+
+    def test_deactivate_records_the_state_the_operator_and_the_time(self):
+        self.record('claude-a')
+        self.record('claude-b')
+        saved = self.json_account('deactivate', label='claude-a')
+        row = saved['accounts'][0]
+        self.assertEqual((row['id'], row['state'], row['stateAuthority']), ('claude-a', 'inactive', 'operator'))
+        self.assertTrue(row['stateAt'])
+        kept = self.json_account('read', label='claude-b')['accounts'][0]
+        self.assertEqual((kept['state'], kept['stateAuthority'], kept['stateAt']), ('active', '', ''))
+
+    def test_deactivate_of_an_unrecorded_label_is_refused(self):
+        refused = self.account('deactivate', 'missing')
+        self.assertEqual(refused.returncode, 2, refused.stderr)
+
+    def test_deactivate_keeps_the_first_actor_and_time(self):
+        self.record('claude-a')
+        first = self.json_account('deactivate', label='claude-a')['accounts'][0]
+        again = self.json_account('deactivate', label='claude-a')['accounts'][0]
+        self.assertEqual((again['state'], again['stateAuthority'], again['stateAt']),
+                         ('inactive', first['stateAuthority'], first['stateAt']))
+
+    def test_selection_skips_a_deactivated_account(self):
+        self.record('claude-a')
+        self.record('claude-b')
+        self.json_account('deactivate', label='claude-a')
+        self.assertEqual(self.json_account('select', harness='claude-code')['selected'], 'claude-b')
+        self.json_account('deactivate', label='claude-b')
+        refused = self.account('select', harness='claude-code')
+        self.assertEqual(refused.returncode, 2, refused.stderr)
+
+    def test_the_pool_shows_each_accounts_state(self):
+        self.record('claude-a')
+        self.record('claude-b')
+        self.observe('claude-a', 'org-fixture')
+        self.observe('claude-b', 'org-fixture')
+        pooled = self.json_account('pool', organization='org-fixture')['organizations'][0]
+        self.assertEqual({row['id']: row['state'] for row in pooled['accounts']},
+                         {'claude-a': 'active', 'claude-b': 'active'})
+        self.json_account('deactivate', label='claude-a')
+        pooled = self.json_account('pool', organization='org-fixture')['organizations'][0]
+        self.assertEqual({row['id']: row['state'] for row in pooled['accounts']},
+                         {'claude-a': 'inactive', 'claude-b': 'active'})
+
+    def test_an_advance_skips_a_deactivated_account(self):
+        self.record('claude-a')
+        self.record('claude-b')
+        self.record('claude-c')
+        self.bind('claude-a', 'leaf')
+        self.json_account('deactivate', label='claude-b')
+        self.assertEqual(self.handoff('leaf'), 'advanced')
+        self.assertEqual(self.current('leaf'), 'claude-c')
+
+    def test_a_disabled_organization_403_is_recorded_on_the_account_and_advances(self):
+        self.record('claude-a')
+        self.record('claude-b')
+        self.bind('claude-a', 'leaf')
+        self.assertEqual(self.handoff('leaf', DISABLED_ORG_EVENT), 'advanced')
+        self.assertEqual(self.current('leaf'), 'claude-b')
+        rows = self.query("SELECT account,window,reset_source,receipt FROM usage_windows WHERE account='claude-a'")
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual((rows[0][1], rows[0][2]), ('', 'provider-message'))
+        self.assertIn('provider-reported subscription access disabled', rows[0][3])
+        self.assertIn('organization has disabled', rows[0][3])
+
+    def test_a_disabled_organization_403_on_the_last_account_reports_exhaustion(self):
+        self.record('claude-only')
+        self.bind('claude-only', 'leaf')
+        self.assertEqual(self.handoff('leaf', DISABLED_ORG_EVENT), 'exhausted')
+        bodies = [row[0] for row in self.query("SELECT body FROM messages WHERE kind='report' AND sender='leaf'")]
+        self.assertTrue(any('provider-reported subscription access disabled' in body for body in bodies), bodies)
+
+    def test_an_unrelated_disabled_wording_does_not_advance(self):
+        self.record('claude-a')
+        self.bind('claude-a', 'leaf')
+        unrelated = json.dumps({'type': 'result', 'is_error': True, 'result': 'the feature was disabled by an admin'})
+        self.assertEqual(self.handoff('leaf', unrelated), 'exhausted')
+        self.assertEqual(self.current('leaf'), 'claude-a')
+        self.assertEqual(self.query("SELECT count(*) FROM usage_windows WHERE account='claude-a'"), [(0,)])
 
     def test_account_history_transport_is_needed_only_for_distinct_subscription_stores(self):
         self.record('claude-a', secret='/fixture/store-a')
