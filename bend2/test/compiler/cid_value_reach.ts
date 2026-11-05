@@ -4,6 +4,7 @@
 // constructor and fails the CID guard; the value-reachable table keeps only
 // the constructors the emitted C references, plus the runtime's own tags.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -18,7 +19,12 @@ type ErrShape = { $?: string; msg?: string; exp?: unknown; obs?: unknown };
 
 const root = path.resolve(import.meta.dir, "../../..");
 const upstream = path.join(root, "bend2/compiler/upstream");
+// The historical comparison input lives in fixtures/historical so frozen
+// source snapshots run this test without a Git object store.
 const baseCommit = "b4d86b06b6c7bbbe8e4a9bda8715e626f4fcb1cb";
+const baseFile = path.join(import.meta.dir, "fixtures/historical/comp-"
+  + baseCommit + ".ts");
+const baseSha256 = "665979e76fe4fb20007afd1cc6a9dd8676cff09142b807cfc3d9dc1992d97071";
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "cid-value-reach-"));
 const constructors = 65537;
 const rows = Array.from({ length: constructors }, (_, i) => `  Big${i}{}\n`).join("");
@@ -84,9 +90,10 @@ function fids(c: string): string[] {
 // The base compiler still seeds every type-reachable constructor.
 const baseDir = path.join(temp, "base");
 fs.cpSync(upstream, baseDir, { recursive: true });
-fs.writeFileSync(path.join(baseDir, "comp.ts"),
-  execFileSync("git", ["show", `${baseCommit}:bend2/compiler/upstream/comp.ts`],
-    { cwd: root, maxBuffer: 1 << 28 }));
+const baseSource = fs.readFileSync(baseFile, "utf8");
+assert.equal(createHash("sha256").update(baseSource).digest("hex"), baseSha256,
+  "historical comp.ts matches " + baseCommit);
+fs.writeFileSync(path.join(baseDir, "comp.ts"), baseSource);
 const BaseComp = (await import(pathToFileURL(path.join(baseDir, "comp.ts")).href)) as unknown as Compile;
 console.error("cid boundary: compiling with the base blanket seed");
 const baseBook = await load();
