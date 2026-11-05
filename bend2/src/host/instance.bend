@@ -66,6 +66,39 @@ def Instance.attach_owned(database: String, directory: String, lock: U32) -> IO(
 def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
+# Requests the drain of the database owner and answers its status. The owner
+# admits no new attempt, lets its attempts finish and exits; the answer says
+# draining and never claims the exit. Use owner_wait for the exit.
+def Instance.drain(database: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
+# The owner of one database without starting one, as JSON: state absent,
+# running or draining, pid, token, epoch, attempts and the executable path and
+# SHA-256 of the code the owner process loaded.
+def Instance.owner_status(database: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
+# Blocks until the owner that answers now has exited or a successor replaced it,
+# then answers owner_status.
+def Instance.owner_wait(database: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
+# The command line forms print the owner JSON followed by a newline.
+def Instance.print_drain(+database: String) -> IO(Unit):
+  do IO<Unit>:
+    text : String <- IO.try(String,Instance.drain(database))
+    IO.write(text ++ "\n")
+
+def Instance.print_status(+database: String) -> IO(Unit):
+  do IO<Unit>:
+    text : String <- IO.try(String,Instance.owner_status(database))
+    IO.write(text ++ "\n")
+
+def Instance.print_wait(+database: String) -> IO(Unit):
+  do IO<Unit>:
+    text : String <- IO.try(String,Instance.owner_wait(database))
+    IO.write(text ++ "\n")
+
 # Terminal capability cleanup after acknowledgment. The attempt directory and
 # its status, released and acknowledged markers remain the durable record.
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
