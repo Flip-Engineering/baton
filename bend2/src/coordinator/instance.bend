@@ -437,8 +437,10 @@ def status_read(+db: String, subscribed: Result<&1,&1,U32 & String,U32 & String>
       Custody.Instance.unsubscribe(handle)
 
 # One-shot owner readiness for admission and discovery: the generation, the
-# committed cursor and the gap flag, then the subscription closes.
-def owner_status(+db: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+# committed cursor and the gap flag, then the subscription closes. Named
+# owner_readiness because host/instance.bend's Instance.owner_status mangles to
+# the same C identifier (FID_INSTANCE_OWNER_STATUS).
+def owner_readiness(+db: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     subscribed : Result<&1,&1,U32 & String,U32 & String> <- Custody.Instance.subscribe(db, "0", "0")
     status_read(db, subscribed)
