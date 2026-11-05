@@ -15,6 +15,13 @@ const USAGE = 'usage: codex-root-relay.mjs --ssh HOST [--ssh HOST ...] --databas
 const RECONNECT_MS = 2000;
 
 const POLL_MS = 1000;
+// How long a recorded or fresh queue is trusted while its item is missing
+// from the thread history before the notice is queued again. The app-server
+// can restart after accepting input and drop it before it appears in the
+// thread, while the queue record survives; only the history proves the item
+// arrived. The wait only spaces repeated queues: the delivery keeps retrying
+// until the item is found or the delivery ends.
+const STALE_QUEUE_REQUEUE_MS = 5000;
 const PAGE_TURNS = 8;
 const LOCK_HOLDER = "process.stdout.write('locked\\n'); process.stdin.resume();";
 
@@ -38,8 +45,9 @@ function rootThreadLockFile(thread) {
 // Delivery state for one database's notices into one thread. `lastReadTurn` is
 // the turn of the last recorded read: a copy left by an earlier attempt is
 // always newer, so history scans stop there. `queued` names the notice this
-// database's relays already accepted through `codex queue`; the app-server
-// stores queued input durably, so a recorded queue is not repeated.
+// database's relays most recently accepted through `codex queue`. The record
+// alone does not prove the input reached the thread, so a history scan that
+// misses the item queues the notice again after a wait.
 function rootThreadStateFile(database, thread) {
   const directory = rootThreadLockDirectory();
   const name = createHash('sha256').update(database + '\n' + thread).digest('hex') + '.json';
@@ -574,11 +582,13 @@ async function readThreadItem(session, thread, turnId, itemId) {
     ...(item.type === 'userMessage' ? { text: userText(item)[0] } : {}) };
 }
 
-async function awaitUserMessage(delivery, session, id, thread, content, before, after) {
+async function awaitUserMessage(delivery, session, id, thread, content, before, after, { waitMs = null } = {}) {
   process.stderr.write(JSON.stringify({ type: 'codexRootMessageQueued', thread, message: id }) + '\n');
+  const deadline = waitMs === null ? null : Date.now() + waitMs;
   while (!delivery.exited) {
     const found = await findUserMessage(session, thread, content, { before, after });
     if (found) return found;
+    if (deadline !== null && Date.now() >= deadline) return null;
     await sleep(POLL_MS);
   }
   throw endedDelivery(delivery, 'Codex returned Baton message ' + id + ' in the root thread.');
@@ -608,7 +618,7 @@ function noticeThread(options, params) {
 // these steps and only one context creates a user item for this notice. The
 // waits before and after run without the lock. A lost app-server session
 // throws `lostAppSession` so the caller releases the lock and retries.
-async function scanAndQueue(session, options, thread, id, content) {
+async function scanAndQueue(session, options, thread, id, content, { forceQueue = false } = {}) {
   const threadLock = await acquireRootThreadLock(thread);
   session.releaseOnLoss = true;
   try {
@@ -620,7 +630,11 @@ async function scanAndQueue(session, options, thread, id, content) {
     // the last recorded read, which a leftover copy is always newer than.
     const received = await findUserMessage(session, thread, content, { after: state.lastReadTurn });
     if (received) return { before, received, reused: true };
-    if (state.queued && state.queued.id === id && state.queued.content === content) {
+    // A recorded queue is trusted once: the app-server can drop accepted
+    // input before it appears in the thread, so a scan that still misses the
+    // item after the wait queues the notice again. `forceQueue` marks that
+    // second pass, when the record no longer suppresses the queue.
+    if (!forceQueue && state.queued && state.queued.id === id && state.queued.content === content) {
       return { before, received: null, alreadyQueued: true };
     }
     const queued = await queueMessage({ ...options, thread }, id, content);
@@ -661,24 +675,32 @@ async function deliverNotice(peer, delivery, options, params) {
       await awaitLoadedThread(delivery, session, thread);
       const after = readDeliveryState(options.database, thread).lastReadTurn;
       let before = null;
+      let forceQueue = false;
       for (;;) {
         if (delivery.exited) throw endedDelivery(delivery, 'Baton message ' + id + ' was queued.');
         try {
-          const scan = await scanAndQueue(session, options, thread, id, params.content);
+          const scan = await scanAndQueue(session, options, thread, id, params.content, { forceQueue });
           before = scan.before;
           received = scan.received;
           reused = Boolean(scan.reused);
           alreadyQueued = Boolean(scan.alreadyQueued);
           queued = scan.queued;
-          break;
         } catch (error) {
           if (!error.appSessionLost || delivery.exited) throw error;
           process.stderr.write(JSON.stringify({ type: 'codexAppServerScanInterrupted',
             session: options.session, thread, message: id, reason: String(error.cause || error.message) }) + '\n');
           await sleep(POLL_MS);
+          continue;
         }
+        if (received) break;
+        // The queue record alone does not prove the input reached the
+        // thread. When the item is still missing after the wait, the loop
+        // scans and queues again instead of polling the record without end.
+        received = await awaitUserMessage(delivery, session, id, thread, params.content, before, after,
+          { waitMs: STALE_QUEUE_REQUEUE_MS });
+        if (received) break;
+        forceQueue = true;
       }
-      if (!received) received = await awaitUserMessage(delivery, session, id, thread, params.content, before, after);
     } finally {
       await session.close();
     }

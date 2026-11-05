@@ -449,6 +449,33 @@ test('a queued notice that the root thread has not returned stays unread', async
   assert.match(run.diagnostic, /codexRootMessageUnread/);
 });
 
+test('a recorded queue that the root thread never returned is queued again and read', async (t) => {
+  const directory = scratch(t);
+  // A previous relay accepted the notice through `codex queue` and recorded
+  // the queue, but the app-server restarted before the input appeared in the
+  // thread history: the queued file is gone while the record survives.
+  const stateDirectory = join(directory, 'codex-home', 'root-channel-delivery-locks');
+  mkdirSync(stateDirectory, { recursive: true });
+  writeFileSync(join(stateDirectory,
+    createHash('sha256').update('/scratch/orchestra.db\nthread-1').digest('hex') + '.json'),
+    JSON.stringify({ lastReadTurn: null, queued: { id: 'request-1', content: NOTICE } }));
+  const run = await runRelay(t, 'consume', { directory });
+  await until(run, 'codexRootMessageQueued');
+  // The stale record alone must not suppress the queue: the missing thread
+  // item is queued again and completes its native read.
+  await until(run, 'codexRootMessageReceived');
+  assert.ok(existsSync(join(directory, 'queue.json')), 'The lost queue was not queued again.');
+  assert.ok(existsSync(join(directory, 'queues.jsonl')), 'The lost queue was not queued again.');
+  const reads = readFileSync(run.readLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].id, 'request-1');
+  assert.equal(reads[0].thread, 'thread-1');
+  assert.ok(reads[0].content.includes('Full body'));
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
 test('a refused thread read stops later queued notices before closing SSH', async (t) => {
   const run = await runRelay(t, 'read-refused');
   const [code] = await run.closed;
