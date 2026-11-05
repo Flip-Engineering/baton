@@ -44,7 +44,8 @@ def forwarded_high(db: String, +attempt: String) -> IO(String):
     IO.pure(String,"0"))
 
 # The position a replay resumes guidance from: the send cursor, unless this
-# attempt already forwarded more.
+# attempt already forwarded more. The observer reads it once when it attaches.
+# It then holds the position itself, so a commit notice reads no journal (#1443).
 def replay_cursor(+db: String, +attempt: String, +cursor: String) -> IO(String):
   do IO<String>:
     high : String <- forwarded_high(db,attempt)
@@ -242,9 +243,7 @@ def drain_pending(+db: String, +player: String, +handle: U32, +attempt: String, 
 def awake_pending(+db: String, player: String, handle: U32, +attempt: String, +cursor: String, woke: Bool) -> IO(String):
   match woke:
     case False{}: IO.pure(String,cursor)
-    case True{}: do IO<String>:
-      start : String <- replay_cursor(db,attempt,cursor)
-      drain_pending(db,player,handle,attempt,start)
+    case True{}: drain_pending(db,player,handle,attempt,cursor)
 
 def terminal_sql(+value: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal(value) ++ " THEN 1 ELSE 0 END;"

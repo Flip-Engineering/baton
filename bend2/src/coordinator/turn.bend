@@ -241,7 +241,7 @@ def generation_log(+log: String, +id: String) -> String:
 # finish delivers the settled turn to its recorded coordinator.
 def recovery_observe(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
 
 def refusal_observed(+db: String, +player: String, +id: String, +event: String) -> IO(Unit):
   do IO<Unit>:
@@ -251,7 +251,7 @@ def refusal_observed(+db: String, +player: String, +id: String, +event: String) 
 
 def recovery_after(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
 
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
@@ -1363,7 +1363,7 @@ def retained_output_state(+db: String, +player: String, +id: String, +log: Strin
     +spool : String <- IO.pure(String,directory ++ "/stdout")
     +spanned : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),Bool.or(String.eq(harness,"omp\n"),String.eq(harness,"codex\n"))))
     first : Result<&1,&1,U32 & String,WakeRead> <- next_wake(spool,handle,wake_sub,wake_on,spanned)
-    cursor : String <- IO.pure(String,Observer.cursor(checkpoint_state))
+    cursor : String <- Guidance.replay_cursor(db,attempt,Observer.cursor(checkpoint_state))
     last_message : String <- IO.pure(String,Observer.last_message(checkpoint_state))
     primary : String <- IO.pure(String,Observer.muse_primary(checkpoint_state))
     current : String <- IO.pure(String,Observer.muse_current(checkpoint_state))

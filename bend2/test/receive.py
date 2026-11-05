@@ -455,9 +455,10 @@ if config.get('early_failure'):
     sys.exit(1)
 native='native-'+model
 if omp:
-    json.loads(sys.stdin.readline())
-    state=json.loads(sys.stdin.readline())
-    prompt=json.loads(sys.stdin.readline())['message']
+    frames=[json.loads(sys.stdin.readline())]
+    while frames[-1]['type']!='prompt': frames.append(json.loads(sys.stdin.readline()))
+    state=next(frame for frame in frames if frame['type']=='get_state')
+    prompt=frames[-1]['message']
     storage=pathlib.Path(args[args.index('--session-dir')+1])
     storage.mkdir(parents=True,exist_ok=True)
     if resume:
