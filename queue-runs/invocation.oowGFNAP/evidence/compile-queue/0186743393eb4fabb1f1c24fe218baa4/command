@@ -1,0 +1,10 @@
+/usr/bin/cc
+-Wall
+-Wextra
+-O2
+-pthread
+-DBATON_SQL_READ_TEST
+/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate-rerun/.scratch/bend2/sqlite-read-reuse-combined.c
+-lsqlite3
+-o
+/var/tmp/baton2-compile-queue/keys/50e13e7237b435b155aaa0740a63311ddef332080917d4290f122fbc8c4bf2df/runs/1793218885186848401-1742972/work/output

@@ -1,0 +1,16 @@
+/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate-rerun/.scratch/bend2/sqlite-read-reuse-combined.c: In function ‘test_fork_release_rejects_inherited’:
+/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate-rerun/.scratch/bend2/sqlite-read-reuse-combined.c:550:11: warning: ignoring return value of ‘write’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  550 |     (void)write(pipe_fd[1], &marker, 1);
+      |           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate-rerun/.scratch/bend2/sqlite-read-reuse-combined.c: In function ‘join_forked_main_and_report’:
+/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate-rerun/.scratch/bend2/sqlite-read-reuse-combined.c:511:11: warning: ignoring return value of ‘write’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  511 |     (void)write(fork_close_report_fd, &marker, 1);
+      |           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate-rerun/.scratch/bend2/sqlite-read-reuse-combined.c: In function ‘intercept_forked_close_v2’:
+/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate-rerun/.scratch/bend2/sqlite-read-reuse-combined.c:478:13: warning: ignoring return value of ‘write’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  478 |       (void)write(fork_close_report_fd, &marker, 1);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate-rerun/.scratch/bend2/sqlite-read-reuse-combined.c: In function ‘intercept_forked_close’:
+/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate-rerun/.scratch/bend2/sqlite-read-reuse-combined.c:468:13: warning: ignoring return value of ‘write’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  468 |       (void)write(fork_close_report_fd, &marker, 1);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
