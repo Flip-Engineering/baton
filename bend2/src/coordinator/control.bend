@@ -479,6 +479,11 @@ def writer_gone(+db: String) -> IO(Unit):
     probed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;COMMIT;")
     probe_result(probed,unit => writer_gone(db))
 
+def undelivered_busy_again(reported: Result<&1,&1,U32 & String,String>, again: (@+db: String -> @+id: String -> @+detail: String -> IO(Result<&1,&1,U32 & String,String>)), +db: String, +id: String, +detail: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match reported:
+    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),Store.busy(code),again(db,id,detail),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
+    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
 # The undelivered report is committed through every busy answer; a report that
 # cannot be committed for another cause leaves the input owed in the pending
 # inbox, where the next wake of the recipient finds it.
@@ -486,7 +491,7 @@ def writer_gone(+db: String) -> IO(Unit):
 def undelivered_reported(+db: String, +id: String, +detail: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     reported : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,undelivered_report_sql(id,detail))
-    Store.busy_again(reported,unit => undelivered_reported(db,id,detail))
+    undelivered_busy_again(reported,undelivered_reported,db,id,detail)
 
 def escalated(+db: String, +id: String, +code: U32, +detail: String, reported: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match reported:

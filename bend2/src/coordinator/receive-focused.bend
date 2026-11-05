@@ -6,6 +6,7 @@ import ./accounts.bend as Accounts
 import ../host/session-lock.bend as Lock
 import ./receive.bend as Receive
 import ../host/instance.bend as Custody
+import ./drain-sweep.bend as DrainSweep
 import ../host/process.bend as P
 import ./control.bend as Control
 import ./stop-hook.bend as StopHook
@@ -27,13 +28,18 @@ def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String
       IO.pure(Unit, collected)
     case False{}: IO.die(Unit,2,"expected receive")
 
-def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
-  match owner:
-    case True{}: IO.try(Unit,Custody.Instance.owner(db))
-    case False{}:
-      match shutdown:
-        case True{}: IO.try(Unit,Custody.Instance.shutdown(db))
-        case False{}: IO.die(Unit,2,"expected instance lifecycle command")
+def dispatch_instance(+flag: String, +db: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),IO.try(Unit,Custody.Instance.owner(db)),
+    Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),Custody.Instance.print_drain(db),
+      Bool.pick(IO(Unit),String.eq(flag,"--instance-status"),Custody.Instance.print_status(db),
+        Bool.pick(IO(Unit),String.eq(flag,"--instance-wait"),Custody.Instance.print_wait(db),
+          Bool.pick(IO(Unit),String.eq(flag,"--drain-sweep"),DrainSweep.sweep(db),
+            IO.die(Unit,2,"expected instance lifecycle command"))))))
+
+def dispatch_drain_sweep_session(selected: Bool, +db: String, +session: String, +generation: String) -> IO(Unit):
+  match selected:
+    case True{}: DrainSweep.sweep_one(db,session,generation)
+    case False{}: IO.die(Unit,2,"expected drain sweep session command")
 
 # Package maintenance installs the same schema preflight used by coordinator writes.
 def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
@@ -43,7 +49,7 @@ def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
       ensured : Unit <- Store.ensure_before_begin(canonical)
       accounts_schema : String <- IO.try(String,Accounts.commit_read(canonical,""))
       IO.write("{\"schema\":\"baton2-schema-ensure-v1\",\"status\":\"ready\"}\n")
-    case False{}: dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
+    case False{}: dispatch_instance(flag,db)
 
 def dispatch_observer(selected: Bool, +db: String, +session: String, +observer: String) -> IO(Unit):
   match selected:
@@ -216,7 +222,9 @@ def dispatch(args: List<String>) -> IO(Unit):
       Bool.pick(IO(Unit),String.eq(verb,"join"),Control.join(db,session,parent,harness,model,effort,path),
         IO.die(Unit,2,"unsupported focused receive command"))
     case +first <> +second <> +session <> +observer <> Nil{}:
-      dispatch_observer_argv(String.eq(first,"--recover-observer"),first,second,session,observer)
+      Bool.pick(IO(Unit),String.eq(first,"--drain-sweep-session"),
+        dispatch_drain_sweep_session(True{},second,session,observer),
+        dispatch_observer_argv(String.eq(first,"--recover-observer"),first,second,session,observer))
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,"")
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> +inputs <> Nil{}:
