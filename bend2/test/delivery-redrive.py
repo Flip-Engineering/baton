@@ -161,6 +161,46 @@ class DeliveryRedrive(unittest.TestCase):
         self.assertTrue(self.wait_for(lambda: len(self.calls('coordinator')) >= 2), self.calls('coordinator'))
         self.assertEqual(self.calls('coordinator'), ['report-now', 'owed-1'])
 
+    def test_failed_delivery_releases_the_stuck_claim_and_keeps_the_attempt_ticket(self):
+        self.message('root-nudge', 'coordinator', 'worker', kind='task', body='Continue.')
+        self.db.executescript('''
+CREATE TABLE wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));
+INSERT INTO wake_claims(session,state,owner,generation) VALUES('worker','claimed','root-nudge',1);
+INSERT INTO wake_claim_tickets(session,directory,owner,generation) VALUES('worker','/retained-attempt','earlier-dispatch',2);
+''')
+        self.fail_endpoint('worker', 100, cause='receive endpoint: no native conversation', status=2)
+
+        first = self.dispatch('root-nudge')
+
+        self.assertNotEqual(first.returncode, 0)
+        self.assertEqual(self.db.execute(
+            "SELECT session,state,owner,generation FROM wake_claims WHERE session='worker'").fetchall(), [])
+        self.assertEqual(self.db.execute(
+            "SELECT session,directory,owner,generation FROM wake_claim_tickets WHERE session='worker'").fetchall(),
+            [('worker', '/retained-attempt', 'earlier-dispatch', 2)])
+        self.assertEqual(self.db.execute(
+            "SELECT count(*) FROM message_reads WHERE message='root-nudge'").fetchone()[0], 0)
+        self.assertTrue(self.wait_for(lambda: len(self.calls('coordinator')) >= 1), self.calls('coordinator'))
+
+    def test_failed_codex_inbox_delivery_releases_its_claim(self):
+        self.db.execute("UPDATE sessions SET harness='codex', native='native-1' WHERE id='worker'")
+        endpoint = json.dumps(['/bin/sh', self.endpoint, str(self.home / 'worker.calls'),
+                                 str(self.home / 'worker.failures'), 'codex-inbox-session', 'worker', 'native-1'])
+        self.db.execute("UPDATE sessions SET endpoint=? WHERE id='worker'", (endpoint,))
+        self.message('root-nudge', 'coordinator', 'worker', kind='task', body='Continue.')
+        self.db.executescript('''
+CREATE TABLE wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);
+INSERT INTO wake_claims(session,state,owner,generation) VALUES('worker','claimed','root-nudge',1);
+''')
+        self.fail_endpoint('worker', 100, cause='receive endpoint: no native conversation', status=2)
+
+        first = self.dispatch('root-nudge')
+
+        self.assertNotEqual(first.returncode, 0)
+        self.assertEqual(self.db.execute(
+            "SELECT session,state,owner,generation FROM wake_claims WHERE session='worker'").fetchall(), [])
+
     def test_failure_with_another_cause_is_reported_to_the_coordinator_once(self):
         self.message('root-nudge', 'coordinator', 'worker', kind='task', body='Continue.')
         self.fail_endpoint('worker', 100, cause='receive endpoint: no native conversation', status=2)

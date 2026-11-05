@@ -81,11 +81,14 @@ class Stall(unittest.TestCase):
         self.session('stopped', 'exited', self.endpoint('stopped'))
         self.session('blocked', 'exited', '')
         self.session('claimed', 'exited', self.endpoint('claimed'))
+        self.session('claimed-running', 'running', self.endpoint('claimed-running'))
         self.session('never', '', self.endpoint('never'))
         self.rows("INSERT INTO session_stops(session,id,reason,attempt,directory,outcome) VALUES(?,?,?,?,?,?)",
                   ('stopped', 'stop-stopped', 'operator stop', '', '', 'stopped'))
         self.rows("INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(?,?,?,?)",
                   ('claimed', 'claimed', 'owed-claimed', 1))
+        self.rows("INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(?,?,?,?)",
+                  ('claimed-running', 'claimed', 'owed-claimed-running', 1))
 
     def wait_for(self, path, timeout=8):
         deadline = time.time() + timeout
@@ -100,7 +103,8 @@ class Stall(unittest.TestCase):
         rows = {row['id']: row for row in report['candidates']}
         self.assertEqual({name: row['state'] for name, row in rows.items()},
                          {'active': 'active', 'exited': 'stalled', 'stopped': 'stopped',
-                          'blocked': 'blocked', 'claimed': 'claimed', 'never': 'blocked'})
+                          'blocked': 'blocked', 'claimed': 'claimed',
+                          'claimed-running': 'claimed', 'never': 'blocked'})
         self.assertEqual(rows['exited']['owedMessage'], 'owed-exited')
         self.assertEqual(rows['exited']['attempt']['phase'], 'exited')
         self.assertEqual(rows['stopped']['stopped'], 1)
@@ -125,7 +129,7 @@ class Stall(unittest.TestCase):
         self.assertEqual(rows['claimed']['state'], 'stalled')
         self.assertEqual(rows['claimed']['claim'], '')
 
-    def test_wake_drives_stalled_and_exited_claimed_candidates(self):
+    def test_wake_drives_stalled_and_claimed_candidates_for_custody_recovery(self):
         self.coord('stall-wake')
         claims = {session: state for session, state in self.rows('SELECT session,state FROM wake_claims')}
         self.assertEqual(claims.get('exited'), 'claimed')
@@ -133,11 +137,14 @@ class Stall(unittest.TestCase):
         self.assertNotIn('blocked', claims)
         self.assertNotIn('stopped', claims)
         self.assertEqual(claims.get('claimed'), 'claimed')
+        self.assertEqual(claims.get('claimed-running'), 'claimed')
         self.assertNotIn('never', claims)
         self.assertTrue(self.wait_for(self.directory / 'exited.marker'),
                         'the stalled candidate was not delivered')
         self.assertTrue(self.wait_for(self.directory / 'claimed.marker'),
                         'the exited claimed candidate was not checked for dead custody')
+        self.assertTrue(self.wait_for(self.directory / 'claimed-running.marker'),
+                        'the stale-running claimed candidate was not checked for dead custody')
         time.sleep(0.5)
         for name in ('active', 'stopped', 'blocked', 'never'):
             self.assertFalse((self.directory / (name + '.marker')).exists(),
