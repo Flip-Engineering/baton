@@ -7,6 +7,7 @@ import ./compile-queue-files.bend as QF
 import ./compile-queue-process.bend as Proc
 import ./compile-queue-artifact.bend as Artifact
 import ./compile-queue-supervisor.bend as Supervisor
+import ./compile-queue-takeover.bend as Takeover
 
 def CompileQueueLifecycle.pid() -> IO(Result<&1,&1,U32 & String,U32>):
   P.HostPosix.pid()
@@ -200,3 +201,6 @@ def CompileQueueLifecycle.spawn_detached_identity(+argv: String, key_lock: U32, 
     self : String <- IO.try(String,P.HostPosix.self_exe())
     complete : String <- IO.pure(String,Choice.choose(String,String.starts_with(argv,"/"), _choice_unit => argv, _choice_unit => self ++ Char.show(Char.from_u32(0)) ++ argv))
     P.HostPosix.spawn_detached_identity(complete,key_lock,heavy_lock,"")
+
+def CompileQueueLifecycle.takeover(state: String) -> IO(Result<&1,&1,U32 & String,String>):
+  Takeover.run(state)

@@ -282,9 +282,10 @@ key = attempt.split('/keys/')[1].split('/')[0]
 stat = open('/proc/self/stat').read().rsplit(')', 1)[1].split()
 queued = int(time.time_ns())
 ticket = '%020d-%010d' % (queued, os.getpid())
-open(state + '/admission/waiting/' + ticket, 'w').write(
-    'pid=%d\\nstarttime=%s\\nkey=%s\\ngroup=\\nentry=\\ncompiler=\\nkind=cc\\nqueued_ns=%d\\n'
-    % (os.getpid(), stat[19], key, queued))
+os.makedirs(state + '/waiters/cc', exist_ok=True)
+open(state + '/waiters/cc/' + ticket, 'w').write(
+    'priority=0\\npid=%d\\nstarttime=%s\\nkey=%s\\nhistory_group=%s\\ntoken=%s\\n'
+    % (os.getpid(), stat[19], key, key, ticket))
 lock = open(state + '/admission/lock', 'a+')
 while True:
     fcntl.flock(lock, fcntl.LOCK_EX)
@@ -312,10 +313,11 @@ def scenario_lock_holder():
     Stopping such a supervisor while it holds the lock would keep the lock and block
     takeover and every other waiter."""
     state3 = T / 'queue-lock'
-    for sub in ('', 'admission', 'admission/waiting', 'admission/running'):
+    for sub in ('', 'admission', 'admission/waiting', 'admission/running', 'waiters', 'waiters/cc'):
         directory = state3 / sub if sub else state3
         directory.mkdir(exist_ok=True)
         directory.chmod(0o2770)
+    (state3 / 'admission' / 'waiting').chmod(0o3770)
     script = T / 'fake-supervisor.py'
     script.write_text(FAKE_SUPERVISOR)
     fakes = []
@@ -325,12 +327,12 @@ def scenario_lock_holder():
         attempt.mkdir(parents=True)
         for directory in (attempt.parent.parent, attempt.parent, attempt):
             directory.chmod(0o2770)
-        (attempt / 'meta').write_text('kind=cc\nkey=%s\n' % key)
+        (attempt / 'meta').write_text('kind=cc\nkey=%s\nstate_root=%s\nkeydir=%s\n' % (key, state3, attempt.parent.parent))
         (attempt.parent.parent / 'lock').write_text('')
         process = subprocess.Popen(['python3', '-I', str(script), str(state3), '__supervise', str(attempt)])
         fakes.append(process)
         procs.append(process)
-    until('fake supervisors wrote their tickets', lambda: len(list((state3 / 'admission' / 'waiting').iterdir())) == 3)
+    until('fake supervisors wrote their tickets', lambda: len(list((state3 / 'waiters' / 'cc').iterdir())) == 3)
     env3 = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state3))
     try:
         taken3 = subprocess.run([BINARY, '--', 'takeover', '--state-root', str(state3)], env=env3,

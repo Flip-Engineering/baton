@@ -2961,6 +2961,52 @@ def adopt_command(args: List<&2,String>) -> IO(Unit):
     parsed : Config <- parse_adopt(args, config_line(config, "state_root", state))
     adopt_parsed_config(parsed)
 
+def takeover_finish(+old_pid: U32, +old_start: String) -> IO(Unit):
+  do IO<Unit>:
+    alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(old_pid, old_start))
+    Bool.pick(IO(Unit), U32.is_eq(alive, 1),
+      IO.try(Unit, L.CompileQueueLifecycle.signal_pid(old_pid, 9)),
+      IO.pure(Unit, Unit{}))
+
+# A successor for a waiting supervisor of an older queue executable. The old
+# supervisor is stopped; this process records the attempt as active, runs the
+# attempt under the current admission and supervision rules, and then kills
+# the old supervisor, which lets the requester waiting for it read the result.
+def takeover_run(+attempt: String, +queued: String, +old_pid: U32, +old_start: String) -> IO(Unit):
+  do IO<Unit>:
+    +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
+    +kind : String <- IO.pure(String, field(meta, "kind"))
+    +keydir : String <- IO.pure(String, field(meta, "keydir"))
+    +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
+    start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
+    active_text : String <- IO.pure(String, "pid=" ++ U32.show(pid)
+      ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ queued ++ "\n")
+    active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
+    finished : Unit <- supervise(attempt)
+    takeover_finish(old_pid, old_start)
+
+def takeover_pid(parsed: Maybe<&2,U32>, attempt: String, old_start: String, queued: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit, 2, "compile-queue: takeover pid is malformed")
+    case Some{+old_pid}: takeover_run(attempt, queued, old_pid, old_start)
+
+def takeover_supervisor(attempt: String, old_pid_text: String, old_start: String, queued: String) -> IO(Unit):
+  takeover_pid(U32.read(old_pid_text), attempt, old_start, queued)
+
+def takeover_parsed(parsed: StateKey) -> IO(Unit):
+  match parsed:
+    case StateKey{+state, key}:
+      do IO<Unit>:
+        ready : Unit <- require_state_root(state)
+        report : String <- IO.try(String, L.CompileQueueLifecycle.takeover(state))
+        IO.write(report)
+
+def takeover_command(args: List<&2,String>) -> IO(Unit):
+  do IO<Unit>:
+    state : String <- default_state_root()
+    parsed : StateKey <- parse_state_key(args, state, "")
+    takeover_parsed(parsed)
+
 def usage() -> String:
   "usage: compile-queue.sh run --kind cgen|cc|check --state-root DIR --cwd DIR [options] -- COMMAND...\n"
   ++ "       compile-queue.sh key --kind cgen|cc|check [options]\n"
@@ -2969,6 +3015,7 @@ def usage() -> String:
   ++ "       compile-queue.sh status --state-root DIR [--key KEY]\n"
   ++ "       compile-queue.sh adopt --pid PID --state-root DIR --artifact NAME=PATH\n"
   ++ "       compile-queue.sh history-rebuild --state-root DIR [--key KEY]\n"
+  ++ "       compile-queue.sh takeover --state-root DIR\n"
 
 def main_args(args: List<&2,String>) -> IO(Unit):
   match args:
@@ -2979,7 +3026,10 @@ def main_args(args: List<&2,String>) -> IO(Unit):
     case "status" <> rest: status_command(rest)
     case "adopt" <> rest: adopt_command(rest)
     case "history-rebuild" <> rest: history_rebuild_command(rest)
+    case "takeover" <> rest: takeover_command(rest)
     case "__supervise" <> attempt <> Nil{}: supervise(attempt)
+    case "__takeover" <> attempt <> pid_text <> start <> queued <> Nil{}:
+      takeover_supervisor(attempt, pid_text, start, queued)
     case "__watch-heavy" <> attempt <> pid_text <> start <> supervisor <> supervisor_start <> Nil{}:
       watch_heavy_pid(U32.read(pid_text), attempt, start, supervisor, supervisor_start)
     case "__guard" <> keydir <> pid <> start <> name <> path <> Nil{}:
