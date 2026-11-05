@@ -146,9 +146,16 @@ def with_frame_step(-R: Type, step: List<String> & String, next: List<String> ->
 def delivery_result(+error: String) -> Result<&1,&1,U32 & String,Unit>:
   Bool.pick(Result<&1,&1,U32 & String,Unit>,String.is_empty(error),Done{Unit{}},Fail{(1,error)})
 
+# A turn is accounted for by its recorded turn row, or by a withheld terminal:
+# the newest report the session already sent its coordinator carries the same
+# body, so the completion wrote no row for this attempt (#723). A non-terminal
+# event is never withheld, so it keeps the missing-result report.
+def result_recorded_sql(+id: String, +player: String, +event: String) -> String:
+  "SELECT CASE WHEN EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") OR (" ++ C.terminal_expr(C.q(event)) ++ " AND " ++ C.unchanged_report_sql(C.q(player),C.report_recipient(C.q(player)),C.q(id),C.terminal_body_expr(C.q(event))) ++ ") THEN '1' ELSE '0' END;"
+
 def prepare_finished(+db: String, +player: String, +id: String, log: String, stderr: String, +error: String, +status: String, +event: String) -> IO(Unit):
   do IO<Unit>:
-    result : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM turns WHERE id=" ++ C.q(id) ++ ";"))
+    result : String <- IO.try(String,DB.Sql.query(db,result_recorded_sql(id,player,event)))
     noted : Unit <- diagnostic(db,player,id,error,event,String.is_empty(error))
     missing : Unit <- result_missing(db,player,id,log,stderr,status,String.eq(result,"1\n"))
     exit_failure(db,player,id,status,String.eq(status,"exit 0"),event)
@@ -670,7 +677,9 @@ def terminal_admitted(db: String, event: String, primary: String, candidate: Boo
 
 # A completion identity may already name a delivered report or a different
 # terminal. Compare the report body before committing so the upsert guard never
-# turns a changed observation into a NOT NULL failure.
+# turns a changed observation into a NOT NULL failure. A withheld terminal
+# records no rows, so its replay derives the empty state again and the
+# completion withholds it once more.
 def completion_state_expr(+id: String, +player: String, +event: String) -> String:
   "CASE WHEN EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body_expr(event) ++ ") THEN 'same' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body_expr(event) ++ ") THEN '' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") OR EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") THEN 'conflict' ELSE '' END"
 
@@ -760,7 +769,9 @@ def deferred_report_id_sql(+id: String, +event: String, +episode: String) -> Str
 
 # A later terminal observed while replaying the same spool must not publish a
 # second report for the same recorded event in this attempt. A later event with
-# identical text remains a distinct episode and keeps its own identity.
+# identical text remains a distinct episode and keeps its own identity; when
+# that text equals the newest report the recipient already holds, the
+# completion report withholds the row (#723).
 def deferred_existing_sql(+player: String, +id: String, +event: String) -> String:
   "SELECT coalesce((SELECT t.id FROM turns t WHERE t.worker=" ++ C.q(player) ++ " AND t.event=" ++ C.q(event) ++ " AND t.id LIKE " ++ C.q(id ++ ":episode:%") ++ " LIMIT 1),'');"
 
