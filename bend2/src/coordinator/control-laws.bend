@@ -588,7 +588,7 @@ law a_refused_configured_identity_names_the_recorded_model:
   for +model: String
   for +repository: String
   for out: String
-  {Control.identity_check_refusal(model,repository,G.RRun{G.SExit{1},out}) == IO.die(Unit,2,"The configured series identity check failed for recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ ": helper exited 1: " ++ Tx.trim_nl(out) ++ ". Correct the model mapping or repository's App installation, then retry.") : IO(Unit)}
+  {Control.identity_check_refusal(model,repository,G.RRun{G.SExit{1},out}) == IO.die(Unit,2,"The configured series identity check failed for " ++ ("recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository)) ++ ": helper exited 1: " ++ Tx.trim_nl(out) ++ ". Correct the model mapping or repository's App installation, then retry.") : IO(Unit)}
 
 def a_refused_configured_identity_names_the_recorded_model(model,repository,out):
   {==}
