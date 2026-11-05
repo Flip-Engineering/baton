@@ -1198,12 +1198,14 @@ def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr
 law completion_delivery_checks_the_upstream_recipient:
   for +db: String
   for +player: String
-  for id: String
+  for +id: String
   for log: String
-  for outcome: Turn.Outcome
+  for +outcome: Turn.Outcome
   {Turn.finish(db,player,id,log,outcome,False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),False{})) : IO(Result<&1,&1,U32 & String,Unit>)}
+    finished : Result<&1,&1,U32 & String,Unit> <- Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),False{})
+    recovered : Unit <- Turn.recovery_after(db,player,id,outcome)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,finished)) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completion_delivery_checks_the_upstream_recipient(db,player,id,log,outcome):
   {==}
