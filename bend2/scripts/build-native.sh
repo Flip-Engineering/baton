@@ -84,6 +84,8 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   exit 78
 fi
 . "$root/bend2/scripts/queue-entry.sh"
+BATON2_NATIVE_QUEUE_DRIVER=
+BATON2_NATIVE_QUEUE_DRIVER=
 generated=
 if [ "$recovery" = 1 ]; then
   if [ -n "${BEND_GENERATED_C:-}" ]; then

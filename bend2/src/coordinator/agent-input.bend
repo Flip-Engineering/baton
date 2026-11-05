@@ -435,3 +435,198 @@ def initial_observed(+db: String, +session: String, +attempt: String, +event: St
   do IO<Unit>:
     identity : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ C.q(event) ++ ",'$.thread_id') END,json_extract(" ++ C.q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1 THEN json_extract(" ++ C.q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ C.q(event) ++ ",'$.stream.id') END,CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='session' THEN json_extract(" ++ C.q(event) ++ ",'$.id') END,'')<>'' ELSE 0 END;"))
     Bool.pick(IO(Unit),String.eq(identity,"1\n"),record_initial_reads(db,session,attempt),IO.pure(Unit,Unit{}))
+def probe_agent_input_headroom_1(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_2(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_3(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_4(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_5(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_6(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_7(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_8(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_9(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_10(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_11(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_12(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_13(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_14(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_15(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_16(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_17(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_18(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_19(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_20(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_21(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_22(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_23(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_24(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_25(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_26(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_27(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_28(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_29(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_30(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_31(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_32(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_33(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_34(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_35(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_36(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_37(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_38(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_39(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_40(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_41(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_42(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_43(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_44(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_45(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_46(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_47(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_48(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_49(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_50(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_51(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_52(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_53(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_54(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_55(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_56(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_57(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_58(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_59(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_60(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_61(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_62(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_63(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_64(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
+def probe_agent_input_headroom_65(+db: String) -> IO(Unit):
+  IO.pure(Unit,Unit{})
+
