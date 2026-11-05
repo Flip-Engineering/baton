@@ -1845,11 +1845,22 @@ export function term_show(term: LTerm, top: number = -1, bnd: Name[] = []): stri
   return go(term, top);
 }
 
+// The book an error message normalizes with. An @unsafe definition stays a call
+// in the message: normalizing a self-recursive one would never produce the message.
+function book_for_message(book: Book): Book {
+  const tlds: Record<Name, TLD> = Object.create(null);
+  for (const k of Object.keys(book.tlds)) {
+    const t = book.tlds[k];
+    tlds[k] = t.$ === "Def" && t.u === true ? { ...t, v: null } : t;
+  }
+  return { ...book, tlds };
+}
+
 export function expr_show(book: Book, x: Expr, bnd: Name[] = []): string {
   if (typeof x === "string") {
     return x;
   } else {
-    const t = term_lower(term_snf(book, x), bnd.length);
+    const t = term_lower(term_snf(book_for_message(book), x), bnd.length);
     return term_show(t, -1, bnd);
   }
 }
@@ -4297,10 +4308,57 @@ export function term_snf(book: Book, term: HTerm): HTerm {
 // The last child of a node is compared by the loop: a string or list in constructor
 // form, a chain of matches or a body under binders is compared at a fixed stack depth,
 // and only the earlier children recurse. The children are compared in the same order.
+// The definition a call names, read without evaluating the call.
+function term_call_head(term: HTerm): Name | null {
+  let head = term;
+  while (head.$ === "App") {
+    head = head.f;
+  }
+  return head.$ === "Ref" ? head.k : null;
+}
+
+// The arguments of a call, in order.
+function term_call_args(term: HTerm): HTerm[] {
+  const args: HTerm[] = [];
+  let head = term;
+  while (head.$ === "App") {
+    args.push(head.x);
+    head = head.f;
+  }
+  return args.reverse();
+}
+
+// Compares two saturated calls of one @unsafe definition by their arguments. An
+// @unsafe definition can recurse without end, also under a lambda, so unfolding it
+// may never answer. Equal arguments answer true and unequal arguments answer false;
+// null means these are not such calls and the comparison continues by unfolding.
+function term_compare_unsafe_calls(book: Book, lhs: HTerm, rhs: HTerm, dep: number): boolean | null {
+  const k = term_call_head(lhs);
+  if (k === null || k !== term_call_head(rhs)) {
+    return null;
+  }
+  const def = book.tlds[k];
+  if (def === undefined || def.$ !== "Def" || def.u !== true || def.v === null) {
+    return null;
+  }
+  const a = term_call_args(lhs);
+  const b = term_call_args(rhs);
+  if (a.length !== b.length || a.length < def.n) {
+    return null;
+  }
+  return a.every((arg, i) => term_compare("EQ", book, arg, b[i], dep));
+}
+
 export function term_compare(mode: "EQ" | "LE", book: Book, lhs: HTerm, rhs: HTerm, dep: number = 0): boolean {
   for (;;) {
     if (lhs === rhs) {
       return true;
+    }
+    if (lhs.$ === "App" && rhs.$ === "App") {
+      const calls = term_compare_unsafe_calls(book, lhs, rhs, dep);
+      if (calls !== null) {
+        return calls;
+      }
     }
     let a = term_wnf(book, lhs);
     let b = term_wnf(book, rhs);
