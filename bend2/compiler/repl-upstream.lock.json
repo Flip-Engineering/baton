@@ -12,9 +12,9 @@
       "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
     },
     {
-      "bytes": 165600,
+      "bytes": 165880,
       "path": "bend.ts",
-      "sha256": "52b19ad6a2b97c386c4fa2b3490377a90b85d3f70c253b8e1b5c75f4f228b02f"
+      "sha256": "75216ef21a7825841c88f4cba58306e61515c689dbca5b758a5a402802288351"
     },
     {
       "bytes": 268738,
@@ -407,9 +407,19 @@
       "sha256": "a1cdb3bf3870007349afcb392a229ed78f70c596acffd794dbf1c8c90426370b"
     },
     {
-      "bytes": 23855,
+      "bytes": 6015,
+      "path": "module-front.ts",
+      "sha256": "afa68f8fe8bb0e99ed7763658209a234c7d559d7a4d05325dc8628f5a026aa2c"
+    },
+    {
+      "bytes": 4254,
+      "path": "module-store.ts",
+      "sha256": "0b5e98baabc3ef89b0003ef554adfb025b5032062c7db396a5f669bbceb26b7b"
+    },
+    {
+      "bytes": 25867,
       "path": "store.ts",
-      "sha256": "267a08bd238c73ab5c5fb83e6c1bf3273c19a3714631c600044fe78f451fc86e"
+      "sha256": "e0e1fa24a879b794f95d10fbd74338cde877d98cc32ca67a42d501d3edd2f94f"
     },
     {
       "bytes": 12807,

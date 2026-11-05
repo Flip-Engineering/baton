@@ -24,9 +24,14 @@ def replace_once(source, before, after):
 
 
 def extend_loader(source):
-    source = replace_once(source,
-        'seen: Map<string, string | null>, spn?: Span): Promise<number> {',
-        'seen: Map<string, string | null>, spn?: Span, source?: string, aliases?: Record<Name, Name>): Promise<number> {')
+    callback = 'loaded?: (module: LoadedModule, source: string) => void'
+    if callback in source:
+        source = replace_once(source, callback + '): Promise<number> {',
+            callback + ', source?: string, aliases?: Record<Name, Name>): Promise<number> {')
+    else:
+        source = replace_once(source,
+            'seen: Map<string, string | null>, spn?: Span): Promise<number> {',
+            'seen: Map<string, string | null>, spn?: Span, source?: string, aliases?: Record<Name, Name>): Promise<number> {')
     source = replace_once(source, '  if (!fs.existsSync(file)) {',
                           '  if (source === undefined && !fs.existsSync(file)) {')
     source = replace_once(source, '  const real = fs.realpathSync(file);',
@@ -103,10 +108,16 @@ def stage(source, runtime, runtime_sha256, runtime_notices, destination):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(original, target)
     bend = upstream / 'bend.ts'
-    bend.write_text(extend_loader(bend.read_text()))
+    original_loader = bend.read_text()
+    bend.write_text(extend_loader(original_loader))
     main = upstream / 'main.ts'
     main.write_text(extend_frontend(main.read_text()))
-    shutil.copyfile(COMPILER / 'repl.ts', upstream / 'repl.ts')
+    repl = (COMPILER / 'repl.ts').read_text()
+    if 'loaded?: (module: LoadedModule, source: string) => void' in original_loader:
+        repl = replace_once(repl,
+            "Bend.book_load(book, filename, '', seen, undefined, source, aliases)",
+            "Bend.book_load(book, filename, '', seen, undefined, undefined, source, aliases)")
+    (upstream / 'repl.ts').write_text(repl)
     shutil.copyfile(runtime, destination / 'bun')
     (destination / 'bun').chmod(0o755)
     shutil.copyfile(lock_path, destination / 'upstream.lock.json')

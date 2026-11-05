@@ -237,6 +237,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
+import { createHash } from "node:crypto";
 
 // Core
 // ====
@@ -4516,7 +4517,12 @@ export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>,
     if (z > 64) {
       throw Err(book, ctx, "a template that stops instantiating itself (64 levels at most)", tm, tm.s, lhs.def);
     }
-    const o = is[key] = tm.k + "~" + String(Object.keys(is).length);
+    const o = tm.k + "~" + createHash("sha256")
+      .update("bend-template-instance-v1\0" + tm.k + "\0" + key).digest("hex");
+    if (book.tlds[o] !== undefined) {
+      throw Err(book, ctx, "a template instance with a distinct content name", tm, tm.s, lhs.def);
+    }
+    is[key] = o;
     const inst: Def = { $: "Def", n: def.n - def.x, x: 0, T, v: xs.reduce((v, a) => term_apply(v, a), def.v as HTerm), u: def.u };
     book.tlds[o] = { ...inst, v: null };
     inst.e = def_check(book, o, inst, z);
@@ -4553,7 +4559,7 @@ export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>,
 // (infer-ref) while the caller is declared; it stays outside the order
 // (a seeded book keeps it), so it is no claim.
 
-export function book_valid(book: Book, done: number = 0): void {
+export function book_valid(book: Book, done: number = 0, end: number = book.order.length): void {
   const tlds = book.tlds;
   const last = new Map<Name, number>();
   for (let i = 0; i < book.order.length; i++) {
@@ -4566,7 +4572,7 @@ export function book_valid(book: Book, done: number = 0): void {
       book.tlds[k] = tlds[k];
     }
   }
-  for (let i = 0; i < book.order.length; i++) {
+  for (let i = 0; i < end; i++) {
     const k   = book.order[i];
     const tld = tlds[k];
     const fin = last.get(k) === i;

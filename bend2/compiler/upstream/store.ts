@@ -5,12 +5,12 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 
 type Value = null | boolean | number | { string: number } | { node: number }
-  | { span: number } | { undefined: true };
+  | { span: number } | { external: number } | { undefined: true };
 // Rows begin with owner and kind. Object fields use key/tag/value triples;
 // arrays use tag/value pairs. Callback and binding rows have fixed fields.
 type Row = number[];
 const OBJECT = 0, DICTIONARY = 1, ARRAY = 2, CALLBACK = 3, BINDING = 4;
-const NIL = 0, BOOL = 1, NUMBER = 2, STRING = 3, NODE = 4, SPAN = 5, UNDEFINED = 6;
+const NIL = 0, BOOL = 1, NUMBER = 2, STRING = 3, NODE = 4, SPAN = 5, UNDEFINED = 6, EXTERNAL = 7;
 
 function append_value(row: Row, value: Value): void {
   if (value === null) row.push(NIL, 0);
@@ -19,6 +19,7 @@ function append_value(row: Row, value: Value): void {
   else if ("string" in value) row.push(STRING, value.string);
   else if ("node" in value) row.push(NODE, value.node);
   else if ("span" in value) row.push(SPAN, value.span);
+  else if ("external" in value) row.push(EXTERNAL, value.external);
   else row.push(UNDEFINED, 0);
 }
 
@@ -31,7 +32,17 @@ function* row_children(row: Row): Generator<number> {
     for (let at = 2; at < row.length; at += 2) if (row[at] === NODE) yield row[at + 1];
   }
 }
-export type TermGraph = { root: Value; rows: Row[]; scopes: number[] };
+export type ExternalReference = { section: string; node: number };
+export type EncoderImports = {
+  find: (value: object) => ExternalReference | undefined;
+  define: (node: number, value: object) => void;
+};
+export type DecoderImports = {
+  resolve: (reference: ExternalReference) => unknown;
+  find: (node: number) => object | undefined;
+  define: (node: number, value: object) => void;
+};
+export type TermGraph = { root: Value; rows: Row[]; scopes: number[]; externals?: ExternalReference[] };
 export type Tables = { strings: string[]; spans: [number, number, number][] };
 
 const BOUND = Symbol("checked-store-binding");
@@ -78,7 +89,7 @@ function is_span(value: object): value is Bend.Span {
 
 // Visit the eagerly available graph. Function bodies belong to their own
 // binding scope and are opened separately.
-function eager_objects(value: unknown, stable: WeakSet<object>): Set<object> {
+function eager_objects(value: unknown, stable: WeakSet<object>, imports?: EncoderImports): Set<object> {
   const found = new Set<object>();
   const stack = [value];
   while (stack.length > 0) {
@@ -86,7 +97,8 @@ function eager_objects(value: unknown, stable: WeakSet<object>): Set<object> {
     if (value === null || (typeof value !== "object" && typeof value !== "function")
       || found.has(value)) continue;
     found.add(value);
-    if (typeof value === "function" || is_span(value) || stable.has(value)) continue;
+    if (typeof value === "function" || is_span(value) || stable.has(value)
+      || imports?.find(value) !== undefined) continue;
     for (const child of Object.values(value)) stack.push(child);
   }
   return found;
@@ -94,7 +106,8 @@ function eager_objects(value: unknown, stable: WeakSet<object>): Set<object> {
 
 // The raw checked body stays raw. Cell contents and callback bodies are copied
 // as higher terms, so free checker Vars retain their names and indices.
-export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables): TermGraph {
+export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables,
+  imports?: EncoderImports): TermGraph {
   const rows: Row[] = [];
   const scopes = [-1];
   const ids = new WeakMap<object, number>();
@@ -102,6 +115,8 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
   const stable = new WeakSet<object>();
   const pending: (object | Function)[] = [];
   const parameters = new Map<number, Parameters>();
+  const externals: ExternalReference[] = [];
+  const external_ids = new Map<string, Map<number, number>>();
   let marker = 0;
   const ancestor = (a: number, b: number): number => {
     if (a === b) return a;
@@ -128,6 +143,16 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
       throw new Error("Checked term contains " + typeof value);
     }
     if (typeof value === "object" && is_span(value)) return { span: tables.span(value) };
+    const external = imports?.find(value);
+    if (external !== undefined) {
+      let section = external_ids.get(external.section);
+      if (section === undefined) { section = new Map(); external_ids.set(external.section, section); }
+      let id = section.get(external.node);
+      if (id === undefined) {
+        id = externals.length; section.set(external.node, id); externals.push(external);
+      }
+      return { external: id };
+    }
     const got = ids.get(value);
     if (got !== undefined) {
       anchor(value, scope);
@@ -158,8 +183,8 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
       const a = args(), b = args();
       const first = value(params.array ? a : a[0]);
       const second = value(params.array ? b : b[0]);
-      const objects = eager_objects(first, stable);
-      for (const object of eager_objects(second, stable)) {
+      const objects = eager_objects(first, stable, imports);
+      for (const object of eager_objects(second, stable, imports)) {
         if (objects.has(object)) { stable.add(object); anchor(object, scope); }
       }
       rows[id] = [scope, CALLBACK, child, Number(params.array)];
@@ -224,14 +249,17 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
       if (shared !== target[0]) { target[0] = shared; queue.push(child); }
     }
   }
-  return { root, rows, scopes };
+  if (imports !== undefined) for (let id = 0; id < rows.length; id++) {
+    if (rows[id][0] === 0 && rows[id][1] !== BINDING) imports.define(id, pending[id]);
+  }
+  return { root, rows, scopes, ...(externals.length === 0 ? {} : { externals }) };
 }
 
 type Context = { scope: number; parent: Context | null; args: Bend.HTerm[];
   values: Map<number, unknown> };
 
 export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
-  tables: DecoderTables): T {
+  tables: DecoderTables, imports?: DecoderImports, entry: Value = graph.root): T {
   const rows: (Row | null)[] = graph.rows.slice();
   const owners = Uint32Array.from(graph.rows, row => row[0]);
   const captured = new Uint8Array(rows.length);
@@ -251,7 +279,7 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
     for (const child of row_children(graph.rows[captured_roots[at]])) capture(child);
   }
   const root_value: Row = [];
-  append_value(root_value, graph.root);
+  append_value(root_value, entry);
   const root: Context = { scope: 0, parent: null, args: [], values: new Map() };
   const context = (ctx: Context, scope: number): Context => {
     for (let e: Context | null = ctx; e !== null; e = e.parent) if (e.scope === scope) return e;
@@ -267,9 +295,23 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
       case STRING: return tables.data.strings[value];
       case SPAN: return tables.spans[value];
       case UNDEFINED: return undefined;
+      case EXTERNAL: {
+        const reference = graph.externals?.[value];
+        if (reference === undefined || imports === undefined) {
+          throw new Error("Checked term external section is unavailable");
+        }
+        return imports.resolve(reference);
+      }
     }
     const owner = context(ctx, owners[value]);
     if (owner.values.has(value)) return owner.values.get(value);
+    if (owner === root) {
+      const found = imports?.find(value);
+      if (found !== undefined) {
+        owner.values.set(value, found); created.push(value);
+        return found;
+      }
+    }
     const row = rows[value]!;
     if (row[1] === BINDING) {
       const argument = context(ctx, row[2]).args[row[3]];
@@ -283,13 +325,15 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
         { scope, parent: owner, args: array ? argument as Bend.HTerm[]
           : [argument as Bend.HTerm], values: new Map() });
       owner.values.set(value, result);
-      if (owner === root) { rows[value] = null; created.push(value); }
+      if (owner === root) {
+        rows[value] = null; created.push(value); imports?.define(value, result);
+      }
       return result;
     }
     const result = row[1] === ARRAY ? []
       : Object.create(row[1] === DICTIONARY ? null : Object.prototype);
     owner.values.set(value, result);
-    if (owner === root) created.push(value);
+    if (owner === root) { created.push(value); imports?.define(value, result); }
     pending.push([value, row, owner, result]);
     return result;
   };
