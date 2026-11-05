@@ -163,6 +163,21 @@ def main():
             assert len(Fixture.requests) == asked, Fixture.requests
             print("muse-reader-missing-token: ok", flush=True)
 
+            # A Model API key has no subscription snapshot: the key endpoint
+            # answers without subs_usage and the read is unreadable.
+            model_key = directory / "muse-model-key"
+            model_key.write_text("fixture-muse-model-key\n")
+            model_key.chmod(0o600)
+            Fixture.answer = (200, json.dumps({"object": "organization"}))
+            document = read(environment, "file:" + str(model_key))
+            assert Fixture.requests[-1] == {"method": "POST", "path": "/muse-code/key",
+                                                     "authorization": "Bearer fixture-muse-model-key",
+                                                     "api_version": "1.0.0", "body": "{}"}, Fixture.requests[-1]
+            assert document["state"] == "unreadable", document
+            assert "not active" in document["reason"], document
+            assert "fixture-muse-model-key" not in json.dumps(document), document
+            print("muse-reader-model-key: ok", flush=True)
+
             Fixture.answer = (200, json.dumps({
                 "is_subs_active": True,
                 "subs_usage": {

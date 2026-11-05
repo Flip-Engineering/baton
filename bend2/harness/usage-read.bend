@@ -45,7 +45,7 @@ def scheme_of(+reference: String) -> String:
   Bool.pick(String,Tx.starts_with(reference,"codex-home:"),"codex-home",
   Bool.pick(String,Tx.starts_with(reference,"omp-auth:"),"omp-auth",
   Bool.pick(String,Tx.starts_with(reference,"claude-oauth:"),"claude-oauth",
-  Bool.pick(String,Tx.starts_with(reference,"muse-auth:"),"muse-auth","")))))
+  Bool.pick(String,Tx.starts_with(reference,"muse-auth:"),"muse-auth",""))))))
 
 def after_colon(text: String) -> String:
   match text:

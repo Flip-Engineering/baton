@@ -34,7 +34,7 @@ def main_args(args: List<String>) -> IO(Unit):
       IO.print("fixture-muse-usage-ok")
     case other: IO.die(Unit,2,"usage: muse-usage DB")
 
-def main() -> IO<Unit>:
+def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
     main_args(args)
