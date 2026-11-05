@@ -310,3 +310,83 @@ test('the production helper refuses missing references without probing them', as
     await rm(child, { force: true });
   }
 });
+
+function fakeCodexScript(directory, calls, loginKey, mode) {
+  return `#!/bin/sh
+calls=${JSON.stringify(calls)}
+if [ "$1" = "login" ]; then
+  cat > ${JSON.stringify(loginKey)}
+  mkdir -p "$CODEX_HOME"
+  printf '{"auth_mode":"apikey"}' > "$CODEX_HOME/auth.json"
+  printf '%s\\n' "$*" >> "$calls"
+  ${mode === 'login-fails' ? 'exit 3' : 'exit 0'}
+fi
+printf '%s\\n' "$*" >> "$calls"
+printf 'CODEX_HOME=%s\\n' "$CODEX_HOME" >> "$calls"
+exit 0
+`;
+}
+
+function runCodexMode(reference, home, fake, args, env) {
+  const native = process.env.BATON2_API_KEY_EXEC;
+  if (!native) throw new Error('BATON2_API_KEY_EXEC must name the production api-key-exec helper');
+  return execFileSync(native, [reference, '--codex', home, fake, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env,
+  });
+}
+
+test('the codex mode logs the dedicated home in with the key from stdin', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-codex-'));
+  try {
+    const secret = '[REDACTED]';
+    const reference = await withSecret(directory, 'secret', secret);
+    const home = path.join(directory, 'codex-home');
+    const calls = path.join(directory, 'calls.txt');
+    const loginKey = path.join(directory, 'login-key');
+    const fake = path.join(directory, 'codex');
+    await writeFile(fake, fakeCodexScript(directory, calls, loginKey, 'ok'));
+    await chmod(fake, 0o755);
+    const stdout = runCodexMode(reference, home, fake, ['exec', '--json'],
+      { PATH: process.env.PATH });
+    assert.equal(stdout.includes(secret), false);
+    assert.equal(await readFile(loginKey, 'utf8'), secret + '\n');
+    const lines = (await readFile(calls, 'utf8')).trim().split('\n');
+    assert.equal(lines[0], 'login --with-api-key');
+    assert.equal(lines[1], 'exec --json');
+    assert.equal(lines[2], 'CODEX_HOME=' + home);
+    assert.equal(JSON.parse(await readFile(path.join(home, 'auth.json'), 'utf8')).auth_mode, 'apikey');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the codex mode refuses when the login exits nonzero and starts no child', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-codex-fail-'));
+  try {
+    const secret = '[REDACTED]';
+    const reference = await withSecret(directory, 'secret', secret);
+    const home = path.join(directory, 'codex-home');
+    const calls = path.join(directory, 'calls.txt');
+    const fake = path.join(directory, 'codex');
+    await writeFile(fake, fakeCodexScript(directory, calls, path.join(directory, 'login-key'), 'login-fails'));
+    await chmod(fake, 0o755);
+    try {
+      runCodexMode(reference, home, fake, ['exec', '--json'], { PATH: process.env.PATH });
+      assert.fail('a failed codex login must refuse');
+    } catch (error) {
+      assert.equal(error.status, 2);
+      assert.equal(error.stdout, '');
+      const refusal = JSON.parse(error.stderr.trim());
+      assert.equal(refusal.condition, 'codexLoginFailed');
+      assert.equal(refusal.schema, 'baton2-api-key-exec-v1');
+      assert.equal(error.stderr.includes(secret), false);
+    }
+    const lines = (await readFile(calls, 'utf8')).trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0], 'login --with-api-key');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -49,5 +49,22 @@ def bound_arguments(binding: List<String>, override: List<String>, cmd: String, 
 def argv_profile(binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, session: String, fresh: Bool) -> String:
   P.argv(bound_arguments(binding,override,cmd,model,effort,session,fresh))
 
+# The API-key variant of the profile head. An API-key seat authenticates
+# through the auth.json the login helper wrote into the account's own
+# CODEX_HOME, so the launch keeps the inherited key unbinds and the preserved
+# history override but never forces the ChatGPT login method: forcing it
+# reports a key-logged-in home as not logged in. An empty override adds
+# nothing.
+def bound_api_key_head(binding: List<String>, override: List<String>, cmd: String, resume: Bool, session: String) -> List<String>:
+  List.append(&1,String,List.append(&1,String,List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY"],binding),Con{cmd,List.append(&1,String,override,["exec"])}),Bool.pick(List<String>,resume,["resume",session],Nil{}))
+
+def bound_api_key_arguments(binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, session: String, fresh: Bool) -> List<String>:
+  match fresh:
+    case True{}: List.append(&1,String,bound_api_key_head(binding,override,cmd,False{},session),arguments(model,effort))
+    case False{}: List.append(&1,String,bound_api_key_head(binding,override,cmd,True{},session),arguments(model,effort))
+
+def argv_api_key(binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, session: String, fresh: Bool) -> String:
+  P.argv(bound_api_key_arguments(binding,override,cmd,model,effort,session,fresh))
+
 def start_player_profile(binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(argv_profile(binding,override,cmd,model,effort,session,fresh),cwd,stderr)

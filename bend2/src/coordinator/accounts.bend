@@ -209,12 +209,14 @@ def decimal_sub(+a: String, +b: String) -> String:
 def funding_known(+funding: String) -> Bool:
   Bool.or(String.eq(funding,"subscription"),String.eq(funding,"api_key"))
 
-# An API-key funding route launches only on the claude-code harness, whose
-# retained launch resolves the secret reference into the child's environment.
-# Other harnesses authenticate through their own stores, so recording an
-# API-key route for them would record a funding route the launch never uses.
+# An API-key funding route launches on the claude-code harness, whose
+# retained launch resolves the secret reference into the child's environment,
+# and on the codex harness, whose retained launch logs a dedicated CODEX_HOME
+# in with the resolved key. Other harnesses authenticate through their own
+# stores, so recording an API-key route for them would record a funding route
+# the launch never uses.
 def funding_route_ok(+harness: String, +funding: String) -> Bool:
-  Bool.or(String.eq(funding,"subscription"),Bool.and(String.eq(funding,"api_key"),String.eq(harness,"claude-code")))
+  Bool.or(String.eq(funding,"subscription"),Bool.and(String.eq(funding,"api_key"),Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"codex"))))
 
 def harness_launchable(+harness: String) -> Bool:
   Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),Bool.or(String.eq(harness,"muse"),String.eq(harness,"claude-code"))))
@@ -423,8 +425,30 @@ def credit_request_admission(+account: AccountRecord, +meter: CreditMeter, +curr
   Bool.pick(CreditAdmission,Bool.not(Bool.and(decimal_text(meter_balance(meter)),Bool.and(decimal_text(meter_monthly_cap(meter)),Bool.and(decimal_text(meter_cycle_spent(meter)),Bool.and(decimal_text(meter_reserved(meter)),Bool.and(decimal_text(max_charge),Bool.not(String.is_empty(meter_unit(meter))))))))),CRefused{"creditAmountMalformed"},
   CAdmitted{meter_organization(meter),meter_cycle(meter),decimal_add(meter_reserved(meter),max_charge),estimate_left(meter_balance(meter),decimal_add(meter_reserved(meter),max_charge)),estimate_left(meter_monthly_cap(meter),decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge))}))))))
 
+# A Codex API-key account launches with its own CODEX_HOME under the attempt
+# directory, so the key the launch logs in with stays separate from the host's
+# ChatGPT login. The binding is the login helper prefix the retained launch
+# splices ahead of the Codex command: the helper, the secret-store reference
+# and the home. An empty helper or an empty attempt directory yields no
+# binding, so the caller reports the actual cause rather than launching on
+# another account's credential. A future per-account credit limit check plugs
+# in beside this binding.
+def codex_api_key_home(+attempt: String) -> String:
+  attempt ++ "/codex-home"
+
+def codex_api_key_binding(+secret_ref: String, +script: String, +attempt: String) -> Maybe<List<String>>:
+  Bool.pick(Maybe<List<String>>,Bool.or(String.is_empty(script),String.is_empty(attempt)),None{},Some{Con{script,Con{secret_ref,Con{codex_api_key_home(attempt),Nil{}}}}})
+
+def codex_api_key_resolved(+secret_ref: String, resolved: Maybe<String>, +attempt: String) -> Maybe<List<String>>:
+  match resolved:
+    case None{}: None{}
+    case Some{+script}: codex_api_key_binding(secret_ref,script,attempt)
+
+def codex_api_key_route(+harness: String, +funding: String) -> Bool:
+  Bool.and(String.eq(harness,"codex"),String.eq(funding,"api_key"))
+
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
-  Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
+  Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"codex")))),None{},Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),String.eq(harness,"claude-code")),api_key_binding(secret_ref,helper),Bool.pick(Maybe<List<String>>,codex_api_key_route(harness,funding),None{},Some{Subs.store_binding(harness,secret_ref)})))
 
 # The packaged resolver sits beside the resolved identity helper, so it is
 # installed and versioned with the runtime this deployment resolves.
@@ -1090,7 +1114,7 @@ def account_insert_sql(+id: String, +provider: String, +harness: String, +fundin
 # observation that verified it.
 def record_admitted(+db: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, present: Bool) -> IO(Unit):
   match present:
-    case False{}: IO.die(Unit,2,"Account recording requires a label without whitespace or control characters, a provider name, a launchable harness (codex, omp, muse or claude-code), a funding route of subscription or api_key (api_key launches only on claude-code), and a nonempty secret-store reference without control characters. No account was recorded.")
+    case False{}: IO.die(Unit,2,"Account recording requires a label without whitespace or control characters, a provider name, a launchable harness (codex, omp, muse or claude-code), a funding route of subscription or api_key (api_key launches on the claude-code and codex harnesses), and a nonempty secret-store reference without control characters. No account was recorded.")
     case True{}: do IO<Unit>:
       saved : String <- IO.try(String,commit_read(db,account_insert_sql(id,provider,harness,funding,secret_ref)))
       IO.print(Tx.trim_nl(saved))
@@ -2019,8 +2043,15 @@ def credit_record_authorization(+db: String, +session: String, +attempt: String,
     saved : String <- IO.try(String,commit_read(db,credit_authorization_sql(session,attempt,account)))
     IO.pure(Bool,String.eq(Tx.trim_nl(saved),"1"))
 
+# A Codex API-key launch binds the login helper prefix for this attempt. It
+# carries no promotional-credit reservation or authorization: that admission
+# route is unproven and stays held for the Anthropic route only.
 def credit_launch_binding_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
-  Bool.pick(IO(Maybe<List<String>>),Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),IO.pure(Maybe<List<String>>,None{}),IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},helper,profile_store)))
+  match helper:
+    case None{}: Bool.pick(IO(Maybe<List<String>>),Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),IO.pure(Maybe<List<String>>,None{}),IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},None{},profile_store)))
+    case Some{+script}: Bool.pick(IO(Maybe<List<String>>),codex_api_key_route(harness,account_funding(account)),
+      IO.pure(Maybe<List<String>>,codex_api_key_binding(account_secret_ref(account),script,attempt)),
+      Bool.pick(IO(Maybe<List<String>>),Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),IO.pure(Maybe<List<String>>,None{}),IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},Some{script},profile_store))))
 
 def credit_launch_binding(+db: String, +session: String, +attempt: String, +harness: String, chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
   match chosen:
@@ -2086,11 +2117,13 @@ def credit_launch_price_decided(+db: String, +session: String, +attempt: String,
     case PriceRefused{reason}: IO.pure(Maybe<List<String>> & String,(None{},credit_guard_refusal_status(reason)))
 
 def credit_launch_gate_priced_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String, +facts: CreditRequestFacts, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  Bool.pick(IO(Maybe<List<String>> & String),codex_api_key_route(harness,account_funding(account)),
+    IO.pure(Maybe<List<String>> & String,(codex_api_key_resolved(account_secret_ref(account),api_key_resolver_value(helper),attempt),"")),
   Bool.pick(IO(Maybe<List<String>> & String),credit_guard_route_account(account),
     Bool.pick(IO(Maybe<List<String>> & String),qualified,
       credit_launch_price_decided(db,session,attempt,account,helper,credit_request_price(facts)),
       IO.pure(Maybe<List<String>> & String,(None{},credit_api_key_refusal(account)))),
-    IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),"")))
+    IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),""))))
 
 def credit_launch_gate_priced(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String, +facts: CreditRequestFacts, qualified: Bool) -> IO(Maybe<List<String>> & String):
   match chosen:
@@ -2100,11 +2133,13 @@ def credit_launch_gate_priced(+db: String, +session: String, +attempt: String, +
       credit_launch_gate_priced_account(db,session,attempt,harness,account,helper_path,profile_store,facts,qualified)
 
 def credit_launch_gate_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  Bool.pick(IO(Maybe<List<String>> & String),codex_api_key_route(harness,account_funding(account)),
+    IO.pure(Maybe<List<String>> & String,(codex_api_key_resolved(account_secret_ref(account),api_key_resolver_value(helper),attempt),"")),
   Bool.pick(IO(Maybe<List<String>> & String),credit_guard_route_account(account),
     Bool.pick(IO(Maybe<List<String>> & String),qualified,
       credit_launch_reserved(db,session,attempt,account,helper),
       IO.pure(Maybe<List<String>> & String,(None{},credit_api_key_refusal(account)))),
-    IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),"")))
+    IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),""))))
 
 def credit_launch_gate(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String, qualified: Bool) -> IO(Maybe<List<String>> & String):
   match chosen:

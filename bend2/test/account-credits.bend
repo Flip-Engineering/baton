@@ -5,6 +5,8 @@
 # fixtures and prove no live account, balance or availability.
 import Base
 import ../src/coordinator/accounts.bend as A
+import ../src/coordinator/turn.bend as Turn
+import ../src/harness/codex-player.bend as Codex
 
 def check(label: String, is_ok: Bool) -> IO(Unit):
   match is_ok:
@@ -50,6 +52,22 @@ def binding_refuses(binding: Maybe<List<String>>, +label: String) -> IO(Unit):
     case None{}: check(label,True{})
     case Some{values}: IO.die(Unit,1,"fixture-account " ++ label ++ ": unexpected binding")
 
+def binding_three_values(values: List<String>, +label: String, +first: String, +second: String, +third: String) -> IO(Unit):
+  match values:
+    case a <> rest_a:
+      match rest_a:
+        case b <> rest_b:
+          match rest_b:
+            case c <> Nil{}: check(label,Bool.and(String.eq(a,first),Bool.and(String.eq(b,second),String.eq(c,third))))
+            case other: IO.die(Unit,1,"fixture-account " ++ label ++ ": unexpected binding tail")
+        case other: IO.die(Unit,1,"fixture-account " ++ label ++ ": unexpected binding tail")
+    case other: IO.die(Unit,1,"fixture-account " ++ label ++ ": empty binding")
+
+def binding_three(binding: Maybe<List<String>>, +label: String, +first: String, +second: String, +third: String) -> IO(Unit):
+  match binding:
+    case None{}: IO.die(Unit,1,"fixture-account " ++ label ++ ": no binding")
+    case Some{values}: binding_three_values(values,label,first,second,third)
+
 def binding_checks() -> IO(Unit):
   do IO<Unit>:
     codex : Unit <- binding_is(A.launch_binding("codex","subscription","/fixture/stores/codex alt",None{}),"subscription-codex-store","CODEX_HOME=/fixture/stores/codex alt")
@@ -59,7 +77,76 @@ def binding_checks() -> IO(Unit):
     anthropic_api : Unit <- binding_refuses(A.account_binding("claude-code",Some{A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"anthropic-api-key-is-held-without-request-admission")
     anthropic_subscription : Unit <- binding_is(A.account_binding("claude-code",Some{A.Ac{"claude-max","anthropic","claude-code","subscription","/fixture/stores/claude","org-fixture","2026-10-18"}},None{},""),"anthropic-subscription-binding-is-preserved","CLAUDE_CONFIG_DIR=/fixture/stores/claude")
     other_provider : Unit <- binding_is(A.account_binding("codex",Some{A.Ac{"openai-codex","openai","codex","subscription","/fixture/stores/codex","org-openai","2026-10-18"}},None{},""),"other-provider-subscription-binding-is-unchanged","CODEX_HOME=/fixture/stores/codex")
-    unsupported_api : Unit <- binding_refuses(A.account_binding("codex",Some{A.Ac{"openai-api","openai","codex","api_key","file:/fixture/secrets/openai","org-openai","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"unsupported-api-key-harness-remains-unbound")
+    codex_api_needs_attempt : Unit <- binding_refuses(A.account_binding("codex",Some{A.Ac{"openai-api","openai","codex","api_key","file:/fixture/secrets/openai","org-openai","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"codex-api-key-binding-needs-an-attempt-directory")
+    codex_launch_needs_attempt : Unit <- binding_refuses(A.launch_binding("codex","api_key","file:/fixture/secrets/openai",Some{"/fixture/libexec/api-key-exec"}),"codex-api-key-launch-binding-needs-an-attempt-directory")
+    codex_api : Unit <- binding_three(A.codex_api_key_binding("file:/fixture/secrets/openai","/fixture/libexec/api-key-exec","attempt-9"),"codex-api-key-binding-carries-helper-secret-and-home","/fixture/libexec/api-key-exec","file:/fixture/secrets/openai","attempt-9/codex-home")
+    codex_no_helper : Unit <- binding_refuses(A.codex_api_key_binding("file:/fixture/secrets/openai","","attempt-9"),"codex-api-key-binding-needs-a-helper")
+    codex_no_attempt : Unit <- binding_refuses(A.codex_api_key_binding("file:/fixture/secrets/openai","/fixture/libexec/api-key-exec",""),"codex-api-key-binding-needs-an-attempt-directory")
+    codex_resolved : Unit <- binding_three(A.codex_api_key_resolved("file:/fixture/secrets/openai",Some{"/fixture/libexec/api-key-exec"},"attempt-9"),"codex-api-key-resolved-binding-carries-helper-secret-and-home","/fixture/libexec/api-key-exec","file:/fixture/secrets/openai","attempt-9/codex-home")
+    codex_unresolved : Unit <- binding_refuses(A.codex_api_key_resolved("file:/fixture/secrets/openai",None{},"attempt-9"),"codex-api-key-unresolved-binding-needs-a-helper")
+    codex_home : Unit <- check("codex-api-key-home-sits-under-the-attempt",String.eq(A.codex_api_key_home("attempt-9"),"attempt-9/codex-home"))
+    IO.pure(Unit,Unit{})
+
+def route_checks() -> IO(Unit):
+  do IO<Unit>:
+    codex : Unit <- check("funding-api-key-codex",A.funding_route_ok("codex","api_key"))
+    claude : Unit <- check("funding-api-key-claude-code",A.funding_route_ok("claude-code","api_key"))
+    omp : Unit <- check("funding-api-key-omp-refused",Bool.not(A.funding_route_ok("omp","api_key")))
+    muse : Unit <- check("funding-api-key-muse-refused",Bool.not(A.funding_route_ok("muse","api_key")))
+    subscription : Unit <- check("funding-subscription-any-harness",A.funding_route_ok("omp","subscription"))
+    IO.pure(Unit,Unit{})
+
+def selected_label(selected: Maybe<&2,A.Selected>) -> String:
+  match selected:
+    case None{}: ""
+    case Some{+chosen}: A.account_id(A.selected_account(chosen))
+
+def selected_pref(selected: Maybe<&2,A.Selected>) -> Bool:
+  match selected:
+    case None{}: False{}
+    case Some{+chosen}: A.selected_preferred(chosen)
+
+def account_label(account: Maybe<&2,A.AccountRecord>) -> String:
+  match account:
+    case None{}: ""
+    case Some{+chosen}: A.account_id(chosen)
+
+def order_checks() -> IO(Unit):
+  do IO<Unit>:
+    +sub : A.AccountRecord = A.Ac{"codex-sub","openai","codex","subscription","/fixture/stores/codex","org-sub","2026-10-18"}
+    +key : A.AccountRecord = A.Ac{"codex-key","openai","codex","api_key","file:/fixture/secrets/openai","org-key","2026-10-18"}
+    +other : A.AccountRecord = A.Ac{"claude-max","anthropic","claude-code","subscription","/fixture/stores/claude","org-sub","2026-10-18"}
+    head : Unit <- check("order-takes-the-head-of-operator-order",String.eq(selected_label(A.select_account([sub,key],"","codex","")),"codex-sub"))
+    head_pref : Unit <- check("order-marks-the-head-preferred",selected_pref(A.select_account([sub,key],"","codex","")))
+    key_funding : Unit <- check("order-funding-filter-selects-the-key",String.eq(selected_label(A.select_account([sub,key],"","codex","api_key")),"codex-key"))
+    key_matches : Unit <- check("order-api-key-account-matches-codex",A.account_matches("codex","",key))
+    blocked_head : Unit <- check("order-blocked-head-falls-to-the-key",String.eq(selected_label(A.select_account([sub,key],"org-sub","codex","")),"codex-key"))
+    advance : Unit <- check("order-advance-reaches-the-key",String.eq(account_label(A.next_account_after([sub,key],"codex","codex-sub",False{})),"codex-key"))
+    tail : Unit <- check("order-advance-ends-at-the-tail",String.eq(account_label(A.next_account_after([sub,key],"codex","codex-key",False{})),""))
+    harness_kept : Unit <- check("order-harness-filter-keeps-codex",String.eq(account_label(List.head(&2,A.AccountRecord,A.harness_accounts([sub,other],"codex"))),"codex-sub"))
+    IO.pure(Unit,Unit{})
+
+def argv_checks() -> IO(Unit):
+  do IO<Unit>:
+    +argv : String = Codex.argv_api_key(["/fixture/libexec/api-key-exec","file:/fixture/secrets/openai","attempt-9/codex-home"],Nil{},"codex","gpt-5","xhigh","",True{})
+    omits_chatgpt : Unit <- check("codex-api-key-argv-omits-chatgpt-login",Bool.not(String.contains(argv,"forced_login_method")))
+    binds_home : Unit <- check("codex-api-key-argv-carries-the-home",String.contains(argv,"attempt-9/codex-home"))
+    unbinds_keys : Unit <- check("codex-api-key-argv-unbinds-host-keys",Bool.and(String.contains(argv,"-u"),String.contains(argv,"OPENAI_API_KEY")))
+    IO.pure(Unit,Unit{})
+
+def launch_argv_decided(launched: Result<&1,&1,U32 & String,String>, +label: String, +expected: String, +absent: String) -> IO(Unit):
+  match launched:
+    case Done{+argv}: check(label,Bool.and(String.contains(argv,expected),Bool.not(String.contains(argv,absent))))
+    case Fail{(code,detail)}: IO.die(Unit,1,"fixture-account " ++ label ++ ": launch refused")
+
+def launch_argv_checks() -> IO(Unit):
+  do IO<Unit>:
+    +key : A.AccountRecord = A.Ac{"codex-key","openai","codex","api_key","file:/fixture/secrets/openai","org-key","2026-10-18"}
+    key_launch : Result<&1,&1,U32 & String,String> = Turn.retained_launch_arguments(False{},False{},False{},"codex","gpt-5","xhigh","","","native-1","","","","codex",Some{key},(Some{["/fixture/libexec/api-key-exec","file:/fixture/secrets/openai","attempt-9/codex-home"]},""))
+    keyed : Unit <- launch_argv_decided(key_launch,"codex-api-key-launch-omits-chatgpt-login","attempt-9/codex-home","forced_login_method")
+    +sub : A.AccountRecord = A.Ac{"codex-sub","openai","codex","subscription","/fixture/stores/codex","org-sub","2026-10-18"}
+    sub_launch : Result<&1,&1,U32 & String,String> = Turn.retained_launch_arguments(False{},False{},False{},"codex","gpt-5","xhigh","","","native-1","","","","codex",Some{sub},(Some{["CODEX_HOME=/fixture/stores/codex"]},""))
+    kept : Unit <- launch_argv_decided(sub_launch,"codex-subscription-launch-keeps-chatgpt-login","forced_login_method","attempt-9/codex-home")
     IO.pure(Unit,Unit{})
 
 def refusal_checks() -> IO(Unit):
@@ -179,6 +266,10 @@ def main() -> IO(Unit):
     refusals : Unit <- refusal_checks()
     states : Unit <- state_checks()
     selections : Unit <- selection_checks()
+    routes : Unit <- route_checks()
+    orders : Unit <- order_checks()
+    argv : Unit <- argv_checks()
+    launched : Unit <- launch_argv_checks()
     authority : Unit <- authority_checks()
     printed : Unit <- IO.print("fixture-accounts-ok")
     IO.pure(Unit,Unit{})

@@ -31,9 +31,14 @@ def current_decided(account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
 
 def binding_text(values: List<String>) -> String:
   match values:
-    case first <> second <> rest: first ++ "|" ++ second
-    case first <> rest: first
-    case Nil{}: ""
+    case first <> rest_first:
+      match rest_first:
+        case second <> rest_second:
+          match rest_second:
+            case third <> rest: first ++ "|" ++ second ++ "|" ++ third
+            case other: first ++ "|" ++ second
+        case other: first
+    case other: ""
 
 def admission_line(decision: A.CreditAdmission) -> String:
   match decision:

@@ -93,3 +93,63 @@ sys.stdout.flush()
     assert document["observedAt"] is None, document
     assert "wall clock" in document["reason"], document
     print("codex-clock-failure: ok", flush=True)
+
+    # An API-key reference holds no home: the helper logs a temporary home in
+    # with the resolved key, reads through it, then removes the key file. The
+    # key travels only through the login child's stdin and never reaches the
+    # printed document.
+    key_fake = Path(temporary) / "codex-key"
+    key_fake.write_text("""#!/usr/bin/env python3
+import json, os, sys
+if sys.argv[1] == 'login':
+    with open(os.environ['FIXTURE_CODEX_LOGIN_KEY'], 'w') as key_file:
+        key_file.write(sys.stdin.read())
+    os.makedirs(os.environ['CODEX_HOME'], exist_ok=True)
+    with open(os.path.join(os.environ['CODEX_HOME'], 'auth.json'), 'w') as auth_file:
+        auth_file.write('{"auth_mode":"apikey"}')
+    if os.environ.get('FIXTURE_CODEX_LOGIN') == 'fails':
+        sys.exit(3)
+    sys.exit(0)
+request = json.loads(sys.stdin.readline())
+print(json.dumps({'id': 1, 'result': {}}), flush=True)
+sys.stdin.readline()
+sys.stdin.readline()
+print(json.dumps({'id': 2, 'result': {'ordinaryUsageAllowed': True, 'rateLimits': {'primary': {'usedPercent': 15, 'windowDurationMins': 300, 'resetsAt': 1793382116}}}}), flush=True)
+sys.stdin.read()
+""")
+    key_fake.chmod(0o755)
+
+    def read_homes():
+        return {entry.name for entry in Path('/tmp').iterdir()
+                if entry.name.startswith('baton2-codex-read-')}
+
+    def run_key_helper(secret_text, login_mode):
+        secret = Path(temporary) / 'api-secret'
+        secret.write_text(secret_text + '\n')
+        secret.chmod(0o600)
+        login_key = Path(temporary) / 'login-key'
+        if login_key.exists():
+            login_key.unlink()
+        before = read_homes()
+        child = subprocess.run(
+            [str(helper), 'codex', 'file:' + str(secret)],
+            env=dict(os.environ, BATON_CODEX_BIN=str(key_fake),
+                     FIXTURE_CODEX_LOGIN_KEY=str(login_key),
+                     FIXTURE_CODEX_LOGIN=login_mode),
+            capture_output=True, text=True)
+        assert child.returncode == 0, (child.returncode, child.stderr)
+        assert secret_text not in child.stdout, child.stdout
+        assert secret_text not in child.stderr, child.stderr
+        assert read_homes() == before, 'the temporary credential home was not removed'
+        return json.loads(child.stdout), login_key
+
+    document, login_key = run_key_helper('fixture-openai-key', 'ok')
+    assert document['state'] == 'read', document
+    assert document['windows'][0]['usedPercent'] == 15, document
+    assert login_key.read_text() == 'fixture-openai-key\n', login_key.read_text()
+    print('codex-api-key-read: ok', flush=True)
+
+    document, _ = run_key_helper('fixture-openai-key', 'fails')
+    assert document['state'] == 'unreadable', document
+    assert 'did not log in' in document['reason'], document
+    print('codex-api-key-login-failure: ok', flush=True)

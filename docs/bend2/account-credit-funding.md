@@ -75,6 +75,19 @@ The SQLite busy handler in `bend2/src/host/sqlite.c` waits at most 3000 retries 
 The attempt is not started and its input stays owed. Subscription routes and
 other harnesses keep their existing bindings.
 
+A Codex `api_key` account launches with its own `CODEX_HOME` under the attempt
+directory (#1423). `credit_launch_binding` and `credit_launch_gate` return the
+packaged `api-key-exec` helper with the account secret reference and that
+home. The helper logs the home in through `codex login --with-api-key`, which
+reads the key from stdin, then spawns the Codex command with the home. The
+Codex launch carries no forced ChatGPT login method, so the home's key auth
+decides. The launch carries no promotional-credit reservation or
+authorization. Selection and fallback list these accounts in the operator's
+recorded order, decided by live usage reads; a provider usage-limit response
+is recorded on the account through `account observe`. The `usage-read` helper
+resolves the account secret reference, logs a temporary owner-only home in
+with the key, reads the rate limits through it, then removes the key file.
+
 ## Request-level reservation
 
 `credit_reservations` records one reservation per request identity. The launch

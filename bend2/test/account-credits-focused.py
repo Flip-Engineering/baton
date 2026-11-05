@@ -142,10 +142,57 @@ class FocusedAccountCredits(unittest.TestCase):
             self.assertEqual(refused.returncode, 2, refused.stderr)
         self.assertEqual(self.json_account('read')['accounts'], [])
 
-    def test_api_key_funding_records_only_for_the_claude_code_harness(self):
+    def test_api_key_funding_is_refused_for_omp(self):
         refused = self.record('omp-api', harness='omp', funding='api_key', secret='file:/fixture/api')
         self.assertEqual(refused.returncode, 2, refused.stderr)
         self.assertEqual(self.json_account('read')['accounts'], [])
+
+    def test_api_key_funding_records_for_the_codex_harness(self):
+        recorded = self.record('codex-key', harness='codex', funding='api_key',
+                               secret='file:/fixture/openai', provider='openai')
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        row = self.json_account('read', label='codex-key')['accounts'][0]
+        self.assertEqual((row['id'], row['harness'], row['funding']), ('codex-key', 'codex', 'api_key'))
+        chosen = self.json_account('select', harness='codex', funding='api_key')
+        self.assertEqual(chosen['selected'], 'codex-key')
+
+    def test_codex_api_key_launch_binding_separates_its_home(self):
+        self.execute("INSERT INTO sessions(id,parent,harness) VALUES('codex-leaf','root','codex')")
+        self.record('codex-key', harness='codex', funding='api_key',
+                    secret='file:/fixture/openai', provider='openai')
+        self.bind('codex-key', 'codex-leaf')
+        parts = self.gate_qualified('attempt-9', session='codex-leaf', harness='codex')
+        self.assertEqual(parts[:4], ['binding', '/fixture/api-key-exec', 'file:/fixture/openai',
+                                     'attempt-9/codex-home'])
+        self.assertEqual(parts[4], '')
+        self.assertNotEqual(parts[3], '')
+        self.assertFalse(parts[3].startswith('/fixture/store'))
+
+    def test_codex_api_key_fallback_follows_operator_order(self):
+        self.execute("INSERT INTO sessions(id,parent,harness) VALUES('codex-leaf','root','codex')")
+        self.record('codex-sub', harness='codex', funding='subscription',
+                    secret='/fixture/codex-home', provider='openai')
+        self.record('codex-key', harness='codex', funding='api_key',
+                    secret='file:/fixture/openai', provider='openai')
+        self.bind('codex-sub', 'codex-leaf')
+        event = json.dumps({'type': 'turn.failed',
+                            'error': {'message': "You've hit your usage limit"}})
+        completed = self.entry('handoff', 'codex-leaf', 'turn-codex-leaf', event)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), 'advanced')
+        self.assertEqual(self.current('codex-leaf', 'codex'), 'codex-key')
+
+    def test_codex_api_key_usage_limit_observation_is_recorded(self):
+        self.record('codex-key', harness='codex', funding='api_key',
+                    secret='file:/fixture/openai', provider='openai')
+        saved = self.observe('codex-key', 'org-openai')
+        self.assertEqual(saved['accounts'][0]['organization'], 'org-openai')
+        usage = self.observe_detail('codex-key', json.dumps({
+            'operation': 'usage', 'state': 'reported', 'observedAt': 1760000000000,
+            'source': 'openai-api:/v1/usage',
+            'document': {'type': 'usage', 'id': 'org-openai'}}))
+        self.assertEqual((usage['observation']['fact'], usage['observation']['state']),
+                         ('subscription_usage', 'reported'))
 
     def test_rerecording_a_label_with_different_fields_is_refused(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/one')
@@ -308,8 +355,8 @@ class FocusedAccountCredits(unittest.TestCase):
                            'source': 'anthropic-admin-api:/v1/organizations/me',
                            'document': {'type': 'organization', 'id': organization, 'name': 'Fixture'}})
 
-    def gate(self, attempt, session='leaf'):
-        completed = self.entry('gate', session, 'claude-code', attempt)
+    def gate(self, attempt, session='leaf', harness='claude-code'):
+        completed = self.entry('gate', session, harness, attempt)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip()
 
@@ -380,8 +427,8 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip()
 
-    def gate_qualified(self, attempt, session='leaf'):
-        completed = self.entry('gate-qualified', session, 'claude-code', attempt)
+    def gate_qualified(self, attempt, session='leaf', harness='claude-code'):
+        completed = self.entry('gate-qualified', session, harness, attempt)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip().split('|')
 

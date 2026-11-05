@@ -1,6 +1,7 @@
 import Base
 import ../src/git/text.bend as Tx
 import ../src/host/clock.bend as Clock
+import ../src/host/files.bend as Files
 import ../src/host/http.bend as Http
 import ../src/host/text.bend as Text
 import ../src/host/sqlite.bend as DB
@@ -311,14 +312,35 @@ def codex_drain_lines(+handle: U32, line: Result<&1,&1,U32 & String,Maybe<String
           codex_drain_lines(handle,next)
 
 # Closing stdin starts app-server shutdown. Consume its remaining notifications
-# while it exits so its stdout writes can complete.
-def codex_finish(+handle: U32) -> IO(Unit):
-  do IO<Unit>:
+# while it exits so its stdout writes can complete. A nonempty cleanup home is
+# the temporary credential home of an API-key read: its key file is removed
+# before the read is printed, and a home that cannot be cleaned reports so
+# instead of the read, so no key file is left unreported.
+def codex_cleanup_reason(+home: String) -> String:
+  "the temporary credential home " ++ home ++ " could not be cleaned after the read; its API key file may remain"
+
+def codex_cleanup_remove(removed: Result<&1,&1,U32 & String,Unit>, +home: String) -> IO(Bool):
+  match removed:
+    case Fail{(code,detail)}: IO.pure(Bool,False{})
+    case Done{unit}: do IO<Bool>:
+      logged : Result<&1,&1,U32 & String,Unit> <- Files.Files.remove(home ++ "/log/codex-login.log")
+      logged_dir : Result<&1,&1,U32 & String,Unit> <- Files.Files.rmdir(home ++ "/log")
+      home_dir : Result<&1,&1,U32 & String,Unit> <- Files.Files.rmdir(home)
+      IO.pure(Bool,True{})
+
+def codex_cleanup(+home: String) -> IO(Bool):
+  Bool.pick(IO(Bool),String.is_empty(home),IO.pure(Bool,True{}),do IO<Bool>:
+    removed : Result<&1,&1,U32 & String,Unit> <- Files.Files.remove(home ++ "/auth.json")
+    codex_cleanup_remove(removed,home))
+
+def codex_finish(+handle: U32, +cleanup: String) -> IO(Bool):
+  do IO<Bool>:
     closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
     next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
     drained : Unit <- codex_drain_lines(handle,next)
     waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
-    IO.pure(Unit,Unit{})
+    clean : Bool <- codex_cleanup(cleanup)
+    IO.pure(Bool,clean)
 
 def wait_text(waited: Result<&1,&1,U32 & String,String>) -> String:
   match waited:
@@ -327,69 +349,172 @@ def wait_text(waited: Result<&1,&1,U32 & String,String>) -> String:
 
 # The child's own status names why it ended: a missing codex executable on PATH is
 # env's exit 127.
-def codex_ended(+handle: U32, +observed: String) -> IO(Unit):
+def codex_ended(+handle: U32, +observed: String, +cleanup: String) -> IO(Unit):
   do IO<Unit>:
     closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
     waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
-    print_unreadable("codex",Codex.codex_source(),observed,"codex app-server ended before it answered account/rateLimits/read (" ++ wait_text(waited) ++ ")")
+    clean : Bool <- codex_cleanup(cleanup)
+    +ended : String <- IO.pure(String,"codex app-server ended before it answered account/rateLimits/read (" ++ wait_text(waited) ++ ")")
+    print_unreadable("codex",Codex.codex_source(),observed,Bool.pick(String,clean,ended,ended ++ "; " ++ codex_cleanup_reason(cleanup)))
 
 def codex_result(+observed: String, +result: String) -> IO(Unit):
   do IO<Unit>:
     problem : Result<&1,&1,U32 & String,String> <- DB.Sql.query(":memory:",Codex.codex_problem_sql(result))
     print_parsed("codex",Codex.codex_source(),observed,Codex.codex_windows_sql(result),sql_text(problem))
 
-def codex_classified(+handle: U32, +observed: String, fields: List<&2,String>) -> IO(Bool):
+def codex_classified(+handle: U32, +observed: String, fields: List<&2,String>, +cleanup: String) -> IO(Bool):
   match fields:
     case "result" <> +result <> Nil{}: do IO<Bool>:
-      finished : Unit <- codex_finish(handle)
-      printed : Unit <- codex_result(observed,result)
+      clean : Bool <- codex_finish(handle,cleanup)
+      printed : Unit <- Bool.pick(IO(Unit),clean,codex_result(observed,result),print_unreadable("codex",Codex.codex_source(),observed,codex_cleanup_reason(cleanup)))
       IO.pure(Bool,True{})
     case "initialized" <> Nil{}: do IO<Bool>:
       wrote : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,codex_read_request())
       IO.pure(Bool,False{})
     case "error" <> +message <> Nil{}: do IO<Bool>:
-      finished : Unit <- codex_finish(handle)
-      printed : Unit <- print_unreadable("codex",Codex.codex_source(),observed,"codex app-server answered an error: " ++ message)
+      clean : Bool <- codex_finish(handle,cleanup)
+      +failed : String <- IO.pure(String,"codex app-server answered an error: " ++ message)
+      printed : Unit <- print_unreadable("codex",Codex.codex_source(),observed,Bool.pick(String,clean,failed,failed ++ "; " ++ codex_cleanup_reason(cleanup)))
       IO.pure(Bool,True{})
     case other: IO.pure(Bool,False{})
 
 @unsafe
-def codex_lines(+handle: U32, +observed: String, line: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+def codex_lines(+handle: U32, +observed: String, line: Result<&1,&1,U32 & String,Maybe<String>>, +cleanup: String) -> IO(Unit):
   match line:
     case Fail{(code,detail)}: do IO<Unit>:
-      finished : Unit <- codex_finish(handle)
-      print_unreadable("codex",Codex.codex_source(),observed,"reading codex app-server failed: " ++ detail)
+      clean : Bool <- codex_finish(handle,cleanup)
+      +failed : String <- IO.pure(String,"reading codex app-server failed: " ++ detail)
+      print_unreadable("codex",Codex.codex_source(),observed,Bool.pick(String,clean,failed,failed ++ "; " ++ codex_cleanup_reason(cleanup)))
     case Done{value}:
       match value:
-        case None{}: codex_ended(handle,observed)
+        case None{}: codex_ended(handle,observed,cleanup)
         case Some{+text}: do IO<Unit>:
           +role : String <- IO.try(String,DB.Sql.query(":memory:",codex_line_sql(Tx.trim_nl(text))))
-          +done : Bool <- codex_classified(handle,observed,String.split(Tx.trim_nl(role),Char.from_u32(31)))
+          +done : Bool <- codex_classified(handle,observed,String.split(Tx.trim_nl(role),Char.from_u32(31)),cleanup)
           next : Result<&1,&1,U32 & String,Maybe<String>> <- Bool.pick(IO(Result<&1,&1,U32 & String,Maybe<String>>),done,IO.pure(Result<&1,&1,U32 & String,Maybe<String>>,Done{None{}}),P.ProcessChild.read_line(handle))
-          Bool.pick(IO(Unit),done,IO.pure(Unit,Unit{}),codex_lines(handle,observed,next))
+          Bool.pick(IO(Unit),done,IO.pure(Unit,Unit{}),codex_lines(handle,observed,next,cleanup))
 
-def codex_spawned(+observed: String, spawned: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+def codex_spawned(+observed: String, spawned: Result<&1,&1,U32 & String,U32>, +cleanup: String) -> IO(Unit):
   match spawned:
-    case Fail{(code,detail)}: print_unreadable("codex",Codex.codex_source(),observed,"codex app-server did not start: " ++ detail)
+    case Fail{(code,detail)}: do IO<Unit>:
+      clean : Bool <- codex_cleanup(cleanup)
+      +failed : String <- IO.pure(String,"codex app-server did not start: " ++ detail)
+      print_unreadable("codex",Codex.codex_source(),observed,Bool.pick(String,clean,failed,failed ++ "; " ++ codex_cleanup_reason(cleanup)))
     case Done{+handle}: do IO<Unit>:
       wrote : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,codex_initialize())
       first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-      codex_lines(handle,observed,first)
+      codex_lines(handle,observed,first,cleanup)
 
 def env_value(found: Result<&1,&1,U32 & String,String>) -> String:
   match found:
     case Fail{error}: ""
     case Done{+value}: Tx.trim_nl(value)
 
+def codex_executable_of(+recorded: String) -> IO(String):
+  do IO<String>:
+    configured : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_CODEX_BIN")
+    IO.pure(String,Codex.codex_executable(env_value(configured),recorded))
+
+def codex_spawn_home(+observed: String, +home: String, +executable: String, +cleanup: String) -> IO(Unit):
+  do IO<Unit>:
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv(Codex.codex_app_server_argv(home,executable)),".","/dev/null")
+    codex_spawned(observed,spawned,cleanup)
+
 def codex_spawn(+observed: String, +reference: String, +recorded: String) -> IO(Unit):
   do IO<Unit>:
-    configured : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_CODEX_BIN")
-    +executable : String <- IO.pure(String,Codex.codex_executable(env_value(configured),recorded))
-    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv(Codex.codex_app_server_argv(after_colon(reference),executable)),".","/dev/null")
-    codex_spawned(observed,spawned)
+    +executable : String <- codex_executable_of(recorded)
+    codex_spawn_home(observed,after_colon(reference),executable,"")
+
+# --- the Codex API-key read ------------------------------------------------------
+#
+# An API-key reference holds no home: the helper resolves the secret, logs a
+# fresh owner-only temporary home in with it through `COMMAND login
+# --with-api-key`, which reads the key from stdin, then reads the rate limits
+# through that home. The home is removed before the read is printed; a home
+# that cannot be cleaned reports so instead of the read. The key travels only
+# through the login child's stdin; every refusal carries the reference and a
+# condition, never the value. A keychain reference has no reader on this host,
+# so it reports the resolver's own cause.
+
+def codex_login_source() -> String:
+  "codex login --with-api-key"
+
+def codex_temp_time(now: Result<&1,&1,U32 & String,String>) -> String:
+  match now:
+    case Fail{error}: "0"
+    case Done{+value}: Tx.trim_nl(value)
+
+def codex_temp_random(random: Result<&1,&1,U32 & String,U32>) -> String:
+  match random:
+    case Fail{error}: "0"
+    case Done{+value}: U32.show(value)
+
+def codex_temp_home(now: Result<&1,&1,U32 & String,String>, random: Result<&1,&1,U32 & String,U32>) -> String:
+  "/tmp/baton2-codex-read-" ++ codex_temp_time(now) ++ "-" ++ codex_temp_random(random)
+
+def codex_key_login_failed(+observed: String, +home: String, +reason: String) -> IO(Unit):
+  do IO<Unit>:
+    clean : Bool <- codex_cleanup(home)
+    +failed : String <- IO.pure(String,reason)
+    print_unreadable("codex",codex_login_source(),observed,Bool.pick(String,clean,failed,failed ++ "; " ++ codex_cleanup_reason(home)))
+
+def codex_key_waited(waited: Result<&1,&1,U32 & String,String>, +observed: String, +home: String, +executable: String) -> IO(Unit):
+  match waited:
+    case Done{+status}: Bool.pick(IO(Unit),String.eq(Tx.trim_nl(status),"exit 0"),codex_spawn_home(observed,home,executable,home),codex_key_login_failed(observed,home,"codex login --with-api-key did not log in: " ++ Tx.trim_nl(status)))
+    case Fail{(code,detail)}: codex_key_login_failed(observed,home,"codex login --with-api-key did not finish: " ++ U32.show(code))
+
+def codex_key_closed(closed: Result<&1,&1,U32 & String,Unit>, +observed: String, +home: String, +executable: String, +handle: U32) -> IO(Unit):
+  match closed:
+    case Fail{(code,detail)}: codex_key_login_failed(observed,home,"the API key could not be passed to codex login: " ++ U32.show(code))
+    case Done{unit}: do IO<Unit>:
+      waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
+      codex_key_waited(waited,observed,home,executable)
+
+def codex_key_written(written: Result<&1,&1,U32 & String,Unit>, +observed: String, +home: String, +executable: String, +handle: U32, +secret: String) -> IO(Unit):
+  match written:
+    case Fail{(code,detail)}: codex_key_login_failed(observed,home,"the API key could not be passed to codex login: " ++ U32.show(code))
+    case Done{unit}: do IO<Unit>:
+      closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+      codex_key_closed(closed,observed,home,executable,handle)
+
+def codex_key_spawned(spawned: Result<&1,&1,U32 & String,U32>, +observed: String, +home: String, +executable: String, +secret: String) -> IO(Unit):
+  match spawned:
+    case Fail{(code,detail)}: codex_key_login_failed(observed,home,"codex login --with-api-key could not be started: " ++ detail)
+    case Done{+handle}: do IO<Unit>:
+      written : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,secret ++ "\n")
+      codex_key_written(written,observed,home,executable,handle,secret)
+
+def codex_key_login(+observed: String, +home: String, +executable: String, +secret: String) -> IO(Unit):
+  do IO<Unit>:
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv(["/usr/bin/env","CODEX_HOME=" ++ home,executable,"login","--with-api-key"]),".","/dev/null")
+    codex_key_spawned(spawned,observed,home,executable,secret)
+
+def codex_key_made(made: Result<&1,&1,U32 & String,Unit>, +observed: String, +home: String, +executable: String, +secret: String) -> IO(Unit):
+  match made:
+    case Fail{(code,detail)}: print_unreadable("codex",codex_login_source(),observed,"the temporary credential home could not be created: " ++ detail)
+    case Done{unit}: codex_key_login(observed,home,executable,secret)
+
+def read_codex_key(+observed: String, +executable: String, +secret: String) -> IO(Unit):
+  do IO<Unit>:
+    now : Result<&1,&1,U32 & String,String> <- Clock.Clock.millis()
+    random : Result<&1,&1,U32 & String,U32> <- IO.random_u32()
+    +home : String <- IO.pure(String,codex_temp_home(now,random))
+    made : Result<&1,&1,U32 & String,Unit> <- Files.Files.mkdir_mode(home,448)
+    codex_key_made(made,observed,home,executable,secret)
+
+def read_codex_resolved(+observed: String, +executable: String, resolved: Result<&1,&1,String,String>) -> IO(Unit):
+  match resolved:
+    case Fail{+reason}: print_unreadable("codex",Codex.codex_source(),observed,reason)
+    case Done{+secret}: read_codex_key(observed,executable,secret)
+
+def read_codex_reference(+observed: String, +reference: String, +recorded: String) -> IO(Unit):
+  do IO<Unit>:
+    +executable : String <- codex_executable_of(recorded)
+    resolved : Result<&1,&1,String,String> <- resolve(reference)
+    read_codex_resolved(observed,executable,resolved)
 
 def read_codex(+observed: String, +reference: String, +recorded: String) -> IO(Unit):
-  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"codex-home"),codex_spawn(observed,reference,recorded),print_unreadable("codex",Codex.codex_source(),observed,"the credential reference " ++ reference ++ " is not codex-home:PATH"))
+  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"codex-home"),codex_spawn(observed,reference,recorded),read_codex_reference(observed,reference,recorded))
 
 # --- dispatch ------------------------------------------------------------------------
 

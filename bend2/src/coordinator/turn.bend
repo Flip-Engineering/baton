@@ -1441,18 +1441,29 @@ def current_history(+db: String, player: String) -> IO(String):
 # reads the current assignment state when OMP reaches session_stop.
 # OMP binds PI_CODING_AGENT_DIR and Muse binds
 # XDG_CONFIG_HOME; a selected profile assignment overrides an inherited store.
-def retained_profile_other(omp: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +completion_extension: String) -> String:
+# A Codex API-key seat launches through the login helper prefix without the
+# forced ChatGPT login method, so its own CODEX_HOME auth decides. Every other
+# seat keeps its existing profile argv.
+def codex_api_key_launch(+harness: String, chosen: Maybe<&2,Accounts.AccountRecord>) -> Bool:
+  match chosen:
+    case None{}: False{}
+    case Some{+account}: Bool.and(String.eq(harness,"codex"),String.eq(Accounts.account_funding(account),"api_key"))
+
+def retained_profile_other(omp: Bool, muse: Bool, codex_key: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +completion_extension: String) -> String:
   match omp:
     case True{}: Omp.argv_with_completion(binding,cmd,model,effort,sessions,native,String.is_empty(native),completion_extension)
     case False{}:
       match muse:
         case True{}: Muse.argv_profile(binding,cmd,model,effort,prompt_file,native,String.is_empty(native))
-        case False{}: Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))
+        case False{}:
+          match codex_key:
+            case True{}: Codex.argv_api_key(binding,override,cmd,model,effort,native,String.is_empty(native))
+            case False{}: Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))
 
-def retained_profile_arguments(omp: Bool, claude: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +completion_extension: String) -> String:
+def retained_profile_arguments(omp: Bool, claude: Bool, muse: Bool, codex_key: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +completion_extension: String) -> String:
   match claude:
     case True{}: Claude.argv_profile(binding,cmd,model,effort,native,String.is_empty(native))
-    case False{}: retained_profile_other(omp,muse,binding,override,cmd,model,effort,sessions,prompt_file,native,completion_extension)
+    case False{}: retained_profile_other(omp,muse,codex_key,binding,override,cmd,model,effort,sessions,prompt_file,native,completion_extension)
 
 def helper_asset(+helper: String, +name: String) -> String:
   Subs.directory_of(helper) ++ "/" ++ name
@@ -1639,10 +1650,10 @@ def retained_launch_plain(+omp: Bool, claude: Bool, muse: Bool, cmd: String, mod
     case None{}: Done{prefix ++ omp_completion_arguments(retained_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native),omp,completion_extension)}
     case Some{+refused}: Fail{(2,Bool.pick(String,String.is_empty(credit_refusal),Accounts.credit_api_key_refusal(refused),credit_refusal))}
 
-def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +completion_extension: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, launch_credit: Maybe<List<String>> & String) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +completion_extension: String, +history: String, +harness: String, account: Maybe<&2,Accounts.AccountRecord>, launch_credit: Maybe<List<String>> & String) -> Result<&1,&1,U32 & String,String>:
   (binding,credit_refusal)=launch_credit
   match binding:
-    case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,muse,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,prompt_file,native,completion_extension)}
+    case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,muse,codex_api_key_launch(Tx.trim_nl(harness),account),bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,prompt_file,native,completion_extension)}
     case None{}: retained_launch_plain(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,completion_extension,account,credit_refusal)
 
 

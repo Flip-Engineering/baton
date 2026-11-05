@@ -12,7 +12,12 @@ import ../src/json/canonical.bend as J
 # reference, writes an owner-only environment specification, and asks the host
 # to spawn the harness with that environment. The credential value travels only
 # through the specification and the child environment; refusals carry the
-# reference kind and a condition, never the value.
+# reference kind and a condition, never the value. The Codex mode below logs a
+# dedicated CODEX_HOME in with the resolved key through `codex login
+# --with-api-key`, which reads the key from stdin, then spawns the Codex
+# command with that home, so the key and the host's ChatGPT login stay
+# separate. It carries no promotional-credit authorization: that admission
+# route is unproven and stays held for the Anthropic route only.
 
 def credential_variable() -> String:
   "ANTHROPIC_API_KEY"
@@ -318,9 +323,81 @@ def run_admitted(+reference: String, +command: String, args: List<String>) -> IO
     db_value : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_DATABASE")
     admitted_marker(marker_value,attempt_value,db_value,reference,command,args)
 
+# --- the Codex API-key mode -------------------------------------------------------
+#
+# SECRET_REF --codex CODEX_HOME COMMAND [ARG...] resolves the secret, logs the
+# dedicated home in with it through `COMMAND login --with-api-key`, which reads
+# the key from stdin, then spawns COMMAND with the home. The home is created
+# when missing; a home that cannot be created surfaces through the login's own
+# failure. The command inherits the helper's stdio and gains CODEX_HOME
+# through a one-use owner-only environment specification, as the Anthropic
+# mode passes its variable. The key travels only through the login child's
+# stdin; every refusal carries the reference kind and a condition, never the
+# value. The login's exit word names the actual cause, and the spawned command
+# keeps the spawner's exit word, so the seat observes the provider's own
+# outcome.
+
+def codex_exec(+reference: String, +home: String, +command: String, args: List<String>) -> IO(Unit):
+  do IO<Unit>:
+    +spec : String <- spec_path()
+    written : Result<&1,&1,U32 & String,Unit> <- Files.Files.write_private(spec,"CODEX_HOME=" ++ home ++ "\n")
+    written_decided(written,reference,spec,command,args)
+
+def codex_login_waited(waited: Result<&1,&1,U32 & String,String>, +reference: String, +home: String, +command: String, args: List<String>) -> IO(Unit):
+  match waited:
+    case Done{+status}: Bool.pick(IO(Unit),String.eq(Tx.trim_nl(status),"exit 0"),codex_exec(reference,home,command,args),IO.die(Unit,2,refusal_json(reference,"codexLoginFailed","codex login --with-api-key did not log in: " ++ Tx.trim_nl(status))))
+    case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"codexLoginFailed","codex login --with-api-key did not finish: " ++ U32.show(code)))
+
+def codex_login_closed(closed: Result<&1,&1,U32 & String,Unit>, +reference: String, +handle: U32, +home: String, +command: String, args: List<String>) -> IO(Unit):
+  match closed:
+    case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"codexLoginFailed","the API key could not be passed to codex login: " ++ U32.show(code)))
+    case Done{unit}: do IO<Unit>:
+      waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
+      codex_login_waited(waited,reference,home,command,args)
+
+def codex_login_written(written: Result<&1,&1,U32 & String,Unit>, +reference: String, +handle: U32, +home: String, +command: String, args: List<String>) -> IO(Unit):
+  match written:
+    case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"codexLoginFailed","the API key could not be passed to codex login: " ++ U32.show(code)))
+    case Done{unit}: do IO<Unit>:
+      closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+      codex_login_closed(closed,reference,handle,home,command,args)
+
+def codex_login_spawned(spawned: Result<&1,&1,U32 & String,U32>, +reference: String, +secret: String, +home: String, +command: String, args: List<String>) -> IO(Unit):
+  match spawned:
+    case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"codexLoginFailed","codex login --with-api-key could not be started: " ++ U32.show(code)))
+    case Done{+handle}: do IO<Unit>:
+      written : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,secret ++ "\n")
+      codex_login_written(written,reference,handle,home,command,args)
+
+def codex_login(+reference: String, +secret: String, +home: String, +command: String, args: List<String>) -> IO(Unit):
+  do IO<Unit>:
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv(["/usr/bin/env","CODEX_HOME=" ++ home,command,"login","--with-api-key"]),".","/dev/null")
+    codex_login_spawned(spawned,reference,secret,home,command,args)
+
+def codex_resolved(resolved: Result<&1,&1,Refusal,String>, +reference: String, +home: String, +command: String, args: List<String>) -> IO(Unit):
+  match resolved:
+    case Fail{+rejected}: run_rejected(rejected,reference)
+    case Done{+secret}: codex_login(reference,secret,home,command,args)
+
+def run_codex(+reference: String, +home: String, +command: String, args: List<String>) -> IO(Unit):
+  do IO<Unit>:
+    made : Result<&1,&1,U32 & String,Unit> <- Files.Files.mkdir(home)
+    resolved : Result<&1,&1,Refusal,String> <- resolve(reference)
+    codex_resolved(resolved,reference,home,command,args)
+
+def main_codex(+reference: String, args: List<String>) -> IO(Unit):
+  match args:
+    case +home <> +command <> rest: Bool.pick(IO(Unit),Bool.or(String.is_empty(home),String.is_empty(command)),IO.die(Unit,2,refusal_json(reference,"unsupportedSecretReference","expected SECRET_REF --codex CODEX_HOME COMMAND [ARG...]")),run_codex(reference,home,command,rest))
+    case other: IO.die(Unit,2,refusal_json(reference,"unsupportedSecretReference","expected SECRET_REF --codex CODEX_HOME COMMAND [ARG...]"))
+
+def main_command(+reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match command:
+    case "--codex": main_codex(reference,args)
+    case other: run_admitted(reference,other,args)
+
 def main_arguments(arguments: List<String>) -> IO(Unit):
   match arguments:
-    case +reference <> +command <> rest: run_admitted(reference,command,rest)
+    case +reference <> +command <> rest: main_command(reference,command,rest)
     case other: IO.die(Unit,2,refusal_json("","unsupportedSecretReference","expected SECRET_REF COMMAND [ARG...]"))
 
 def main() -> IO(Unit):
