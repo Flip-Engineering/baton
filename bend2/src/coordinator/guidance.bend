@@ -91,10 +91,16 @@ def outstanding_sql(+player: String) -> String:
 def pending_sql(+player: String, +cursor: String) -> String:
   "SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(player) ++ " AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"
 
+# A cursor holds a message sequence as text. A cursor from a query ends in a
+# newline and one from `replay_cursor` does not, so positions compare without it.
+# Comparing the raw text sent the last forwarded message again on every wake (#1443).
+def same_position(+cursor: String, +next: String) -> Bool:
+  String.eq(Tx.trim_nl(cursor),Tx.trim_nl(next))
+
 def pending(+db: String, +player: String, handle: U32, +attempt: String, +cursor: String) -> IO(String):
   do IO<String>:
     +next : String <- IO.try(String,DB.Sql.query(db,pending_sql(player,cursor)))
-    send(db,player,handle,attempt,cursor,next,String.eq(cursor,next))
+    send(db,player,handle,attempt,cursor,next,same_position(cursor,next))
 
 # An attempt with closed input keeps its current forwarding cursor.
 def pending_live(db: String, player: String, handle: U32, attempt: String, cursor: String, closed: U32) -> IO(String):
