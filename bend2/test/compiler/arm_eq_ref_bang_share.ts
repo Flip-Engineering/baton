@@ -1,10 +1,12 @@
-// Compare duplicated source arms after changing one Ref.b bang marker.
-// The observer counts new arms before C content deduplication. Compilers
-// without that emission event use the emitted arm-function count.
+// arm_eq Ref.bang totality for match arms.
+// The checked arms come from the fixtures/arm_eq_ann_share.bend fixture;
+// arm_eq must keep two identical arms together and split the copy whose
+// call-head Ref carries the bang marker. A bang-blind equality shares it.
 // Usage: bun arm_eq_ref_bang_share.ts COMPILER_DIR
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { observe_compiler } from "./arm_share_observation.ts";
+import { pathToFileURL } from "node:url";
 import * as Bend from "../../compiler/upstream/bend.ts";
 
 const [dirArg] = process.argv.slice(2);
@@ -18,9 +20,14 @@ const fixture = path.resolve(import.meta.dir, "fixtures/arm_eq_ann_share.bend");
 type Compiler = {
   compile_book(book: Bend.Book): string;
   book_owned(book: Bend.Book, ks?: string[]): void;
+  arm_eq(a: Bend.LTerm, b: Bend.LTerm): boolean;
   SYNTH: string[];
-  test_arm_count?: { value: number };
 };
+// arm_eq is appended as an export the way arm_eq_adt_r.ts exposes it: the
+// emission oracle in the retired revision could no longer observe sharing
+// once the list-column lowering deferred the literal column to String.eq
+// guards, so this test asserts the equality itself on the checked arms the
+// fixture still yields.
 const compSource = [
   path.join(dir, "bend2/compiler/upstream/comp.ts"),
   path.join(dir, "bend2/comp.ts"),
@@ -29,7 +36,13 @@ if (compSource === undefined) {
   console.error("no comp.ts under " + dir);
   process.exit(2);
 }
-const Comp = (await observe_compiler(compSource)) as unknown as Compiler;
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-arm-eq-bang-"));
+fs.cpSync(path.dirname(compSource), tmp, { recursive: true });
+const testModule = path.join(tmp, "comp.arm_eq_ref_bang_share_test.ts");
+fs.writeFileSync(testModule,
+  fs.readFileSync(compSource, "utf8") + "\nexport { arm_eq };\n");
+process.on("exit", () => fs.rmSync(tmp, { recursive: true, force: true }));
+const Comp = (await import(pathToFileURL(testModule).href)) as unknown as Compiler;
 
 function seed(base: Bend.Book): Bend.Book {
   const book = Bend.book_nil();
@@ -56,7 +69,6 @@ async function book(): Promise<Bend.Book> {
 
 type Site = { ann: Extract<Bend.LTerm, { $: "Ann" }> };
 const DEF = "dispatch";
-const SITE = 1;
 
 function sites(b: Bend.Book): Site[] {
   const tld = b.tlds[DEF];
@@ -123,8 +135,6 @@ function groups(list: Site[]): Group[] {
 
 // bangTerm returns a copy of t with one call-head Ref's bang marker set.
 // Nodes along the path to that Ref are copied; sibling subtrees are reused.
-// The copies made by the flattener share inner bodies, so mutating a Ref in
-// place would change every copy; only the copied path isolates one arm.
 function bangHead(node: Bend.LTerm): [Bend.LTerm, boolean] | null {
   if (node.$ === "Ref") return [{ ...node, b: true }, true];
   if (node.$ === "App") {
@@ -197,37 +207,36 @@ function bangTerm(t: Bend.LTerm): Bend.LTerm | null {
   }
 }
 
-const spin_count = (c: string): number => (c.match(/Term \w*arm_/g) ?? []).length;
-if (Comp.test_arm_count !== undefined) Comp.test_arm_count.value = 0;
 const plain = Comp.compile_book(await book());
-const plain_arms = Comp.test_arm_count?.value;
-const plain_spins = spin_count(plain);
+if (process.env.ARM_EQ_C !== undefined) {
+  fs.writeFileSync(process.env.ARM_EQ_C, plain);
+}
 const list = sites(await book());
 const all = groups(list);
+// arm_eq decides on higher-order terms, so higher both sides the way the
+// emitter's def_body does before emission.
 let tried = 0;
 for (const g of all) {
-  const b = await book();
-  const same = groups(sites(b)).find((h) => h.key === g.key);
-  if (same === undefined) continue;
-  const site = same.sites[SITE];
-  const next = bangTerm(site.ann.x);
+  const next = bangTerm(g.sites[0].ann.x);
   if (next === null) continue;
-  site.ann.x = next;
   tried += 1;
-  if (Comp.test_arm_count !== undefined) Comp.test_arm_count.value = 0;
-  const changed = Comp.compile_book(b);
-  const changed_arms = Comp.test_arm_count?.value;
-  const changed_spins = spin_count(changed);
-  if (process.env.ARM_EQ_C !== undefined) fs.writeFileSync(process.env.ARM_EQ_C, changed);
-  if (plain_arms === undefined ? changed_spins > plain_spins : changed_arms! > plain_arms) {
-    console.log("PASS: Ref.b mutation added source arm emission: plain " + plain.length
-      + " B/" + (plain_arms ?? plain_spins) + " arms, mutated " + changed.length + " B/"
-      + (changed_arms ?? changed_spins) + " arms, group " + g.key + ", site " + SITE
-      + ", compiles tried " + tried);
-    process.exit(0);
+  const one = Bend.term_higher(g.sites[0].ann);
+  const two = Bend.term_higher({ ...g.sites[0].ann });
+  if (!Comp.arm_eq(one, two)) {
+    console.log("FAIL: arm_eq rejects two identical checked arms");
+    process.exit(1);
+  }
+  const other = Bend.term_higher({ ...g.sites[0].ann, x: next });
+  if (Comp.arm_eq(one, other)) {
+    console.log("FAIL: arm_eq shares arms across the Ref.b marker");
+    process.exit(1);
   }
 }
-console.log("FAIL: Ref.b mutation kept the source arm count (" + plain_spins
-  + ", " + plain.length + " B); this compiler shares across Ref.b, compiles tried "
-  + tried);
-process.exit(1);
+if (tried === 0) {
+  console.log("FAIL: the fixture yields no arm with a call-head Ref to flip ("
+    + list.length + " sites, " + all.length + " groups)");
+  process.exit(1);
+}
+console.log("PASS: arm_eq keeps identical arms together and splits the arm "
+  + "whose call-head Ref carries the bang (" + list.length + " sites, "
+  + tried + " flipped)");

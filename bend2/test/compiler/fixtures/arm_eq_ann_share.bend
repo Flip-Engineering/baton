@@ -1,8 +1,10 @@
-# A literal prefix, a 2-token fallback and a catch-all. The flattener
-# duplicates the fallback row at every character column, so emit_arm_shared
-# receives closed copies of one row with the same hint. base arm_eq ignores
+# A literal prefix, a 2-token fallback and a catch-all. The list-column
+# lowering defers the literal column to String.eq guards on a shared reusable
+# binder, so the emitter no longer receives per-column copies of one row the
+# way the old character decision tree did. The sharing tests extract checked
+# arms from this fixture and assert arm equality itself: base arm_eq ignores
 # Ann.T and shares a copy after the annotation type changes; a total equality
-# emits a separate spin.
+# keeps the changed copy apart.
 import Base
 
 @unsafe
