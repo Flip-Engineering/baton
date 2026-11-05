@@ -1,0 +1,8 @@
+{
+  "run": "/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/target/queue-runs/invocation.kwHVDLHg",
+  "bend": "/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25/bin/bend",
+  "cc": "/usr/bin/cc",
+  "client": "/var/tmp/baton2-compile-queue/compile-queue-runner",
+  "state": "/var/tmp/baton2-compile-queue",
+  "priority": "0"
+}
