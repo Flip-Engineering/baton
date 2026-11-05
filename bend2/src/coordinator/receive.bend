@@ -16,6 +16,7 @@ import ../json/canonical.bend as J
 import ./native-requests.bend as NativeRequests
 import ./observer-checkpoint.bend as Observer
 import ./delivery.bend as Delivery
+import ./instance-drain.bend as Drain
 import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
 import ../host/process.bend as P
@@ -798,19 +799,43 @@ def completed_observation(+db: String, +session: String, +id: String, log: Strin
     routed : Bool <- route_decided(db,session,id,outcome,superseded)
     completed_routed(db,session,id,log,cursor,conversation,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded,routed)
 
-def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: String -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+# A draining instance owner refuses a new start with ESHUTDOWN. The refusal is a
+# transient condition, so the start is deferred and not failed. Under the held
+# session lock the claim this admission took is marked drain-deferred, by the
+# exact owner and generation it read, and the execution row is settled as exited
+# with status drain-deferred, so stall.bend still lists the session as stalled.
+# The input stays owed and the orchestrator gets one durable report. The owner's
+# drain sweep (drain-sweep.bend) drives the session again when the owner exits or
+# the next owner starts; the wake driver it calls re-reads the claim under the
+# session lock, adopts a live claimed owner or claims the owed message anew.
+def drain_deferred(+db: String, +session: String, +id: String, +log: String, +attempt: String, lock: U32, +error: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +head : String <- wake_found(db,session,"0")
+    +owner : String <- Store.claim_owner(db,session)
+    +generation : String <- Store.claim_generation(db,session)
+    deferred : Unit <- Store.defer_claim(db,session,Tx.trim_nl(owner),generation)
+    +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"drain-deferred","",error,True{}})
+    exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
+    cleaned : Unit <- Store.delete_ticket(db,session,attempt)
+    reported : Unit <- UW.window_report(db,session,id,"instance-drain-deferred",Drain.deferred_text(error,head))
+    released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+
+def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, +lock: U32, start: P.RetainedStart, again: String -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:
     case P.Retained{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reconciled : Unit <- Stop.started(db,session,id)
       observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,attempt,handle,Omp.filter_events(level))
       completed_observation(db,session,id,log,cursor,native,cwd,attempt,handle,Some{lock},observation,again,False{},cmd)
-    case P.Unstarted{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"start failed","","Player process could not start: " ++ error,True{}})
-      exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
-      prepared : Unit <- Turn.prepare(db,session,id,log,attempt ++ "/native.stderr",outcome)
-      cleaned : Unit <- Store.delete_ticket(db,session,attempt)
-      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      finish_pending(db,session,id,attempt,log,cursor,outcome,Nil{},again,u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),False{})
+    case P.Unstarted{+error}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Drain.drain_refusal(error),
+      drain_deferred(db,session,id,log,attempt,lock,error),
+      (do IO<Result<&1,&1,U32 & String,Unit>>:
+        +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"start failed","","Player process could not start: " ++ error,True{}})
+        exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
+        prepared : Unit <- Turn.prepare(db,session,id,log,attempt ++ "/native.stderr",outcome)
+        cleaned : Unit <- Store.delete_ticket(db,session,attempt)
+        released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+        finish_pending(db,session,id,attempt,log,cursor,outcome,Nil{},again,u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),False{})))
 
 def started_result(start: Result<&1,&1,U32 & String,P.RetainedStart>, +db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:

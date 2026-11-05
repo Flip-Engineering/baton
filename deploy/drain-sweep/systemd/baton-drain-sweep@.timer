@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry Baton deferred instance-drain recovery for %f
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+Unit=baton-drain-sweep@%i.service
+
+[Install]
+WantedBy=timers.target
