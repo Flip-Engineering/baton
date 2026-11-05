@@ -966,24 +966,35 @@ def run_sweep(+db: String) -> IO(Unit):
 def bool_json(+value: Bool) -> String:
   Bool.pick(String, value, "true", "false")
 
-def policy_root_json(+spec: RootSpec, +exclusive: List<&2,String>, +state: S.State) -> String:
+def policy_root_json(+spec: RootSpec, +fs: O.Filesystem, +exclusive: List<&2,String>, +state: S.State) -> String:
   match spec:
     case RootSpec{cls, path, source}:
       "{\"root\":" ++ J.string_literal(path)
       ++ ",\"class\":" ++ J.string_literal(P.class_name(cls))
       ++ ",\"source\":" ++ J.string_literal(source)
       ++ ",\"exclusive\":" ++ bool_json(exclusive_member(path, exclusive))
-      ++ ",\"covered\":" ++ bool_json(referenced_root(spec, state)) ++ "}"
+      ++ ",\"covered\":" ++ bool_json(referenced_root(spec, state))
+      ++ ",\"filesystem\":" ++ O.filesystem_json(fs) ++ "}"
 
-def policy_root_items(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +state: S.State, +acc: String) -> String:
+def policy_fs_at(fs: List<&2,O.Filesystem>) -> O.Filesystem:
+  match fs:
+    case Con{head, tail}: head
+    case Nil{}: O.FsUnknown{"filesystem not observed"}
+
+def policy_fs_rest(fs: List<&2,O.Filesystem>) -> List<&2,O.Filesystem>:
+  match fs:
+    case Con{head, tail}: tail
+    case Nil{}: Nil{}
+
+def policy_root_items(specs: List<&2,RootSpec>, +fs: List<&2,O.Filesystem>, +exclusive: List<&2,String>, +state: S.State, +acc: String) -> String:
   match specs:
     case Nil{}: acc
     case Con{head, tail}:
-      +item = policy_root_json(head, exclusive, state)
+      +item = policy_root_json(head, policy_fs_at(fs), exclusive, state)
       +next = Bool.pick(String, String.is_empty(acc), item, acc ++ "," ++ item)
-      policy_root_items(tail, exclusive, state, next)
+      policy_root_items(tail, policy_fs_rest(fs), exclusive, state, next)
 
-def policy_json(+specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +state: S.State) -> String:
+def policy_json(+specs: List<&2,RootSpec>, +fs: List<&2,O.Filesystem>, +exclusive: List<&2,String>, +state: S.State) -> String:
   +unproven : String = unproven_roots(specs, exclusive, "")
   +uncovered : String = uncovered_roots_state(specs, state, "")
   +apply_state : String = Bool.pick(String, roots_empty(specs), "ready",
@@ -991,11 +1002,21 @@ def policy_json(+specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +state: 
   "{\"ageOnlyDeletion\":false,\"apply\":" ++ J.string_literal(apply_state)
   ++ ",\"unprovenRoot\":" ++ J.string_literal(unproven)
   ++ ",\"uncoveredRoot\":" ++ J.string_literal(uncovered)
-  ++ ",\"roots\":[" ++ policy_root_items(specs, exclusive, state, "") ++ "]}"
+  ++ ",\"roots\":[" ++ policy_root_items(specs, fs, exclusive, state, "") ++ "]}"
+
+# One filesystem observation per configured root, in root order.
+def policy_fs_all(specs: List<&2,RootSpec>, +acc: List<&2,O.Filesystem>) -> IO(List<&2,O.Filesystem>):
+  match specs:
+    case Nil{}: IO.pure(List<&2,O.Filesystem>, List.reverse(&2, O.Filesystem, acc))
+    case Con{head, tail}:
+      do IO<List<&2,O.Filesystem>>:
+        fs : O.Filesystem <- O.filesystem(root_path_of(head))
+        policy_fs_all(tail, Con{fs, acc})
 
 def run_policy(+db: String) -> IO(Unit):
   do IO<Unit>:
-    specs : List<&2,RootSpec> <- configured_roots()
+    +specs : List<&2,RootSpec> <- configured_roots()
     exclusive : List<&2,String> <- configured_exclusive()
+    fs : List<&2,O.Filesystem> <- policy_fs_all(specs, Nil{})
     state : S.State <- S.load(db)
-    IO.write(policy_json(specs, exclusive, state))
+    IO.write(policy_json(specs, fs, exclusive, state))

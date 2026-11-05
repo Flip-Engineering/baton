@@ -659,20 +659,46 @@ def exclusive_check(+db: String) -> IO(Unit):
     +all : List<&2,String> = Con{"exclusive-a", Con{"exclusive-c", Nil{}}}
     d : Unit <- check("exclusive-all", String.is_empty(L.unproven_roots(specs, all, "")), "unproven root remained")
     +state : S.State <- S.load(db)
-    +policy : String = L.policy_json(specs, rows, state)
+    +policy : String = L.policy_json(specs, Nil{}, rows, state)
     e : Unit <- check("policy-refused-uncovered", Bool.and(String.starts_with(policy, "{\"ageOnlyDeletion\":false,\"apply\":\"refused\""), String.contains(policy, "\"uncoveredRoot\":\"exclusive-a\"")), policy)
-    +declared : String = L.policy_json(specs, all, state)
+    +declared : String = L.policy_json(specs, Nil{}, all, state)
     f : Unit <- check("policy-refused-with-exclusive", String.starts_with(declared, "{\"ageOnlyDeletion\":false,\"apply\":\"refused\""), declared)
     +no_specs : List<&2,L.RootSpec> = Nil{}
     +no_exclusive : List<&2,String> = Nil{}
     registered : String <- IO.try(String, DB.Sql.query(db, "INSERT OR REPLACE INTO log_files(session,log) VALUES('owner','/covered-a/log');"))
     +covered_state : S.State <- S.load(db)
     +covered : List<&2,L.RootSpec> = Con{L.RootSpec{T.LogEvidence{}, "/covered-a", ""}, Nil{}}
-    +covered_policy : String = L.policy_json(covered, no_exclusive, covered_state)
+    +covered_policy : String = L.policy_json(covered, Nil{}, no_exclusive, covered_state)
     g : Unit <- check("policy-lease-gated-covered", String.starts_with(covered_policy, "{\"ageOnlyDeletion\":false,\"apply\":\"lease-gated\""), covered_policy)
-    +empty_policy : String = L.policy_json(no_specs, no_exclusive, covered_state)
+    +empty_policy : String = L.policy_json(no_specs, Nil{}, no_exclusive, covered_state)
     cleared : String <- IO.try(String, DB.Sql.query(db, "DELETE FROM log_files WHERE session='owner' AND log='/covered-a/log';"))
     h : Unit <- check("policy-ready-without-roots", String.starts_with(empty_policy, "{\"ageOnlyDeletion\":false,\"apply\":\"ready\""), empty_policy)
+    IO.pure(Unit, Unit{})
+
+def filesystem_sane(fs: O.Filesystem) -> Bool:
+  match fs:
+    case O.FsFound{device, owner, block_size, free_bytes, +total_bytes}:
+      Bool.and(Bool.not(String.is_empty(device)),
+        Bool.and(Bool.not(String.is_empty(owner)),
+          Bool.and(Nat.is_gt(block_size, 0n),
+            Bool.and(Nat.is_gt(total_bytes, 0n), Bool.not(Nat.is_gt(free_bytes, total_bytes))))))
+    case O.FsUnknown{detail}: False{}
+
+def filesystem_unknown(fs: O.Filesystem) -> Bool:
+  match fs:
+    case O.FsUnknown{detail}: True{}
+    case O.FsFound{device, owner, block_size, free_bytes, total_bytes}: False{}
+
+def filesystem_check(+root: String) -> IO(Unit):
+  do IO<Unit>:
+    found : O.Filesystem <- O.filesystem(root)
+    a : Unit <- check("filesystem-found", filesystem_sane(found), "root filesystem record was not complete")
+    missing : O.Filesystem <- O.filesystem(root ++ "/no-such-path")
+    b : Unit <- check("filesystem-unknown", filesystem_unknown(missing), "missing path reported a filesystem")
+    +specs : List<&2,L.RootSpec> = Con{L.RootSpec{T.Scratch{}, root, ""}, Nil{}}
+    fs : List<&2,O.Filesystem> <- L.policy_fs_all(specs, Nil{})
+    +policy : String = L.policy_json(specs, fs, Nil{}, S.State{Nil{}, Nil{}, Nil{}, Nil{}, Nil{}, Nil{}, False{}})
+    c : Unit <- check("policy-filesystem-object", String.contains(policy, "\"filesystem\":{\"device\":"), policy)
     IO.pure(Unit, Unit{})
 
 def apply_checks(+db: String, +root: String) -> IO(Unit):
@@ -956,6 +982,7 @@ def storage_checks() -> IO(Unit):
     unlinked : Unit <- unlinked_holder_check(root)
     precedence : Unit <- positive_precedence_check(root)
     exclusive : Unit <- exclusive_check(db)
+    filesystem : Unit <- filesystem_check(root)
     applied : Unit <- apply_checks(db, root)
     active_retained : Unit <- active_retained_check(db, root)
     rootrace_dir : Unit <- IO.try(Unit, F.Files.mkdir(root ++ "/rootrace"))

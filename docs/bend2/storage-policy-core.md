@@ -83,6 +83,13 @@ root list is empty. storage-apply SESSION acquires the per-root writer lease
 described below. An empty root list returns an empty receipt. Preview and
 policy commands remain available.
 
+Each root object also reports a `filesystem` object with the root's device
+and owner uid from lstat and the mounted filesystem's block size, free bytes
+and total bytes. Free bytes counts the blocks available to unprivileged
+writers. A root that cannot be observed reports `{"unknown":detail}` with the
+host error. The values are status facts for operators; no cleanup decision
+reads them.
+
 ## Preservation evidence
 
 Each candidate carries the measured byte count, the host identity
