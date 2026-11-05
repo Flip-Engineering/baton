@@ -117,6 +117,17 @@ def apply_preview(+db: String, preview: T.Preview) -> IO(T.Receipt):
     case T.Preview{+root, +mount, +root_identity, +valid, +plan, entries}:
       A.apply(preview, A.Refresh{db, "", root, root_identity})
 
+def apply_preview_source(+db: String, +source: String, preview: T.Preview) -> IO(T.Receipt):
+  match preview:
+    case T.Preview{+root, +mount, +root_identity, +valid, +plan, entries}:
+      A.apply(preview, A.Refresh{db, source, root, root_identity})
+
+def one_apply_source(+db: String, +root: String, +source: String, +candidate: T.Candidate) -> IO(T.Receipt):
+  do IO<T.Receipt>:
+    preview : T.Preview <- one_preview(root, candidate)
+    receipt : T.Receipt <- apply_preview_source(db, source, preview)
+    IO.pure(T.Receipt, receipt)
+
 def one_apply(+db: String, +root: String, +candidate: T.Candidate) -> IO(T.Receipt):
   do IO<T.Receipt>:
     preview : T.Preview <- one_preview(root, candidate)
@@ -260,6 +271,16 @@ def pure_presence_checks() -> IO(Unit):
     b : Unit <- check("non-linux-presence", presence_unknown(non_linux), "non-Linux scan accepted")
     IO.pure(Unit, Unit{})
 
+def pure_staging_worktree_checks() -> IO(Unit):
+  do IO<Unit>:
+    clear : T.Candidate = T.Candidate{"/x", T.StagingSourceReleased{}, "owner", "proof", 1n, "dir:1:1", clear_facts()}
+    dependency : T.Candidate = T.Candidate{"/x", T.StagingSourceReleased{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"worktree-dependency"}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    unregistered : T.Candidate = T.Candidate{"/x", T.StagingSourceReleased{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"worktree-unregistered"}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    a : Unit <- check_decision("staging-released-clear", clear, "remove:staging-source-released")
+    b : Unit <- check_decision("staging-main-with-child", dependency, "worktree-dependency")
+    c : Unit <- check_decision("staging-unregistered-linked", unregistered, "worktree-unregistered")
+    IO.pure(Unit, Unit{})
+
 def pure_identity_checks() -> IO(Unit):
   do IO<Unit>:
     owner_database : Unit <- pure_owner_database_checks()
@@ -268,6 +289,7 @@ def pure_identity_checks() -> IO(Unit):
     pending : Unit <- pure_pending_checks()
     transient : Unit <- pure_transient_checks()
     presence : Unit <- pure_presence_checks()
+    staging_worktree : Unit <- pure_staging_worktree_checks()
     IO.pure(Unit, Unit{})
 
 def presence_detail(presence: T.Presence) -> String:
@@ -969,6 +991,61 @@ def collect_check(+db: String, +root: String) -> IO(Unit):
     k : Unit <- check("collect-refused-json", String.eq(refused_text,"{\"session\":\"collect-owner\",\"refused\":\"3: storage cleanup busy\",\"receipts\":[]}"), refused_text)
     IO.pure(Unit, Unit{})
 
+# A released linked worktree with verified remote retention leaves through
+# `git worktree remove`: the directory and its administration are gone while
+# its branch stays. A main checkout that still registers linked worktrees
+# stays preserved with its worktree-dependency reason.
+def wt_git_setup(+wt: String, +origin: String, +source: String, +staging: String, +first: String, +second: String) -> IO(Unit):
+  do IO<Unit>:
+    cleared : Unit <- run_cmd(["/bin/rm", "-rf", wt])
+    made : Unit <- IO.try(Unit, F.Files.mkdir(wt))
+    made_staging : Unit <- IO.try(Unit, F.Files.mkdir(staging))
+    bare : Unit <- run_cmd(["git", "init", "--bare", origin])
+    repo : Unit <- run_cmd(["git", "init", "-b", "main", source])
+    wrote : Unit <- write_file(source ++ "/file.txt", "work")
+    added : Unit <- run_cmd(["git", "-C", source, "add", "file.txt"])
+    committed : Unit <- run_cmd(["git", "-C", source, "-c", "user.email=storage-test@example", "-c", "user.name=storage-test", "commit", "-m", "init"])
+    remote : Unit <- run_cmd(["git", "-C", source, "remote", "add", "origin", origin])
+    pushed : Unit <- run_cmd(["git", "-C", source, "push", "origin", "main"])
+    linked_first : Unit <- run_cmd(["git", "-C", source, "worktree", "add", first, "-b", "released-1"])
+    pushed_first : Unit <- run_cmd(["git", "-C", source, "push", "origin", "released-1"])
+    linked_second : Unit <- run_cmd(["git", "-C", source, "worktree", "add", second, "-b", "released-2"])
+    pushed_second : Unit <- run_cmd(["git", "-C", source, "push", "origin", "released-2"])
+    IO.pure(Unit, Unit{})
+
+def worktree_remove_check(+db: String, +root: String) -> IO(Unit):
+  do IO<Unit>:
+    +wt : String = root ++ "/released-worktrees"
+    +origin : String = wt ++ "/origin.git"
+    +source : String = wt ++ "/source"
+    +staging : String = wt ++ "/staging"
+    +first : String = staging ++ "/released-1"
+    +second : String = staging ++ "/released-2"
+    setup : Unit <- wt_git_setup(wt, origin, source, staging, first, second)
+    +wtdb : String = wt ++ "/storage-wt.db"
+    database : Unit <- db_setup(wtdb, wt)
+    +state : S.State <- S.load(wtdb)
+    main_facts : T.Facts <- S.facts_for(T.StagingSourceReleased{}, source, source, state)
+    +main_reason : String = decision_text(P.decide(T.StagingSourceReleased{}, "owner", main_facts))
+    a : Unit <- check("released-main-with-child-kept", String.eq(main_reason, "worktree-dependency"), main_reason)
+    kept_main : O.Observation <- O.observe(source)
+    b : Unit <- check("released-main-dir-kept", O.observation_is_found(kept_main), "main checkout missing")
+    +facts : T.Facts <- S.facts_for(T.StagingSourceReleased{}, source, first, state)
+    +reason : String = decision_text(P.decide(T.StagingSourceReleased{}, "owner", facts))
+    c : Unit <- check("released-linked-admitted", String.eq(reason, "remove:staging-source-released"), reason)
+    +candidate : T.Candidate <- candidate_for(first, T.StagingSourceReleased{}, facts)
+    receipt : T.Receipt <- one_apply_source(wtdb, staging, source, candidate)
+    d : Unit <- check_receipt("released-linked-removed", receipt, first, "removed")
+    gone : O.Observation <- O.observe(first)
+    e : Unit <- check("released-linked-dir-gone", Bool.not(O.observation_is_found(gone)), "linked worktree remains")
+    +list : String <- command_output(["git", "-C", source, "worktree", "list", "--porcelain"])
+    f : Unit <- check("released-linked-unregistered", Bool.not(String.contains(list, first)), list)
+    +branches : String <- command_output(["git", "-C", source, "branch", "--list", "released-1"])
+    g : Unit <- check("released-linked-branch-kept", String.contains(branches, "released-1"), branches)
+    removed_second : Unit <- run_cmd(["git", "-C", source, "worktree", "remove", second])
+    cleaned : Unit <- run_cmd(["/bin/rm", "-rf", wt])
+    IO.pure(Unit, Unit{})
+
 def storage_checks() -> IO(Unit):
   do IO<Unit>:
     +root : String <- command_output(["/usr/bin/realpath", "-m", ".scratch/bend2-storage-test"])
@@ -997,6 +1074,7 @@ def storage_checks() -> IO(Unit):
     malformed_db : Unit <- malformed_db_check(db, root)
     malformed_endpoint : Unit <- database_malformed_check(db, root)
     collection : Unit <- collect_check(db, root)
+    worktree_removal : Unit <- worktree_remove_check(db, root)
     IO.print("storage checks: all green")
 
 def reference_scan(mode: String, +path: String) -> IO(Unit):

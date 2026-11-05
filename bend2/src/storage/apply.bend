@@ -11,6 +11,7 @@ import ./types.bend as T
 import ./policy.bend as P
 import ./observe.bend as O
 import ./state.bend as S
+import ./worktree.bend as W
 
 type Progress is Type:
   Progress{rows: List<T.Removal>, reclaimed: Nat, complete: Bool}
@@ -65,14 +66,34 @@ def refresh_identity(+refresh: Refresh) -> String:
   match refresh:
     case Refresh{db, source, root, root_identity}: root_identity
 
+# A released staging checkout leaves through Git when its store registers it
+# as a linked worktree, so the worktree administration settles with the files.
+# Every other admitted candidate keeps the raw identity-checked unlink.
+def release_removal(+cls: T.StorageClass) -> Bool:
+  match cls:
+    case T.StagingSourceReleased{}: True{}
+    case other: False{}
+
+def remove_admitted(+entry: T.Entry, +refresh: Refresh) -> IO(O.RemoveResult):
+  match entry:
+    case T.Entry{+e_path, +e_cls, +e_owner, +e_owner_proof, +e_bytes, +e_identity, +e_decision}:
+      Bool.pick(IO(O.RemoveResult), release_removal(e_cls),
+        W.remove_admitted(e_path, e_identity, refresh_root(refresh), refresh_identity(refresh)),
+        O.remove(e_path, e_identity, refresh_root(refresh), refresh_identity(refresh)))
+
+def remove_verified(+entry: T.Entry, +identity_ok: Bool, +refresh: Refresh) -> IO(T.Removal):
+  match entry:
+    case T.Entry{e_path, e_cls, e_owner, e_owner_proof, e_bytes, e_identity, e_decision}:
+      Bool.pick(IO(T.Removal), identity_ok,
+        do IO<T.Removal>:
+          removed : O.RemoveResult <- remove_admitted(entry, refresh)
+          IO.pure(T.Removal, removal(entry, removal_outcome(removed))),
+        IO.pure(T.Removal, removal(entry, T.Changed{"host identity changed"})))
+
 def observed_found(+entry: T.Entry, +observed: O.Observation, +refresh: Refresh) -> IO(T.Removal):
   match entry:
     case T.Entry{e_path, e_cls, e_owner, e_owner_proof, e_bytes, e_identity, e_decision}:
-      Bool.pick(IO(T.Removal), String.eq(O.observation_identity(observed), e_identity),
-        do IO<T.Removal>:
-          removed : O.RemoveResult <- O.remove(e_path, e_identity, refresh_root(refresh), refresh_identity(refresh))
-          IO.pure(T.Removal, removal(entry, removal_outcome(removed))),
-        IO.pure(T.Removal, removal(entry, T.Changed{"host identity changed"})))
+      remove_verified(entry, String.eq(O.observation_identity(observed), e_identity), refresh)
 
 def observed_apply(+entry: T.Entry, +observed: O.Observation, +refresh: Refresh) -> IO(T.Removal):
   match observed:
