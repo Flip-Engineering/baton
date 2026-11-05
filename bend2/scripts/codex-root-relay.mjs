@@ -5,12 +5,12 @@
 // message in that thread.
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, mkdirSync, openSync } from 'node:fs';
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
-const USAGE = 'usage: codex-root-relay.mjs --ssh HOST --database PATH --coordinator PATH --conductor PATH --session ID [--thread ID] [--register] [--node PATH] [--codex PATH]\n';
+const USAGE = 'usage: codex-root-relay.mjs --ssh HOST [--ssh HOST ...] --database PATH --coordinator PATH --conductor PATH --session ID [--thread ID] [--register] [--node PATH] [--codex PATH]\n';
 
 const RECONNECT_MS = 2000;
 
@@ -18,16 +18,50 @@ const POLL_MS = 1000;
 const PAGE_TURNS = 8;
 const LOCK_HOLDER = "process.stdout.write('locked\\n'); process.stdin.resume();";
 
-function rootThreadLockFile(thread) {
+function rootThreadLockDirectory() {
   const codexHome = resolve(process.env.CODEX_HOME || join(homedir(), '.codex'));
   const directory = join(codexHome, 'root-channel-delivery-locks');
   mkdirSync(directory, { recursive: true, mode: 0o700 });
+  return directory;
+}
+
+function rootThreadLockFile(thread) {
+  const directory = rootThreadLockDirectory();
   const name = createHash('sha256').update(thread).digest('hex') + '.lock';
   const path = join(directory, name);
   const fd = openSync(path, 'a', 0o600);
   closeSync(fd);
   chmodSync(path, 0o600);
   return path;
+}
+
+// Delivery state for one database's notices into one thread. `lastReadTurn` is
+// the turn of the last recorded read: a copy left by an earlier attempt is
+// always newer, so history scans stop there. `queued` names the notice this
+// database's relays already accepted through `codex queue`; the app-server
+// stores queued input durably, so a recorded queue is not repeated.
+function rootThreadStateFile(database, thread) {
+  const directory = rootThreadLockDirectory();
+  const name = createHash('sha256').update(database + '\n' + thread).digest('hex') + '.json';
+  return join(directory, name);
+}
+
+function readDeliveryState(database, thread) {
+  let state;
+  try { state = JSON.parse(readFileSync(rootThreadStateFile(database, thread), 'utf8')); }
+  catch { return { lastReadTurn: null, queued: null }; }
+  return {
+    lastReadTurn: typeof state.lastReadTurn === 'string' && state.lastReadTurn ? state.lastReadTurn : null,
+    queued: state.queued && typeof state.queued.id === 'string' && typeof state.queued.content === 'string'
+      ? { id: state.queued.id, content: state.queued.content } : null,
+  };
+}
+
+function writeDeliveryState(database, thread, state) {
+  const path = rootThreadStateFile(database, thread);
+  const temporary = path + '.' + process.pid + '.tmp';
+  writeFileSync(temporary, JSON.stringify(state) + '\n', { mode: 0o600 });
+  renameSync(temporary, path);
 }
 
 // `lockf` and `flock` keep ownership in the kernel. When the relay exits, the
@@ -76,7 +110,7 @@ function fail(message) {
 }
 
 function parse(argv) {
-  const options = {};
+  const options = { ssh: [] };
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
     if (key === '--register') {
@@ -88,9 +122,13 @@ function parse(argv) {
     }
     const value = argv[++i];
     if (value === undefined || value.startsWith('--')) fail(`${key} requires a value\n${USAGE}`);
-    options[key.slice(2)] = value;
+    // --ssh may name several hosts; the first reachable one carries the
+    // conductor connection, and later hosts are tried when it is unreachable.
+    if (key === '--ssh') options.ssh.push(value);
+    else options[key.slice(2)] = value;
   }
-  for (const key of ['ssh', 'database', 'coordinator', 'conductor', 'session']) {
+  if (!options.ssh.length) fail(`--ssh is required\n${USAGE}`);
+  for (const key of ['database', 'coordinator', 'conductor', 'session']) {
     if (!options[key]) fail(`--${key} is required\n${USAGE}`);
   }
   // Without --thread, the Codex process that launched the relay may name its
@@ -372,6 +410,16 @@ function appError(message) {
   return error;
 }
 
+// A lost app-server connection during the locked delivery section. The section
+// fails so its thread lock is released, and the delivery retries from the
+// unread message instead of holding the lock while it reconnects.
+function lostAppSession(cause) {
+  const error = new Error('Codex app-server session lost: ' + String(cause.message || cause));
+  error.appSessionLost = true;
+  error.cause = cause;
+  return error;
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -386,6 +434,9 @@ class AppSession {
     this.delivery = delivery ?? { get exited() { return peer.exited; }, superseded: false };
     this.server = null;
     this.lost = '';
+    // Set while the per-thread lock is held: a lost connection throws instead
+    // of reconnecting, so the lock is released before the delivery retries.
+    this.releaseOnLoss = false;
   }
 
   async request(method, params) {
@@ -415,6 +466,7 @@ class AppSession {
         if (error.appServer || this.peer.exited) throw error;
         if (this.server) closeAppServer(this.server);
         this.server = null;
+        if (this.releaseOnLoss) throw lostAppSession(error);
         const reason = String(error.message || error);
         if (reason !== this.lost) {
           this.lost = reason;
@@ -489,10 +541,12 @@ async function walkTurns(session, thread, visit) {
   return null;
 }
 
-// Search newest turns first. Supplying `before` limits receipt matching to
-// messages that arrived after the notice was queued; omitting it finds a
-// complete notice left by an earlier relay attempt.
-function findUserMessage(session, thread, content, before = null) {
+// Search newest turns first. `before` limits receipt matching to messages that
+// arrived after the notice was queued; omitting it finds a complete notice left
+// by an earlier relay attempt. `after` names the turn of the last recorded
+// read: a copy left by an earlier attempt is always newer, so the walk stops
+// after examining that turn instead of growing with the age of the thread.
+function findUserMessage(session, thread, content, { before = null, after = null } = {}) {
   return walkTurns(session, thread, turn => {
     for (const item of [...turn.items].reverse()) {
       if (item.type === 'userMessage' && !(before && turn.id === before.turn && before.items.has(item.id))
@@ -500,7 +554,9 @@ function findUserMessage(session, thread, content, before = null) {
         return { turn: turn.id, item: item.id };
       }
     }
-    return before && turn.id === before.turn ? null : undefined;
+    if (before && turn.id === before.turn) return null;
+    if (after && turn.id === after) return null;
+    return undefined;
   });
 }
 
@@ -518,10 +574,10 @@ async function readThreadItem(session, thread, turnId, itemId) {
     ...(item.type === 'userMessage' ? { text: userText(item)[0] } : {}) };
 }
 
-async function awaitUserMessage(delivery, session, id, thread, content, before) {
+async function awaitUserMessage(delivery, session, id, thread, content, before, after) {
   process.stderr.write(JSON.stringify({ type: 'codexRootMessageQueued', thread, message: id }) + '\n');
   while (!delivery.exited) {
-    const found = await findUserMessage(session, thread, content, before);
+    const found = await findUserMessage(session, thread, content, { before, after });
     if (found) return found;
     await sleep(POLL_MS);
   }
@@ -547,31 +603,82 @@ function noticeThread(options, params) {
   return thread;
 }
 
+// The locked delivery section: the history scan and the queue operation. The
+// app-server can start one relay per active context, so the lock serializes
+// these steps and only one context creates a user item for this notice. The
+// waits before and after run without the lock. A lost app-server session
+// throws `lostAppSession` so the caller releases the lock and retries.
+async function scanAndQueue(session, options, thread, id, content) {
+  const threadLock = await acquireRootThreadLock(thread);
+  session.releaseOnLoss = true;
+  try {
+    const before = await newestTurn(session, thread);
+    const state = readDeliveryState(options.database, thread);
+    // A prior relay can queue the complete notice and exit before its read
+    // callback completes. Reuse that exact message on retry instead of
+    // adding another copy to the root thread. The scan stops at the turn of
+    // the last recorded read, which a leftover copy is always newer than.
+    const received = await findUserMessage(session, thread, content, { after: state.lastReadTurn });
+    if (received) return { before, received, reused: true };
+    if (state.queued && state.queued.id === id && state.queued.content === content) {
+      return { before, received: null, alreadyQueued: true };
+    }
+    const queued = await queueMessage({ ...options, thread }, id, content);
+    writeDeliveryState(options.database, thread, { ...state, queued: { id, content } });
+    return { before, received: null, queued };
+  } finally {
+    session.releaseOnLoss = false;
+    await threadLock.release();
+  }
+}
+
+// Records the delivered read position. Later scans for a leftover copy stop at
+// this turn, and the queue record for this notice is cleared.
+async function recordDelivery(options, thread, id, turn) {
+  const threadLock = await acquireRootThreadLock(thread);
+  try {
+    const state = readDeliveryState(options.database, thread);
+    writeDeliveryState(options.database, thread, {
+      lastReadTurn: turn,
+      queued: state.queued && state.queued.id === id ? null : state.queued,
+    });
+  } finally {
+    await threadLock.release();
+  }
+}
+
 async function deliverNotice(peer, delivery, options, params) {
   const id = messageId(params);
   const thread = noticeThread(options, params);
-  // The app-server can start one relay per active context. Serialize the
-  // history scan and queue operation across those relay processes so only one
-  // context creates a user item for this thread at a time.
-  const threadLock = await acquireRootThreadLock(thread);
   const session = new AppSession({ ...options, thread }, peer, delivery);
   delivery.cancel = () => session.cancel();
   let received;
   let queued;
   let reused = false;
+  let alreadyQueued = false;
   try {
     try {
       await awaitLoadedThread(delivery, session, thread);
-      const before = await newestTurn(session, thread);
-      // A prior relay can queue the complete notice and exit before its read
-      // callback completes. Reuse that exact message on retry instead of
-      // adding another copy to the root thread.
-      received = await findUserMessage(session, thread, params.content);
-      if (received) reused = true;
-      else {
-        queued = await queueMessage({ ...options, thread }, id, params.content);
-        received = await awaitUserMessage(delivery, session, id, thread, params.content, before);
+      const after = readDeliveryState(options.database, thread).lastReadTurn;
+      let before = null;
+      for (;;) {
+        if (delivery.exited) throw endedDelivery(delivery, 'Baton message ' + id + ' was queued.');
+        try {
+          const scan = await scanAndQueue(session, options, thread, id, params.content);
+          before = scan.before;
+          received = scan.received;
+          reused = Boolean(scan.reused);
+          alreadyQueued = Boolean(scan.alreadyQueued);
+          queued = scan.queued;
+          break;
+        } catch (error) {
+          if (!error.appSessionLost || delivery.exited) throw error;
+          process.stderr.write(JSON.stringify({ type: 'codexAppServerScanInterrupted',
+            session: options.session, thread, message: id, reason: String(error.cause || error.message) }) + '\n');
+          await sleep(POLL_MS);
+        }
       }
+      if (!received) received = await awaitUserMessage(delivery, session, id, thread, params.content, before, after);
     } finally {
       await session.close();
     }
@@ -583,12 +690,12 @@ async function deliverNotice(peer, delivery, options, params) {
       if (delivery.superseded) throw endedDelivery(delivery, 'the read of Baton message ' + id + ' was recorded.');
       throw new Error('Codex returned Baton message ' + id + ' in the root thread, but its read was not recorded: ' + JSON.stringify(read));
     }
+    await recordDelivery(options, thread, id, received.turn);
     process.stderr.write(JSON.stringify({ type: 'codexRootMessageReceived', session: options.session,
       thread, message: id, turn: received.turn, item: received.item,
-      ...(reused ? { reused: true } : { queue: queued.stdout.trim() }) }) + '\n');
+      ...(reused ? { reused: true } : alreadyQueued ? { alreadyQueued: true } : { queue: queued.stdout.trim() }) }) + '\n');
   } finally {
     delivery.cancel = null;
-    await threadLock.release();
   }
 }
 
@@ -612,12 +719,12 @@ function sendClient(message) {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n');
 }
 
-async function connect(options) {
+async function connect(options, host) {
   const remote = [options.node, options.conductor, options.database, options.coordinator,
     '--session', options.session, '--root-harness', 'codex', ...(options.thread ? ['--thread', options.thread] : []),
     ...(options.register ? ['--register'] : [])]
     .map(shellQuote).join(' ');
-  const child = spawn('ssh', ['-T', options.ssh, 'exec ' + remote], {
+  const child = spawn('ssh', ['-T', host, 'exec ' + remote], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const peer = new Peer(child);
@@ -684,21 +791,32 @@ let connecting = Promise.resolve();
 let clientClosed = false;
 
 // Keeps one SSH conductor connection open for as long as the Codex client is.
-// A conductor that cannot be started or initialized the first time is a
-// configuration failure and ends the relay. After a connection was established,
-// a lost connection is opened again; the conductor sends the oldest unread
-// message on each new connection.
+// The first host that answers carries the connection; when a host is
+// unreachable the remaining --ssh hosts are tried in order, so a relay
+// configured with a LAN and a Tailscale address keeps delivering when one
+// route is down. A conductor that cannot be started on any host the first
+// time is a configuration failure and ends the relay. After a connection was
+// established, a lost connection is opened again; the conductor sends the
+// oldest unread message on each new connection.
 async function maintain() {
   process.stderr.write(JSON.stringify({ type: 'codexRelayIdentity', session: options.session,
-    thread: options.thread || null, threadSource: options.threadSource, register: Boolean(options.register) }) + '\n');
+    thread: options.thread || null, threadSource: options.threadSource, register: Boolean(options.register),
+    hosts: options.ssh }) + '\n');
   let established = false;
+  let hostIndex = 0;
+  let failures = 0;
   while (!clientClosed) {
+    const host = options.ssh[hostIndex];
     try {
-      connection = await connect(options);
+      connection = await connect(options, host);
       established = true;
+      failures = 0;
     } catch (error) {
-      if (!established) throw error;
-      process.stderr.write(`codex-root-relay: SSH conductor connection failed: ${error.message}\n`);
+      failures += 1;
+      if (!established && failures >= options.ssh.length) throw error;
+      process.stderr.write(JSON.stringify({ type: 'codexRelayConductorUnreachable',
+        session: options.session, host, reason: String(error.message || error) }) + '\n');
+      hostIndex = (hostIndex + 1) % options.ssh.length;
       await new Promise(resolve => setTimeout(resolve, RECONNECT_MS));
       continue;
     }
@@ -710,7 +828,7 @@ async function maintain() {
       clientLines.close();
       return;
     }
-    process.stderr.write(JSON.stringify({ type: 'codexRelayConductorLost', session: options.session, exit }) + '\n');
+    process.stderr.write(JSON.stringify({ type: 'codexRelayConductorLost', session: options.session, host, exit }) + '\n');
     await new Promise(resolve => setTimeout(resolve, RECONNECT_MS));
   }
 }

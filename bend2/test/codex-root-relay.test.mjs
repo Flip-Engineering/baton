@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -35,6 +35,13 @@ const readline = require('node:readline');
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.writeFileSync(process.env.ROOT_RELAY_SSH_LOG, JSON.stringify(args));
+const host = args[1];
+if (process.env.ROOT_RELAY_SSH_HOSTS_LOG) fs.appendFileSync(process.env.ROOT_RELAY_SSH_HOSTS_LOG, host + '\\n');
+if (process.env.ROOT_RELAY_SSH_FAIL_FILE && fs.existsSync(process.env.ROOT_RELAY_SSH_FAIL_FILE)
+    && fs.readFileSync(process.env.ROOT_RELAY_SSH_FAIL_FILE, 'utf8').split('\\n').includes(host)) {
+  process.stderr.write('ssh: connect to host ' + host + ' port 22: Network is unreachable\\n');
+  process.exit(255);
+}
 if (process.env.ROOT_RELAY_REFUSE_READ) process.on('SIGTERM', () => setTimeout(() => process.exit(0), 300));
 if (process.env.ROOT_RELAY_APP_DIR) fs.appendFileSync(process.env.ROOT_RELAY_APP_DIR + '/ssh-launches', 'x');
 const launches = process.env.ROOT_RELAY_APP_DIR ? fs.readFileSync(process.env.ROOT_RELAY_APP_DIR + '/ssh-launches', 'utf8').length : 1;
@@ -113,8 +120,13 @@ const NOTICE = "Message (completion-request) from lead [id: request-1]:\nFull bo
 // 'first-never' not at all for thread-1, 'loads-late' lists the thread as loaded from the
 // fourth request on, 'no-upgrade' closes without answering the Upgrade request
 // (what the proxy does for a non-WebSocket byte stream), 'drop-once' ends the first proxy that is asked for history
-// after the queue without replying. History starts with an earlier notice
-// that has a different message ID.
+// after the queue without replying, and 'drop-scan-once' ends the first proxy that is asked
+// for history before the queue. ROOT_RELAY_HISTORY_TURNS adds that many older turns
+// ('turn-archive-N', oldest last) and 'old-copy' mode places a copy of the current
+// notice in the oldest archive turn. Full history reads are paged: a cursor is the
+// offset into the newest-first turn list, and each served page is logged to
+// 'history-pages-<thread>' with its oldest returned turn. History starts with an
+// earlier notice that has a different message ID.
 function fakeCodex(path) {
   return executable(path, `#!${process.execPath}
 const fs = require('node:fs');
@@ -177,14 +189,18 @@ function handle(request) {
       fs.writeFileSync(dir + '/dropped', 'x');
       process.exit(1);
     }
+    if (mode === 'drop-scan-once' && queued === null && request.params.itemsView === 'full' && !fs.existsSync(dir + '/scan-dropped')) {
+      fs.writeFileSync(dir + '/scan-dropped', 'x');
+      process.exit(1);
+    }
     const turns = [];
     const ownerReleased = mode !== 'owner-waits';
-    if (request.params.itemsView === 'full' && (queued !== null || mode === 'preexisting')) {
+    if (request.params.itemsView === 'full' && (queued !== null || mode === 'preexisting' || mode === 'old-copy')) {
       const reads = fs.existsSync(dir + '/history-reads-' + thread) ? fs.readFileSync(dir + '/history-reads-' + thread, 'utf8').length : 0;
       fs.appendFileSync(dir + '/history-reads-' + thread, 'x');
       const marks = queued === null ? [] : fs.readFileSync(dir + '/queue-marks-' + thread, 'utf8').trim().split('\\n').map(Number);
       if (mode === 'preexisting') turns.push({ id: 'turn-existing', status: 'completed', items: [user('item-existing', 'queued: ' + notice)] });
-      else if (ownerReleased && mode !== 'never' && !(mode === 'first-never' && thread === 'thread-1')) {
+      else if (ownerReleased && mode !== 'never' && mode !== 'old-copy' && !(mode === 'first-never' && thread === 'thread-1')) {
         marks.forEach((mark, index) => {
           if (reads >= mark + 2) turns.unshift({ id: 'turn-' + (index + 1), status: 'completed', items: [
             { type: 'agentMessage', id: 'item-a' + (index + 1), text: 'working' }, user('item-' + (index + 1), 'queued: ' + queued)] });
@@ -192,7 +208,20 @@ function handle(request) {
       }
     }
     const earlier = { id: 'turn-0', status: 'completed', items: [user('item-0', notice.replace('request-1', 'older-request'))] };
-    send(request.id, { data: [...turns, earlier].slice(0, request.params.limit || 100), nextCursor: null });
+    const all = [...turns, earlier];
+    const archives = Number(process.env.ROOT_RELAY_HISTORY_TURNS || 0);
+    for (let i = 1; i <= archives; i++) {
+      all.push({ id: 'turn-archive-' + i, status: 'completed', items: [
+        user('item-archive-' + i, mode === 'old-copy' && i === archives ? 'queued: ' + notice : 'archived ' + i)] });
+    }
+    const limit = request.params.limit || 100;
+    const offset = request.params.cursor ? Number(request.params.cursor) : 0;
+    const page = all.slice(offset, offset + limit);
+    if (request.params.itemsView === 'full') {
+      fs.appendFileSync(dir + '/history-pages-' + thread,
+        JSON.stringify({ oldest: page.length ? page[page.length - 1].id : null }) + '\\n');
+    }
+    send(request.id, { data: page, nextCursor: offset + limit < all.length ? String(offset + limit) : null });
   } else send(request.id, {});
 }
 function clientFrames() {
@@ -331,7 +360,9 @@ test('concurrent contexts queue one notice and reuse its returned item', async (
   assert.equal(queues.length, 1, 'Concurrent relay contexts queued the notice more than once.');
   const reads = readFileSync(first.readLog, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(reads.length, 2, 'Each context must complete its normal receipt callback.');
-  assert.ok(first.diagnostic.includes('"reused":true') || second.diagnostic.includes('"reused":true'));
+  assert.ok(first.diagnostic.includes('"reused":true') || second.diagnostic.includes('"reused":true')
+    || first.diagnostic.includes('"alreadyQueued":true') || second.diagnostic.includes('"alreadyQueued":true'),
+    `Neither context reported reusing the queued notice. first=${first.diagnostic} second=${second.diagnostic}`);
   for (const run of [first, second]) {
     run.child.stdin.end();
     const [code] = await run.closed;
@@ -339,40 +370,41 @@ test('concurrent contexts queue one notice and reuse its returned item', async (
   }
 });
 
-test('a waiting context reuses the queued item after its owner exits before callback', async (t) => {
+test('a waiting context reuses the queued item while its owner waits without the lock', async (t) => {
   const directory = scratch(t);
   const owner = await runRelay(t, 'owner-waits', { directory });
   await until(owner, 'codexRootMessageQueued');
-  const waiter = await runRelay(t, 'consume', { directory });
-  await new Promise(resolve => setTimeout(resolve, 300));
+  // The owner's wait for the returned message runs outside the thread lock, so
+  // another context can scan and record the read while the owner keeps waiting.
   const lockPath = join(directory, 'codex-home', 'root-channel-delivery-locks',
     createHash('sha256').update('thread-1').digest('hex') + '.lock');
-  assert.equal(rootThreadLockIsBusy(lockPath), true, 'The active context must hold the thread lock.');
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(rootThreadLockIsBusy(lockPath), false, 'The waiting owner must not hold the thread lock.');
+  const waiter = await runRelay(t, 'consume', { directory });
+  await until(waiter, 'codexRootMessageReceived');
   assert.equal(readFileSync(join(directory, 'queues.jsonl'), 'utf8').trim().split('\n').length, 1,
     `A second context queued while the owner was active. owner=${owner.diagnostic} waiter=${waiter.diagnostic}`);
-  assert.equal(waiter.diagnostic.includes('codexRootMessageQueued'), false,
-    'The second context must wait before scanning or queueing.');
-
-  owner.child.stdin.end();
-  const [ownerCode] = await owner.closed;
-  assert.equal(ownerCode, 0, owner.diagnostic);
-  await until(waiter, 'codexRootMessageReceived');
-  assert.match(waiter.diagnostic, /"reused":true/);
-  assert.equal(readFileSync(join(directory, 'queues.jsonl'), 'utf8').trim().split('\n').length, 1);
+  assert.match(waiter.diagnostic, /"reused":true|"alreadyQueued":true/);
   assert.equal(readFileSync(waiter.readLog, 'utf8').trim().split('\n').length, 1);
   waiter.child.stdin.end();
   const [waiterCode] = await waiter.closed;
   assert.equal(waiterCode, 0, waiter.diagnostic);
+
+  owner.child.stdin.end();
+  const [ownerCode] = await owner.closed;
+  assert.equal(ownerCode, 0, owner.diagnostic);
+  assert.match(owner.diagnostic, /codexRootMessageUnread/);
 });
 
-async function runRelay(t, mode, { env = {}, args = ['--thread', 'thread-1'], directory = null } = {}) {
+async function runRelay(t, mode, { env = {}, args = ['--thread', 'thread-1'], directory = null, hosts = ['database-host'] } = {}) {
   directory ||= scratch(t);
   const ssh = join(directory, 'ssh');
   const codex = join(directory, 'codex');
   if (!existsSync(ssh)) fakeSsh(ssh);
   if (!existsSync(codex)) fakeCodex(codex);
   const readLog = join(directory, 'read.jsonl');
-  const child = spawn(process.execPath, [RELAY, '--ssh', 'database-host', '--database', '/scratch/orchestra.db',
+  const child = spawn(process.execPath, [RELAY, ...hosts.flatMap(host => ['--ssh', host]),
+    '--database', '/scratch/orchestra.db',
     '--coordinator', '/scratch/bin/baton', '--conductor', '/scratch/lib/mcp-conductor.mjs',
     '--session', 'operator', ...args, '--codex', codex], {
     env: { ...process.env, ...env, CODEX_HOME: join(directory, 'codex-home'), PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: join(directory, 'ssh.json'),
@@ -425,6 +457,107 @@ test('a refused thread read stops later queued notices before closing SSH', asyn
   assert.equal((run.diagnostic.match(/codexRootMessageQueued/g) || []).length, 1, run.diagnostic);
   assert.ok(JSON.parse(readFileSync(join(run.directory, 'queue.json'), 'utf8')).at(-1).includes('request-1'));
   assert.equal(readFileSync(run.readLog, 'utf8').trim().split('\n').length, 1);
+});
+
+test('a lost app-server session during the locked scan releases the lock and retries the unread message', async (t) => {
+  const directory = scratch(t);
+  const owner = await runRelay(t, 'drop-scan-once', { directory });
+  await until(owner, 'codexAppServerScanInterrupted');
+  // The interrupted delivery released the thread lock, so a second context can
+  // complete the scan and queue instead of waiting behind a dead session.
+  const waiter = await runRelay(t, 'consume', { directory });
+  await Promise.all([until(owner, 'codexRootMessageReceived'), until(waiter, 'codexRootMessageReceived')]);
+  assert.equal(readFileSync(join(directory, 'queues.jsonl'), 'utf8').trim().split('\n').length, 1,
+    `The notice was queued twice. owner=${owner.diagnostic} waiter=${waiter.diagnostic}`);
+  assert.equal(readFileSync(owner.readLog, 'utf8').trim().split('\n').length, 2);
+  for (const run of [owner, waiter]) {
+    run.child.stdin.end();
+    const [code] = await run.closed;
+    assert.equal(code, 0, run.diagnostic);
+  }
+});
+
+test('the leftover-message scan stops at the turn of the last recorded read', async (t) => {
+  const directory = scratch(t);
+  const stateDirectory = join(directory, 'codex-home', 'root-channel-delivery-locks');
+  mkdirSync(stateDirectory, { recursive: true });
+  const statePath = join(stateDirectory,
+    createHash('sha256').update('/scratch/orchestra.db\nthread-1').digest('hex') + '.json');
+  writeFileSync(statePath, JSON.stringify({ lastReadTurn: 'turn-0', queued: null }));
+  const run = await runRelay(t, 'old-copy', { directory, env: { ROOT_RELAY_HISTORY_TURNS: '30' } });
+  await until(run, 'codexRootMessageQueued');
+  await new Promise(resolve => setTimeout(resolve, 2500));
+  // The only copy of the notice sits in the oldest archive turn, older than the
+  // recorded read, so the scan stops at turn-0 and the relay queues again.
+  assert.ok(existsSync(join(directory, 'queue.json')), 'The notice was not queued.');
+  const pages = readFileSync(join(directory, 'history-pages-thread-1'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(pages.length >= 3, 'The thread history was not polled.');
+  // A page fetch is eight turns wide, so the page holding turn-0 also holds the
+  // seven archive turns after it; the bound is proven by no later page fetch.
+  for (const page of pages) {
+    assert.ok(page.oldest === 'turn-0' || page.oldest === 'turn-archive-7',
+      `The scan read past the recorded read turn: ${JSON.stringify(pages)}`);
+  }
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+  assert.match(run.diagnostic, /codexRootMessageUnread/);
+});
+
+test('a leftover copy newer than the recorded read turn is reused without queueing', async (t) => {
+  const directory = scratch(t);
+  const stateDirectory = join(directory, 'codex-home', 'root-channel-delivery-locks');
+  mkdirSync(stateDirectory, { recursive: true });
+  const statePath = join(stateDirectory,
+    createHash('sha256').update('/scratch/orchestra.db\nthread-1').digest('hex') + '.json');
+  writeFileSync(statePath, JSON.stringify({ lastReadTurn: 'turn-0', queued: null }));
+  const run = await runRelay(t, 'preexisting', { directory, env: { ROOT_RELAY_HISTORY_TURNS: '30' } });
+  await until(run, 'codexRootMessageReceived');
+  assert.equal(existsSync(join(run.directory, 'queue.json')), false, 'The retry queued a duplicate notice.');
+  assert.match(run.diagnostic, /"reused":true/);
+  const reads = readFileSync(run.readLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(reads[0].turn, 'turn-existing');
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  assert.equal(state.lastReadTurn, 'turn-existing', 'The recorded read position did not advance.');
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('an unreachable first SSH host fails over to the next host at startup', async (t) => {
+  const directory = scratch(t);
+  const failFile = join(directory, 'failing-hosts');
+  writeFileSync(failFile, 'lan-host\n');
+  const hostsLog = join(directory, 'ssh-hosts');
+  const run = await runRelay(t, 'consume', { directory,
+    hosts: ['lan-host', 'tailscale-host'],
+    env: { ROOT_RELAY_SSH_FAIL_FILE: failFile, ROOT_RELAY_SSH_HOSTS_LOG: hostsLog } });
+  await until(run, 'codexRelayConductorUnreachable');
+  await until(run, 'codexRootMessageReceived');
+  assert.deepEqual(readFileSync(hostsLog, 'utf8').trim().split('\n'), ['lan-host', 'tailscale-host']);
+  assert.match(run.diagnostic, /"host":"lan-host"/);
+  assert.equal(readFileSync(run.readLog, 'utf8').trim().split('\n').length, 1);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('a lost connection is reopened on the next host when the first stays unreachable', async (t) => {
+  const directory = scratch(t);
+  const failFile = join(directory, 'failing-hosts');
+  const hostsLog = join(directory, 'ssh-hosts');
+  const run = await runRelay(t, 'consume', { directory,
+    hosts: ['lan-host', 'tailscale-host'],
+    env: { ROOT_RELAY_SSH_DROP: '1', ROOT_RELAY_SSH_FAIL_FILE: failFile, ROOT_RELAY_SSH_HOSTS_LOG: hostsLog } });
+  await until(run, 'codexRelayConductorLost');
+  writeFileSync(failFile, 'lan-host\n');
+  await until(run, 'codexRelayConductorUnreachable');
+  await until(run, 'codexRootMessageReceived');
+  assert.deepEqual(readFileSync(hostsLog, 'utf8').trim().split('\n'), ['lan-host', 'lan-host', 'tailscale-host']);
+  assert.equal(readFileSync(run.readLog, 'utf8').trim().split('\n').length, 1);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
 });
 
 test('a root thread that the app-server has not loaded yet receives its notice once loaded', async (t) => {
