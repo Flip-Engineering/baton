@@ -879,28 +879,6 @@ def supervise_kind(+kind: String, source_root: String, entry: String, +attempt: 
     supervise_identity_matches(Tx.str_eq(current_key, key), kind, source_root, entry,
       attempt, keydir, key, started, names, cwd)
 
-# The child exited but the supervisor is still alive. A healthy supervisor
-# publishes its result and exits within a bounded fifty-poll reconciliation window;
-# a wedged supervisor never does, and its inherited lane descriptor would
-# hold the heavy lock forever (named failure: key 4cd0c3ca..., 2026-10-28).
-# Releasing here drains the lane; a late supervisor publication still lands
-# in the attempt directory and requester custody is unchanged.
-def watch_child_gone(+attempt: String, +supervisor_pid: U32, +grace: U32) -> IO(Unit):
-  do IO<Unit>:
-    active_present : Bool <- regular(attempt ++ "/active")
-    Bool.pick(IO(Unit), Bool.or(U32.is_eq(grace, 0), Bool.not(active_present)),
-      do IO<Unit>:
-        released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
-        IO.pure(Unit, Unit{}),
-      do IO<Unit>:
-        +active : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/active"))
-        +supervisor_start : String <- IO.pure(String, field(active, "starttime"))
-        supervisor_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(supervisor_pid, supervisor_start))
-        Bool.pick(IO(Unit), U32.is_eq(supervisor_alive, 0), IO.pure(Unit, Unit{}),
-          do IO<Unit>:
-            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
-            watch_child_gone(attempt, supervisor_pid, U32.sub(grace, 1))))
-
 @unsafe
 def watch_heavy(+attempt: String, +pid: U32, +start: String) -> IO(Unit):
   do IO<Unit>:
@@ -1079,12 +1057,18 @@ def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_roo
       ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
     active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-    lock_path : String <- IO.pure(String,
-      Bool.pick(String, String.eq(kind, "cc"), state ++ "/cc.lock", state ++ "/heavy.lock"))
-    +waiters : String <- IO.pure(String, kind_waiters_dir(state, kind))
-    made_waiters : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(waiters))
-    +held : U32 <- acquire_heavy_loop(waiters, lock_path, token, priority, 4)
-    transferred : Unit <- transfer_heavy(held)
+    # cc requests are independent: identical work already shares the key
+    # cache, each request owns its own custody, and serialization would only
+    # reorder equal-priority work, so cc acquires no lane. cgen and check
+    # serialize on the heavy lane exactly as before.
+    Bool.pick(IO(Unit), String.eq(kind, "cc"), IO.pure(Unit, Unit{}),
+      do IO<Unit>:
+        lock_path : String <- IO.pure(String, state ++ "/heavy.lock")
+        +waiters : String <- IO.pure(String, kind_waiters_dir(state, kind))
+        made_waiters : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(waiters))
+        +held : U32 <- acquire_heavy_loop(waiters, lock_path, token, priority, 4)
+        transferred : Unit <- transfer_heavy(held)
+        IO.pure(Unit, Unit{}))
     signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
       "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
     supervise_marker_result(signaled, attempt, keydir, kind, source_root, entry, key, started, names, cwd)
