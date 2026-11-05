@@ -29,7 +29,8 @@ function execute(directory: string, args: string[], front = false): Execution {
   return execute_argv(directory, argv, front, front || DIAGNOSTICS);
 }
 
-function execute_argv(directory: string, argv: string[], mirror_stdout: boolean, mirror_stderr: boolean): Execution {
+function execute_argv(directory: string, argv: string[], mirror_stdout: boolean, mirror_stderr: boolean,
+  output: NodeJS.WriteStream = process.stdout): Execution {
   const started = new Date().toISOString();
   const cwd = process.cwd();
   const stdout = fs.createWriteStream(path.join(directory, "stdout"));
@@ -37,7 +38,7 @@ function execute_argv(directory: string, argv: string[], mirror_stdout: boolean,
   const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"], env: process.env });
   fs.writeFileSync(path.join(directory, "process-start.json"), JSON.stringify({ argv, cwd, pid: child.pid, started }));
   child.stdout.pipe(stdout); child.stderr.pipe(stderr);
-  if (mirror_stdout) child.stdout.pipe(process.stdout, { end: false });
+  if (mirror_stdout) child.stdout.pipe(output, { end: false });
   if (mirror_stderr) child.stderr.pipe(process.stderr, { end: false });
   const complete = new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
     let spawn_error: Error | null = null;
@@ -59,8 +60,9 @@ function execute_argv(directory: string, argv: string[], mirror_stdout: boolean,
   return { child, complete };
 }
 
-export async function run(directory: string, argv: string[]): Promise<{ code: number | null; signal: string | null }> {
-  const execution = execute_argv(directory, argv, true, true);
+export async function run(directory: string, argv: string[], output: "stdout" | "stderr" = "stdout"):
+  Promise<{ code: number | null; signal: string | null }> {
+  const execution = execute_argv(directory, argv, true, true, output === "stderr" ? process.stderr : process.stdout);
   execution.child.stdin.end();
   return await execution.complete;
 }

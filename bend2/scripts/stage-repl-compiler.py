@@ -39,8 +39,10 @@ def extend_loader(source):
 
 def extend_frontend(source):
     source = replace_once(source, 'function cli_report(', 'export function cli_report(')
-    source = replace_once(source, 'function cli_build(bin: string, file: string): void {',
-                          'export function cli_build(bin: string, file: string, extraLibs: string[] = [], diagnosticsToStderr = false): void {')
+    source = replace_once(source,
+        'async function cli_build(bin: string, file: string, evidence: string): Promise<void> {',
+        'export async function cli_build(bin: string, file: string, evidence: string | undefined = undefined, extraLibs: string[] = [], diagnosticsToStderr = false): Promise<void> {\n'
+        '  evidence ??= fs.mkdtempSync(path.join(path.dirname(path.resolve(bin)), ".bend-repl-build-"));')
     source = replace_once(source,
         '  const cpu = [...objc, "-std=c11", "-O3", file, "-lpthread", "-lm",',
         '  const sdkFlags: string[] = [];\n'
@@ -62,10 +64,9 @@ def extend_frontend(source):
     source = replace_once(source, '    ...libs, "-o", path.resolve(bin)];',
                           '    ...libs, ...extraLibs, "-o", path.resolve(bin)];')
     return replace_once(source,
-        '    if (child.spawnSync(cmd, args, { stdio: "inherit" }).status !== 0) {',
-        '    const result = child.spawnSync(cmd, args, { stdio: diagnosticsToStderr ? ["inherit", 2, 2] : "inherit" });\n'
-        '    if (diagnosticsToStderr) process.stderr.write(JSON.stringify({ compilerStep: { command: cmd, arguments: args, status: result.status, signal: result.signal, error: result.error?.message } }) + "\\n");\n'
-        '    if (result.status !== 0) {')
+        '    const completed = await Driver.run(directory, [cmd, ...args]);',
+        '    const completed = await Driver.run(directory, [cmd, ...args], diagnosticsToStderr ? "stderr" : "stdout");\n'
+        '    if (diagnosticsToStderr) process.stderr.write(JSON.stringify({ compilerStep: { command: cmd, arguments: args, status: completed.code, signal: completed.signal } }) + "\\n");')
 
 
 def stage(source, runtime, runtime_sha256, runtime_notices, destination):
