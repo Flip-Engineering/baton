@@ -54,10 +54,15 @@ remote. It looks up that repository owner's App installation for every command
 and gives the real `gh` process a fresh `GH_TOKEN`. It removes an inherited
 `GITHUB_TOKEN` from that process environment.
 
-The CLI token requires `contents:write`, `pull_requests:write`, `metadata:read`,
-`issues:write`, `actions:read`, `checks:read` and `statuses:read`. The token
-request omits the `permissions` field, so GitHub returns the installation's full
-permission grant. The token can access every repository selected for that App
+The CLI token request omits the `permissions` field, so GitHub returns the
+installation's full permission grant. The public identity, the installation
+and the issued token must each include `contents:write`,
+`pull_requests:write` and `metadata:read`. A missing or weaker one of these
+three produces a refusal naming that permission. Additional grants, including
+`issues:write`, `actions:read`, `checks:read` and `statuses:read`, are
+accepted and reach the real `gh` process in the token. An operation that
+requires an additional grant the installation lacks is refused by GitHub for
+that operation. The token can access every repository selected for that App
 installation. Git credential requests continue to use the three-permission
 subset described above. [GitHub's installation-token API](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app)
 documents these token permissions.
