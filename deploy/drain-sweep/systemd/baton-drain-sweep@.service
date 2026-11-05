@@ -1,0 +1,17 @@
+[Unit]
+Description=Baton deferred instance-drain recovery for %f
+RequiresMountsFor=%f
+
+[Service]
+Type=oneshot
+# Replace this executable with the installed full Baton CLI if its path differs.
+ExecStart=%h/.local/bin/baton2 --drain-sweep %f
+StandardOutput=journal
+StandardError=journal
+# A sweep can wait for the normal delivery path. Let that path finish naturally.
+TimeoutStartSec=infinity
+TimeoutStopSec=infinity
+# The sweep starts detached delivery children that may own native work after
+# this command exits. A service stop signals only this main process.
+KillMode=process
+OOMPolicy=continue
