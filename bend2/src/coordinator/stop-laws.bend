@@ -121,12 +121,13 @@ def idle_stop_submits_no_signal(db,session,attempt,directory):
 
 # Stop acceptance writes its current state after control submission. Native
 # exit and parent report delivery are performed by the retained observer.
-def accepted_stop(+db: String, +session: String, id: String, reason: String, force: Bool) -> IO(Unit):
+def accepted_stop(+db: String, +session: String, +id: String, +reason: String, +force: Bool) -> IO(Unit):
   do IO<Unit>:
     error : String <- IO.try(String,Stop.request(db,session,id,reason,force))
     checked : Unit <- Stop.validate(error)
     released : Unit <- Stop.release_starting(db,session)
     reconciled : Unit <- Stop.reconcile_request(db,session)
+    announced : Unit <- Stop.announce_ended(db,id,force)
     runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
     result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
     IO.write(result)
