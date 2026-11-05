@@ -42,6 +42,7 @@ typedef struct {
 static int br_instance_decision(BatonProcessCall *call);
 static void br_instance_state_call(BatonProcessCall *call);
 static char *br_json_escape(const char *text);
+static char *br_drain_marker_for(const char *ipc,const char *key,uint64_t token,uint64_t epoch);
 
 /* A capability packs its slot index and generation. A retired slot is reused
    with a higher generation, and a request carrying the old generation is
@@ -67,7 +68,8 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
        BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
        BP_INSTANCE_ATTEMPT_SIGNAL, BP_OBSERVER_RECOVERY, BP_READ_SPAN, BP_READ_AWAKE_SPAN, BP_SPAWN_ENV_FILE,
-       BP_INSTANCE_MONITOR_COMMIT };
+       BP_INSTANCE_MONITOR_COMMIT, BP_INSTANCE_OWNER_STATUS, BP_INSTANCE_OWNER_WAIT,
+       BP_INSTANCE_DRAIN };
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
   if (fcntl(fds[0],F_SETFD,FD_CLOEXEC) < 0 || fcntl(fds[1],F_SETFD,FD_CLOEXEC) < 0) {
@@ -502,6 +504,10 @@ typedef struct {
   int32_t status;
   uint32_t status_known,observing,reserved;
 } BrOwnerState;
+/* Bits of BrOwnerState.reserved. The size of BrOwnerState is a wire contract
+   between releases, so the drain facts use the spare field. */
+#define BR_OWNER_DRAINING 1u
+#define BR_OWNER_GATED 2u
 /* The elected owner's published incarnation, in the per-user IPC directory. */
 typedef struct {
   uint64_t token,epoch,device,inode;
@@ -3278,6 +3284,10 @@ static int br_owner_admit(BrOwner *owner,const char *directory,int lock,
       if(!error)*existing=1;
     }
   }
+  /* A draining owner admits no new attempt, so a drain cannot be extended. The
+     attempts it already holds, and the recovery and attach paths they use, stay
+     open. */
+  if(!error && !*existing && owner->finishing)error=ESHUTDOWN;
   if(!error && !*existing) {
     BrKeeper *keeper=calloc(1,sizeof(*keeper));
     if(!keeper)error=ENOMEM;
@@ -3331,7 +3341,8 @@ static int br_owner_reply(BrOwnerControl *control,BrInstanceFrame frame,const vo
    recorded, and whether an observer holds the attempt. */
 static void br_owner_state(BrOwner *owner,BrKeeper *keeper,BrOwnerState *state) {
   *state=(BrOwnerState){.owner=owner->token,.epoch=owner->epoch,
-    .attempts=br_owner_attempts(owner)};
+    .attempts=br_owner_attempts(owner),
+    .reserved=BR_OWNER_GATED|(owner->finishing?BR_OWNER_DRAINING:0)};
   if(!keeper)return;
   state->attempt=keeper->id;state->generation=keeper->generation;
   state->observing=(uint32_t)(keeper->client>=0);
@@ -3799,12 +3810,34 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
   }
   return error;
 }
+/* Starts the drain sweep of this database: SELF --drain-sweep DATABASE, detached
+   with null standard streams. The sweep re-drives the owed input of every start
+   that a draining owner refused (#1399). It runs when an owner starts, so any
+   later owner repeats a sweep that was lost, and after an owner exited its drain
+   and released the election, so the sweep can start the successor owner. The
+   database holds the durable record; a sweep that fails to start is repeated by
+   the next owner start or exit. */
+static void br_owner_sweep(const char *database) {
+  char *self=br_self();
+  int null=self?open("/dev/null",O_RDWR|O_CLOEXEC):-1;
+  if(self && null>=0) {
+    char *argv[]={self,"--drain-sweep",(char *)database,NULL};
+    pid_t pid;
+    if(!br_spawn(&pid,argv,NULL,null,null,null,-1,-1)) {
+      pthread_t reaper;
+      if(!pthread_create(&reaper,NULL,br_reap_detached,(void *)(intptr_t)pid))pthread_detach(reaper);
+    }
+  }
+  if(null>=0)close(null);
+  free(self);
+}
 static int br_owner_serve(const char *database) {
   BrOwner owner={.listener=-1,.lock=-1,.database_fd=-1,.watcher={.fd=-1}};
   owner.watcher.attempts=&owner.attempts;
   int error=br_owner_bind(&owner,database);
   /* The elected owner resumes publications retained for this database birth. */
   if(!error)br_owner_cursor_load(&owner);
+  if(!error)br_owner_sweep(owner.database);
   if(!error)error=br_owner_loop(&owner);
   if(owner.listener>=0)close(owner.listener);
   /* A failed election must not remove the elected owner's socket or record;
@@ -3812,6 +3845,10 @@ static int br_owner_serve(const char *database) {
   if(owner.bound) {
     if(owner.socket_path)unlink(owner.socket_path);
     if(owner.record_path)unlink(owner.record_path);
+    if(owner.ipc && owner.key) {
+      char *marker=br_drain_marker_for(owner.ipc,owner.key,owner.token,owner.epoch);
+      if(marker){unlink(marker);free(marker);}
+    }
   }
   if(owner.database_fd>=0)close(owner.database_fd);
   free(owner.ipc);free(owner.key);free(owner.record_path);free(owner.generation_path);
@@ -3822,7 +3859,10 @@ static int br_owner_serve(const char *database) {
     if(control->rights>=0)close(control->rights);
     br_owner_control_close(control);free(control->incoming);free(control->reply);free(control);
   }
-  if(owner.lock>=0)close(owner.lock);
+  if(owner.lock>=0){close(owner.lock);owner.lock=-1;}
+  /* A drained owner has released the election and its socket: the sweep may
+     start the successor. */
+  if(owner.bound && owner.finishing && owner.database)br_owner_sweep(owner.database);
   free(owner.database);free(owner.socket_path);
   return error;
 }
@@ -4773,6 +4813,173 @@ static int br_instance_exchange(int socket_fd,BrInstanceFrame frame,const char *
   if(!error)error=br_read_all(socket_fd,answer,sizeof(*answer));
   return error;
 }
+/* A drain marker is a file named for the owner incarnation whose drain was
+   requested: KEY.drain-TOKEN-EPOCH in the per-user IPC directory. Clients of
+   this release hold back genuinely new attempts while the marker for the owner
+   that answers exists, which covers an owner running an older release that does
+   not gate admissions itself. The name carries the incarnation, so a client
+   never reads or removes another incarnation's marker; an owner removes its own
+   marker when it exits. */
+static char *br_drain_marker_for(const char *ipc,const char *key,uint64_t token,uint64_t epoch) {
+  char suffix[80];
+  snprintf(suffix,sizeof(suffix),".drain-%llu-%llu",
+    (unsigned long long)token,(unsigned long long)epoch);
+  return br_ipc_path(ipc,key,suffix);
+}
+static int br_drain_marker_path(const char *database,uint64_t token,uint64_t epoch,char **path_out) {
+  *path_out=NULL;
+  char *canonical=realpath(database,NULL);
+  if(!canonical)return errno;
+  struct stat info;
+  int error=stat(canonical,&info)?errno:0;
+  free(canonical);
+  char *ipc=NULL,*key=NULL;
+  if(!error)error=br_ipc_directory(&ipc);
+  if(!error) {
+    key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
+    if(!key)error=ENOMEM;
+  }
+  if(!error) {
+    *path_out=br_drain_marker_for(ipc,key,token,epoch);
+    if(!*path_out)error=ENOMEM;
+  }
+  free(ipc);free(key);
+  return error;
+}
+static int br_drain_marker_write(const char *database,const BrOwnerRecord *record) {
+  char *path=NULL;
+  int error=br_drain_marker_path(database,record->token,record->epoch,&path);
+  if(error)return error;
+  int fd=open(path,O_WRONLY|O_CREAT|O_CLOEXEC,0600);
+  if(fd<0)error=errno;
+  else if(close(fd))error=errno;
+  free(path);
+  return error;
+}
+/* One while the marker of the published owner incarnation exists. */
+static int br_drain_marker_blocks(const char *database) {
+  char *canonical=realpath(database,NULL);
+  if(!canonical)return 0;
+  BrOwnerRecord record={0};
+  char *ipc=NULL,*key=NULL,*record_path=NULL;
+  int error=br_instance_record(canonical,&ipc,&key,&record_path,&record);
+  free(canonical);
+  if(error)return 0;
+  free(record_path);
+  char *path=br_drain_marker_for(ipc,key,record.token,record.epoch);
+  free(ipc);free(key);
+  if(!path)return 0;
+  int blocked=!access(path,F_OK);
+  free(path);
+  return blocked;
+}
+static int br_file_sha256_hex(const char *path,char hex[65]) {
+  int fd=open(path,O_RDONLY|O_CLOEXEC);
+  if(fd<0)return errno;
+  BrSha256 sha;
+  br_sha256_init(&sha);
+  unsigned char buffer[65536];
+  int error=0;
+  for(;;) {
+    ssize_t n=read(fd,buffer,sizeof(buffer));
+    if(n<0) {
+      if(errno==EINTR)continue;
+      error=errno;break;
+    }
+    if(!n)break;
+    br_sha256_update(&sha,buffer,(size_t)n);
+  }
+  close(fd);
+  if(error)return error;
+  unsigned char digest[32];
+  br_sha256_final(&sha,digest);
+  for(int i=0;i<32;i++)snprintf(hex+i*2,3,"%02x",digest[i]);
+  return 0;
+}
+/* The code a running owner loaded: its executable link and the hash of the open
+   file behind it. The link ends in " (deleted)" and the open file still hashes
+   after a release install replaced the path. */
+static void br_owner_executable(pid_t pid,char **path_out,char hex[65]) {
+  char link[64];
+  snprintf(link,sizeof(link),"/proc/%d/exe",(int)pid);
+  char target[4096];
+  ssize_t n=pid>0?readlink(link,target,sizeof(target)-1):-1;
+  if(n>=0) {target[n]=0;*path_out=strdup(target);}
+  else *path_out=strdup("");
+  hex[0]=0;
+  if(pid>0 && br_file_sha256_hex(link,hex))hex[0]=0;
+}
+/* The pid of the process that answers on the database socket, from the socket
+   credentials: the record's pid names an owner that may have exited and whose
+   pid may have been reused. */
+static int br_owner_peer_pid(int socket_fd,pid_t *pid) {
+  return br_observer_pid(socket_fd,pid);
+}
+/* Names the drain in the detail of a refused admission, so the settlement the
+   caller records carries the owner, its executable and the retry condition. The
+   text starts with ESHUTDOWN: because the receive path classifies on it. */
+static void br_drain_detail(BatonProcessCall *call) {
+  BrOwnerRecord record={0};
+  int socket_fd=-1;
+  pid_t pid=0;
+  char *executable=NULL;
+  char hex[65]={0};
+  if(call->database && !br_instance_connect(call->database,0,&record,&socket_fd)) {
+    if(!br_owner_peer_pid(socket_fd,&pid))br_owner_executable(pid,&executable,hex);
+    close(socket_fd);
+  }
+  char text[4600];
+  snprintf(text,sizeof(text),
+    "ESHUTDOWN: instance owner for %s is draining: owner pid %d, executable %s; "
+    "it admits no new attempt until it exits; the input stays owed and is delivered "
+    "again after the owner exits",
+    call->database?call->database:"",(int)pid,executable?executable:"");
+  br_spec_detail(call,text);
+  free(executable);
+}
+/* Reports the owner of one database without starting one. */
+static int br_instance_status_text(const char *database,char **text_out) {
+  *text_out=NULL;
+  BrOwnerRecord record={0};
+  int socket_fd=-1;
+  int error=br_instance_connect(database,0,&record,&socket_fd);
+  if(error==ENOENT || error==ECONNREFUSED) {
+    *text_out=strdup("{\"state\":\"absent\"}");
+    return *text_out?0:ENOMEM;
+  }
+  if(error)return error;
+  BrInstanceFrame reply={0};
+  BrOwnerState state={0};
+  error=br_instance_exchange(socket_fd,
+    (BrInstanceFrame){.op=BI_STATE,.owner=record.token,.epoch=record.epoch},NULL,-1,&reply);
+  if(!error && reply.error)error=reply.error;
+  if(!error && (reply.op!=BI_HELLO || reply.length!=sizeof(state)))error=EPROTO;
+  if(!error && record.token && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
+  if(!error)error=br_read_all(socket_fd,&state,sizeof(state));
+  pid_t pid=0;
+  if(!error)error=br_owner_peer_pid(socket_fd,&pid);
+  close(socket_fd);
+  if(error)return error;
+  char *executable=NULL;
+  char hex[65]={0};
+  br_owner_executable(pid,&executable,hex);
+  char *escaped=executable?br_json_escape(executable):NULL;
+  if(!escaped){free(executable);return ENOMEM;}
+  const char *format="{\"state\":\"%s\",\"pid\":%d,\"owner\":%llu,\"epoch\":%llu,"
+    "\"attempts\":%llu,\"drainGated\":%s,\"executable\":\"%s\",\"sha256\":\"%s\"}";
+  const char *name=(state.reserved&BR_OWNER_DRAINING)?"draining":"running";
+  const char *gated=(state.reserved&BR_OWNER_GATED)?"true":"false";
+  int needed=snprintf(NULL,0,format,name,(int)pid,(unsigned long long)state.owner,
+    (unsigned long long)state.epoch,(unsigned long long)state.attempts,gated,escaped,hex);
+  if(needed<0){free(executable);free(escaped);return EIO;}
+  *text_out=malloc((size_t)needed+1);
+  if(!*text_out)error=ENOMEM;
+  else snprintf(*text_out,(size_t)needed+1,format,name,(int)pid,
+    (unsigned long long)state.owner,(unsigned long long)state.epoch,
+    (unsigned long long)state.attempts,gated,escaped,hex);
+  free(executable);free(escaped);
+  return error;
+}
 /* Sends one database-level request. The reply must carry the published owner
    incarnation and epoch; a stale socket from an earlier owner is retried
    against the record that owner left. An owner binds its listener before it
@@ -5015,6 +5222,12 @@ static void br_attempt_discard(char *directory,char *address) {
   if(spool){unlink(spool);free(spool);}
   char *manifest=br_path(directory,"manifest");
   if(manifest){unlink(manifest);free(manifest);}
+  /* The preparation also wrote the admission identity and the lifecycle record;
+     a retry prepares both again. */
+  char *admission=br_path(directory,"admission");
+  if(admission){unlink(admission);free(admission);}
+  char *lifecycle=br_path(directory,"lifecycle");
+  if(lifecycle){unlink(lifecycle);free(lifecycle);}
   rmdir(directory);
   if(address) {
     char *parent=strdup(address);
@@ -5035,10 +5248,16 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
     uint64_t expected_token=0,expected_epoch=0;
     if(call->owner_witness && *call->owner_witness)
       error=br_owner_witness_parse(call->owner_witness,&expected_token,&expected_epoch);
+    /* Only a genuinely new custody start waits for a drain marker: an attempt
+       whose launch marker exists belongs to the owner that holds it, and that
+       owner decides. */
+    if(!error && !br_exists(directory,"launch") && br_drain_marker_blocks(call->database))
+      error=ESHUTDOWN;
     if(!error)error=br_instance_request_witness(call->database,
       (BrInstanceFrame){.op=dormant?BI_PREPARE:BI_ADMIT,.length=strlen(directory)+1},directory,
       call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch);
-    if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
+    if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM || error==ESHUTDOWN) {
+      if(error==ESHUTDOWN)br_drain_detail(call);
       /* Only an attempt this call created, that never reached custody, is
          discarded: the owner writes `launch` as its first custody step, so its
          absence proves no child started. A reused attempt and every uncertain
@@ -5431,6 +5650,22 @@ static int br_instance_shutdown(BatonProcessCall *call) {
     int error=br_instance_connect(call->database,0,&record,&socket_fd);
     if(error==ENOENT || error==ECONNREFUSED || error==EINVAL)return 0;
     if(error)return error;
+    if(!record.token || !record.epoch) {
+      /* The listener answers before its incarnation record is published. */
+      close(socket_fd);
+      struct timespec wait={0,20000000};
+      nanosleep(&wait,NULL);
+      continue;
+    }
+    /* The marker is the admission gate for an owner that runs an older release
+       and keeps admitting after the request. It is written before the request is
+       sent, and a failed write ends the call without requesting the drain, so a
+       failed gate is never reported as a drain and the call can be repeated. */
+    error=br_drain_marker_write(call->database,&record);
+    if(error) {
+      close(socket_fd);
+      return error;
+    }
     error=br_instance_exchange(socket_fd,
       (BrInstanceFrame){.op=BI_SHUTDOWN,.owner=record.token,.epoch=record.epoch},
       NULL,-1,&reply);
@@ -5441,6 +5676,31 @@ static int br_instance_shutdown(BatonProcessCall *call) {
     if(error!=ESTALE && reply.error!=ESTALE)return error?error:reply.error;
     struct timespec pause={0,20000000};
     nanosleep(&pause,NULL);
+  }
+}
+/* Blocks until the owner that answers now has exited or a successor replaced
+   it, then reports the database owner. Liveness is the one every client uses:
+   a connection that no listener accepts (ENOENT, ECONNREFUSED) means the owner
+   is gone, so a stale record or a reused pid never keeps the wait open. There
+   is no limit; the caller interrupts it. */
+static int br_instance_owner_wait(BatonProcessCall *call) {
+  BrOwnerRecord first={0};
+  int socket_fd=-1;
+  int error=br_instance_connect(call->database,0,&first,&socket_fd);
+  if(error==ENOENT || error==ECONNREFUSED)return 0;
+  if(error)return error;
+  close(socket_fd);
+  for(;;) {
+    struct timespec pause={0,200000000};
+    nanosleep(&pause,NULL);
+    BrOwnerRecord current={0};
+    socket_fd=-1;
+    error=br_instance_connect(call->database,0,&current,&socket_fd);
+    if(error==ENOENT || error==ECONNREFUSED)return 0;
+    if(error)return error;
+    close(socket_fd);
+    if(first.token && current.token &&
+       (current.token!=first.token || current.epoch!=first.epoch))return 0;
   }
 }
 /* Terminal capability cleanup. The attempt directory and its markers stay the
@@ -6021,6 +6281,14 @@ static void baton_process_call(IoWork *w) {
   if(call->kind==BP_INSTANCE_INPUT_WITNESS) { call->error=br_instance_input_witness(call);return; }
   if(call->kind==BP_INSTANCE_INPUT_PROMPT) { call->error=br_instance_input_prompt(call);return; }
   if(call->kind==BP_INSTANCE_OWNER_WITNESS) { br_instance_owner_witness(call,0);return; }
+  if(call->kind==BP_INSTANCE_OWNER_STATUS || call->kind==BP_INSTANCE_OWNER_WAIT ||
+     call->kind==BP_INSTANCE_DRAIN) {
+    if(call->kind==BP_INSTANCE_OWNER_WAIT)call->error=br_instance_owner_wait(call);
+    if(!call->error && call->kind==BP_INSTANCE_DRAIN)call->error=br_instance_shutdown(call);
+    if(!call->error)call->error=br_instance_status_text(call->database,&call->text);
+    if(!call->error)call->length=strlen(call->text);
+    return;
+  }
   if(call->kind==BP_INSTANCE_ENSURE_OWNER_WITNESS) { br_instance_owner_witness(call,1);return; }
   if(call->kind==BP_INSTANCE_SUBSCRIBE) { br_instance_subscribe_call(call);return; }
   if(call->kind==BP_INSTANCE_NOTICE) { br_instance_notice_call(call);return; }
@@ -6099,7 +6367,8 @@ static Term baton_process_pack(Env e, IoWork *w) {
     else if(call->kind==BP_INSTANCE_STATE || call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB ||
             call->kind==BP_INSTANCE_INPUT_WITNESS || call->kind==BP_INSTANCE_INPUT_PROMPT ||
             call->kind==BP_INSTANCE_NOTICE || call->kind==BP_INSTANCE_OWNER_WITNESS ||
-            call->kind==BP_INSTANCE_ENSURE_OWNER_WITNESS)
+            call->kind==BP_INSTANCE_ENSURE_OWNER_WITNESS || call->kind==BP_INSTANCE_OWNER_STATUS ||
+            call->kind==BP_INSTANCE_OWNER_WAIT || call->kind==BP_INSTANCE_DRAIN)
       value=io_str(e,call->text?call->text:"",call->length);
     else if(call->kind==BP_INSTANCE_RECOVER)
       value=io_tup(e,(Term)call->handle,io_str(e,call->text?call->text:"",call->length));
@@ -6272,7 +6541,9 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     if(!call->database || strlen(call->database)!=database_length || !call->directory ||
        strlen(call->directory)!=directory_length)call->error=EINVAL;
   } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN ||
-            kind==BP_INSTANCE_OWNER_WITNESS || kind==BP_INSTANCE_ENSURE_OWNER_WITNESS) {
+            kind==BP_INSTANCE_OWNER_WITNESS || kind==BP_INSTANCE_ENSURE_OWNER_WITNESS ||
+            kind==BP_INSTANCE_OWNER_STATUS || kind==BP_INSTANCE_OWNER_WAIT ||
+            kind==BP_INSTANCE_DRAIN) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     if(strlen(call->database)!=length)call->error=EINVAL;
   } else if(kind==BP_INSTANCE_SUBSCRIBE || kind==BP_INSTANCE_PUBLISH) {
@@ -6429,6 +6700,15 @@ BP_EFFECT(baton_instance_owner,CID_INSTANCE_OWNER,BP_INSTANCE_OWNER)
 #endif
 #ifdef CID_INSTANCE_OWNER_WITNESS
 BP_EFFECT(baton_instance_owner_witness,CID_INSTANCE_OWNER_WITNESS,BP_INSTANCE_OWNER_WITNESS)
+#endif
+#ifdef CID_INSTANCE_OWNER_STATUS
+BP_EFFECT(baton_instance_owner_status,CID_INSTANCE_OWNER_STATUS,BP_INSTANCE_OWNER_STATUS)
+#endif
+#ifdef CID_INSTANCE_OWNER_WAIT
+BP_EFFECT(baton_instance_owner_wait,CID_INSTANCE_OWNER_WAIT,BP_INSTANCE_OWNER_WAIT)
+#endif
+#ifdef CID_INSTANCE_DRAIN
+BP_EFFECT(baton_instance_drain,CID_INSTANCE_DRAIN,BP_INSTANCE_DRAIN)
 #endif
 #ifdef CID_INSTANCE_ENSURE_OWNER_WITNESS
 BP_EFFECT(baton_instance_ensure_owner_witness,CID_INSTANCE_ENSURE_OWNER_WITNESS,BP_INSTANCE_ENSURE_OWNER_WITNESS)
@@ -6701,7 +6981,7 @@ static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained)
   return error;
 }
 
-#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_WAIT_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
+#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_TRY_ACQUIRE_DRAIN_SWEEP) || defined(CID_SESSIONLOCK_WAIT_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
 static int br_adopt_orphan(BatonProcessCall *call,const char *directory,int lock) {
   int error=br_admission_verify(directory,call->database,-1);
   BrManifest manifest={0};
@@ -7025,15 +7305,19 @@ static void baton_session_lock_call(IoWork *w) {
   char *key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
   if(!key) {free(directory);call->error=ENOMEM;return;}
   size_t length=strlen(call->session);
-  char *suffix=malloc(7+length*2);
+  /* The drain-sweep purpose has a separate path namespace from session locks. */
+  const char *prefix=call->kind==7?".dr-":".lock-";
+  size_t prefix_length=strlen(prefix);
+  if(length>(SIZE_MAX-prefix_length-1)/2) {free(directory);free(key);call->error=ENOMEM;return;}
+  char *suffix=malloc(prefix_length+length*2+1);
   if(!suffix) {free(directory);free(key);call->error=ENOMEM;return;}
-  memcpy(suffix,".lock-",6);
+  memcpy(suffix,prefix,prefix_length);
   for(size_t i=0;i<length;i++) {
     unsigned char c=(unsigned char)call->session[i];
-    suffix[6+i*2]="0123456789abcdef"[c>>4];
-    suffix[7+i*2]="0123456789abcdef"[c&15];
+    suffix[prefix_length+i*2]="0123456789abcdef"[c>>4];
+    suffix[prefix_length+1+i*2]="0123456789abcdef"[c&15];
   }
-  suffix[6+length*2]=0;
+  suffix[prefix_length+length*2]=0;
   char *path=br_ipc_path(directory,key,suffix);
   free(suffix);free(key);free(directory);
   if(!path) {call->error=ENOMEM;return;}
@@ -7054,7 +7338,7 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
   BatonSessionLock *call=(BatonSessionLock *)w->data;
   Term value=call->kind==1 ? term_pak(CID_UNIT,0) : (Term)call->handle;
   if((call->kind==2 || call->kind==4) && !call->error) value=io_str(e,call->path,strlen(call->path));
-  if(call->kind==3) {
+  if(call->kind==3 || call->kind==7) {
     if(call->error==EWOULDBLOCK || call->error==EAGAIN) {call->error=0;value=term_pak(CID_NONE,0);}
     else if(!call->error) value=io_box(e,CID_SOME,(Term)call->handle);
   }
@@ -7091,7 +7375,7 @@ static Term baton_session_lock_begin(Env e, Term *f, IoWork *w, int kind) {
   if(!call) return io_fail(e,ENOMEM,NULL);
   call->kind=kind;
   call->observer_life=-1;
-  if(kind==3 || kind==5 || kind==6) {
+  if(kind==3 || kind==5 || kind==6 || kind==7) {
     u64 dn=0,sn=0;
     call->database=io_cstr(e,f[0],&dn);
     call->session=io_cstr(e,f[1],&sn);
@@ -7127,6 +7411,10 @@ static void __attribute__((constructor)) baton_session_lock_use_canonical(void) 
 #ifdef CID_SESSIONLOCK_TRY_ACQUIRE
 static Term baton_session_lock_try_acquire(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,3);}
 static void __attribute__((constructor)) baton_session_lock_use_try_acquire(void) {io_eff(CID_SESSIONLOCK_TRY_ACQUIRE,baton_session_lock_try_acquire,0);}
+#endif
+#ifdef CID_SESSIONLOCK_TRY_ACQUIRE_DRAIN_SWEEP
+static Term baton_session_lock_try_acquire_drain_sweep(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,7);}
+static void __attribute__((constructor)) baton_session_lock_use_try_acquire_drain_sweep(void) {io_eff(CID_SESSIONLOCK_TRY_ACQUIRE_DRAIN_SWEEP,baton_session_lock_try_acquire_drain_sweep,0);}
 #endif
 #ifdef CID_SESSIONLOCK_WAIT_ACQUIRE
 static Term baton_session_lock_wait_acquire(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,6);}
