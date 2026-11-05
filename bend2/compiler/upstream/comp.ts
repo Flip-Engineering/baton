@@ -1519,6 +1519,11 @@ function ty_clo(book: Bend.Book, A: HTerm | null,
 // An Array is a block, an IO.OP holds the foreign requests beyond its
 // constructors, a recursive datatype is a node, and a field re-entering
 // the datatype under layout (a family hid the cycle) is one: boxes.
+// ADTs with more constructors than this keep their box: unboxing one would
+// enumerate every constructor (val_unbox). Matches on the box compare only
+// the constructors they name.
+const BOX_CTORS = 256;
+
 // Memoized on the type's key.
 function lay_cached(book: Bend.Book, A: HTerm | null):
   { lay: Lay } | { key: number, t: Bend.ADT } | null {
@@ -1538,6 +1543,9 @@ function lay_cached(book: Bend.Book, A: HTerm | null):
   const tld = book.tlds[t.k];
   if (t.k === "Array" || t.k === "IO.OP" || tld?.$ !== "ADT"
     || lay_cyclic(book, t.k)) {
+    return { lay: BOX };
+  }
+  if (tld.c.length > BOX_CTORS) {
     return { lay: BOX };
   }
   return { key, t };
