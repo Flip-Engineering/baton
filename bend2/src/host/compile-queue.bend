@@ -752,28 +752,51 @@ def prune_stale_owners(+keydir: String) -> IO(Unit):
     pruned : U32 <- owner_count_locked(keydir)
     IO.pure(Unit, Unit{})
 
-def clean_stale_active_alive(pid: U32, active: String, start: String) -> IO(Unit):
+def remove_work(+attempt: String) -> IO(Unit):
+  IO.try(Unit, L.CompileQueueLifecycle.remove_tree(attempt ++ "/work"))
+
+# The active marker names the attempt directory of the run it guards with the
+# basename of that directory under runs/. A marker written by an older queue
+# carries no attempt token and names no run.
+def reap_token_ok(+token: String) -> Bool:
+  Bool.and(token_ok(token),
+    Bool.and(Bool.not(Tx.str_eq(token, ".")), Bool.not(Tx.str_eq(token, ".."))))
+
+# The reap evidence is the process identity recorded in the active marker: the
+# pid and starttime written by the supervisor no longer identify a live
+# process. alive() compares the start time recorded in /proc/<pid>; a process
+# hidden from this caller still counts as live, and a live supervisor keeps
+# its work tree. A supervisor whose recorded identity is gone never reads its
+# work tree again, so the tree is removed before the marker that names it.
+def reap_work(keydir: String, +token: String) -> IO(Unit):
+  Bool.pick(IO(Unit), reap_token_ok(token),
+    remove_work(keydir ++ "/runs/" ++ token),
+    IO.pure(Unit, Unit{}))
+
+def clean_stale_active_alive(pid: U32, keydir: String, +token: String, active: String, start: String) -> IO(Unit):
   do IO<Unit>:
     alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
     removed : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive, 1), IO.pure(Unit, Unit{}),
-      IO.try(Unit, L.CompileQueueLifecycle.remove(active)))
+      do IO<Unit>:
+        reaped : Unit <- reap_work(keydir, token)
+        IO.try(Unit, L.CompileQueueLifecycle.remove(active)))
     IO.pure(Unit, Unit{})
 
-def clean_stale_active_pid(parsed: Maybe<&2,U32>, active: String, start: String) -> IO(Unit):
+def clean_stale_active_pid(parsed: Maybe<&2,U32>, keydir: String, +token: String, active: String, start: String) -> IO(Unit):
   match parsed:
     case None{}:
       do IO<Unit>:
         removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(active))
         IO.pure(Unit, Unit{})
-    case Some{+pid}: clean_stale_active_alive(pid, active, start)
+    case Some{+pid}: clean_stale_active_alive(pid, keydir, token, active, start)
 
-def clean_stale_active(keydir: String) -> IO(Unit):
+def clean_stale_active(+keydir: String) -> IO(Unit):
   do IO<Unit>:
     +active : String <- IO.pure(String, keydir ++ "/active")
     +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(active))
     pid_text : String <- IO.pure(String, field(text, "pid"))
     start : String <- IO.pure(String, field(text, "starttime"))
-    clean_stale_active_pid(U32.read(pid_text), active, start)
+    clean_stale_active_pid(U32.read(pid_text), keydir, field(text, "attempt"), active, start)
 
 def write_failure_stage(+attempt: String, +keydir: String, status: String, code: U32,
                         kind: String, key: String, started: String, detail: String,
@@ -783,6 +806,11 @@ def write_failure_stage(+attempt: String, +keydir: String, status: String, code:
     wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write_with_stage(attempt ++ "/result", status, U32.show(code), kind, key, started,
       finished, attempt, attempt ++ "/work", attempt ++ "/stdout", attempt ++ "/stderr",
       detail, stage, artifact_paths_text(names)))
+    # The terminal result is recorded; the command already wrote exit_status,
+    # so the work tree holds nothing the records still need. The tree goes
+    # before the active marker: a crash between the two leaves the marker to
+    # name the attempt for the next reap.
+    cleared : Unit <- remove_work(attempt)
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
@@ -806,6 +834,11 @@ def finish_success(+attempt: String, +keydir: String, +kind: String, +key: Strin
     copied_err : Unit <- IO.try(Unit, L.CompileQueueLifecycle.copy_file(attempt ++ "/stderr", cache ++ "/stderr"))
     renamed : Unit <- IO.try(Unit, F.Files.rename(cache, keydir ++ "/completed"))
     copied_result : Unit <- IO.try(Unit, L.CompileQueueLifecycle.copy_file(keydir ++ "/completed/result", attempt ++ "/result"))
+    # The retained artifacts are in completed/ and the result records the run;
+    # the command already wrote exit_status. Remove the work tree before the
+    # active marker so a crash between the two leaves the marker to name the
+    # attempt for the next reap.
+    cleared : Unit <- remove_work(attempt)
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
@@ -2100,7 +2133,8 @@ def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_roo
                     +state: String, +token: String, +priority: U32) -> IO(Unit):
   do IO<Unit>:
     active_text : String <- IO.pure(String, "pid=" ++ U32.show(pid)
-      ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
+      ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started
+      ++ "\nattempt=" ++ basename(attempt) ++ "\n")
     active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
     probe : Result<&1,&1,U32 & String,String> <- admission_meminfo(state)
@@ -2247,7 +2281,14 @@ def start_attempt_config(config: Config, +text: String, +key: String, +keydir: S
     released_heavy : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(heavy))
     waited : String <- wait_supervisor_identity(supervisor_info, attempt)
     completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
-    start_attempt_completed(completed, text, key, keydir, attempt, owner, now, waited)
+    # wait_supervisor above waited for the recorded supervisor process, so the
+    # run has no live process left; whether it completed or the supervisor
+    # exited without a terminal result, the work tree is no longer read. The
+    # tree is removed before the terminal report, which exits the process on a
+    # failed result.
+    cleared : Unit <- remove_work(attempt)
+    terminal : Unit <- start_attempt_completed(completed, text, key, keydir, attempt, owner, now, waited)
+    IO.pure(Unit, Unit{})
 
 def start_attempt(+config: Config, key: String, keydir: String, lock: U32, owner: String) -> IO(Unit):
   match config:

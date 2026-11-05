@@ -616,6 +616,121 @@ wait "$l2" || lrc=$?
 [ "$lrc" = 0 ] && pass 'surviving requester completed' || bad "survivor exit $lrc"
 [ "$(count_starts)" = 1 ] && pass 'requester loss shared one execution' || bad "loss starts=$(count_starts)"
 
+first_attempt() { # keydir: first run directory that is not an external adoption
+  for d in "$1"/runs/*/; do
+    [ -d "$d" ] || continue
+    d=${d%/}
+    case "${d##*/}" in external-*) continue ;; esac
+    printf '%s\n' "$d"
+    return 0
+  done
+  return 1
+}
+
+# A finished run keeps its records and loses only the work tree.
+: > "$LOG"
+finkey=$(cc_key workdir-finish "$T/workdir-finish")
+run_cc workdir-finish "$T/workdir-finish" \
+  && pass 'workdir-finish run completed' \
+  || bad 'workdir-finish run failed'
+finattempt=$(first_attempt "$STATE/keys/$finkey") || bad 'workdir-finish attempt missing'
+[ -n "$finattempt" ] && [ ! -e "$finattempt/work" ] \
+  && pass 'completed run removed its work tree' \
+  || bad 'completed run kept its work tree'
+[ -n "$finattempt" ] && [ -f "$finattempt/result" ] && [ -f "$finattempt/meta" ] \
+  && [ -f "$finattempt/stdout" ] && [ -f "$finattempt/stderr" ] && [ -f "$finattempt/exit_status" ] \
+  && pass 'completed run kept its attempt records' \
+  || bad 'completed run lost attempt records'
+
+if run_cc workdir-fail "$T/workdir-fail" --fail; then
+  bad 'workdir-fail run succeeded'
+else
+  pass 'workdir-fail run reported failure'
+fi
+failattempt=$(first_attempt "$STATE/keys/$(cc_key workdir-fail "$T/workdir-fail" --fail)") \
+  || bad 'workdir-fail attempt missing'
+[ -n "$failattempt" ] && [ ! -e "$failattempt/work" ] \
+  && pass 'failed run removed its work tree' \
+  || bad 'failed run kept its work tree'
+[ -n "$failattempt" ] && [ -f "$failattempt/result" ] \
+  && pass 'failed run kept its result record' \
+  || bad 'failed run lost its result record'
+
+# A killed supervisor leaves a requester that records the terminal failure and
+# removes the work tree of the run.
+: > "$LOG"
+killkey=$(cc_key workdir-kill "$T/workdir-kill" --sleep 2)
+run_cc workdir-kill "$T/workdir-kill" --sleep 2 & kclient=$!
+i=0
+while [ ! -f "$STATE/keys/$killkey/active" ] && [ "$i" -lt 400 ]; do i=$((i + 1)); sleep 0.05; done
+[ -f "$STATE/keys/$killkey/active" ] || bad 'killed-run supervisor never published active custody'
+kpid=$(sed -n 's/^pid=//p' "$STATE/keys/$killkey/active" 2>/dev/null)
+case "$kpid" in ''|*[!0-9]*) bad 'killed-run active marker recorded no pid' ;; esac
+[ -n "$kpid" ] && kill -9 "$kpid" 2>/dev/null || true
+krc=0
+wait "$kclient" || krc=$?
+[ "$krc" != 0 ] && pass 'killed supervisor produced a failed requester' || bad 'killed supervisor requester succeeded'
+killattempt=$(first_attempt "$STATE/keys/$killkey") || bad 'killed-run attempt missing'
+[ -n "$killattempt" ] && [ ! -e "$killattempt/work" ] \
+  && pass 'requester removed the work tree of the killed run' \
+  || bad 'requester kept the work tree of the killed run'
+[ -n "$killattempt" ] && [ -f "$killattempt/result" ] \
+  && pass 'killed run kept its result record' \
+  || bad 'killed run lost its result record'
+
+# A run whose recorded process is gone is reaped: the wait scan removes its
+# work tree and the stale active marker, the records stay, and a fresh run of
+# the same key completes.
+: > "$LOG"
+reapkey=$(cc_key workdir-reap "$T/workdir-reap")
+mkdir -p "$STATE/keys/$reapkey/runs/reap-fixture-run/work/inputs"
+printf 'int fixture;\n' > "$STATE/keys/$reapkey/runs/reap-fixture-run/work/inputs/input.c"
+printf 'int fixture;\n' > "$STATE/keys/$reapkey/runs/reap-fixture-run/work/scratch.c"
+printf 'kind=cc\n' > "$STATE/keys/$reapkey/runs/reap-fixture-run/meta"
+sh -c 'sleep 1' & reapholder=$!
+reap_start=$(awk '{print $22}' "/proc/$reapholder/stat")
+kill -9 "$reapholder" 2>/dev/null || true
+wait "$reapholder" 2>/dev/null || true
+printf 'pid=%s\nstarttime=%s\nkind=cc\nsetsid=1\nstarted_ns=0\nattempt=reap-fixture-run\n' \
+  "$reapholder" "$reap_start" > "$STATE/keys/$reapkey/active"
+sh "$QUEUE" wait --state-root "$STATE" --key "$reapkey" >"$T/workdir-reap.wait" 2>&1 \
+  && bad 'wait on a key without a completed result succeeded' \
+  || pass 'wait reported no completed result'
+[ ! -e "$STATE/keys/$reapkey/runs/reap-fixture-run/work" ] \
+  && pass 'reaped run lost its work tree' \
+  || bad 'reaped run kept its work tree'
+[ -f "$STATE/keys/$reapkey/runs/reap-fixture-run/meta" ] \
+  && pass 'reaped run kept its records' \
+  || bad 'reaped run lost its records'
+[ ! -e "$STATE/keys/$reapkey/active" ] \
+  && pass 'reap cleared the stale active marker' \
+  || bad 'stale active marker survived'
+run_cc workdir-reap "$T/workdir-reap" \
+  && pass 'fresh admission after the reap completed' \
+  || bad 'fresh admission after the reap failed'
+
+# A run with a live recorded process keeps its work tree and its marker.
+: > "$LOG"
+live2key=$(cc_key workdir-live "$T/workdir-live")
+mkdir -p "$STATE/keys/$live2key/runs/live-fixture-run/work"
+printf 'int fixture;\n' > "$STATE/keys/$live2key/runs/live-fixture-run/work/input.c"
+printf 'kind=cc\n' > "$STATE/keys/$live2key/runs/live-fixture-run/meta"
+sh -c 'sleep 4' & liveholder=$!
+live2_start=$(awk '{print $22}' "/proc/$liveholder/stat")
+printf 'pid=%s\nstarttime=%s\nkind=cc\nsetsid=1\nstarted_ns=0\nattempt=live-fixture-run\n' \
+  "$liveholder" "$live2_start" > "$STATE/keys/$live2key/active"
+if run_cc workdir-live "$T/workdir-live"; then bad 'live recorded run admitted'; else pass 'live recorded run refused'; fi
+[ -e "$STATE/keys/$live2key/runs/live-fixture-run/work" ] \
+  && pass 'live run kept its work tree' \
+  || bad 'live run lost its work tree'
+[ -e "$STATE/keys/$live2key/active" ] \
+  && pass 'live run kept its active marker' \
+  || bad 'live run lost its active marker'
+kill "$liveholder" 2>/dev/null || true
+wait "$liveholder" 2>/dev/null || true
+rm -f "$STATE/keys/$live2key/active"
+rm -rf "$STATE/keys/$live2key/runs/live-fixture-run"
+
 # A live or uncertain active record refuses a fresh admission.
 : > "$LOG"
 livekey=$(cc_key live "$T/live")
