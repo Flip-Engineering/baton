@@ -57,13 +57,11 @@ Read complete owed input, perform the assigned work and report its result:
 
 ```sh
 baton inbox
-baton acknowledge
 baton report --text 'The result and remaining work.'
 ```
 
-Successful native turns record handling of their exact consumed input.
-`acknowledge` records explicit handling with native owned reads and a generated
-receipt. A worker uses `completion-request --text SUMMARY` when its assignment is
+Successful native turns record handling of their exact consumed input. Baton
+records complete reads internally as a turn consumes them. A worker uses `completion-request --text SUMMARY` when its assignment is
 ready for its parent's review. A coordinator reviews a Player's request with
 `completion-confirmed --to PLAYER`, or sends further work with `guide --to PLAYER
 --text TEXT`. Confirmation ends the Player's assignment. `completion-confirmed --to
@@ -98,8 +96,7 @@ identities. They remain available for integrations and exact replay:
 .scratch/bend2/baton2 state.db bind worker1 NATIVE_SESSION omp OBSERVED_MODEL high
 .scratch/bend2/baton2 state.db report turn1 worker1 BODY
 .scratch/bend2/baton2 state.db inbox root
-.scratch/bend2/baton2 state.db ack turn1 root NATIVE_ACCEPTANCE_RECEIPT
-.scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch
+.scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db push /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db status
@@ -110,7 +107,7 @@ identities. They remain available for integrations and exact replay:
 Commands return JSON. `report` saves the full
 body and pending parent delivery in one SQLite transaction. A matching retry
 returns the stored message with its current delivery receipt. Conflicting reuse of
-an ID fails. The explicit `ack` form records the supplied recipient handling receipt.
+an ID fails.
 `stall` reports every pending-input candidate with its recorded state. `stall-wake`
 drives the oldest owed message for each candidate whose attempt exited, whose
 endpoint is present, and which has no explicit stop or existing wake claim. Both
@@ -211,7 +208,7 @@ Stored stop reports and turn history remain available. The MCP tool
 `baton2_resume` accepts `liftStop: true` for this explicit operation.
 
 Codex App notifications name the recipient's whole pending inbox. Additional
-admissions share the notification until recipient acknowledgement permits a
+admissions share the notification until the recipient's recorded reads permit a
 new one. A failed submission retains the daemon's output and owed messages;
 `resume` retries that submission through the public queue.
 
@@ -222,7 +219,7 @@ receiver endpoint empty. `serve` owns one lifecycle subscription for each
 endpointless or configured App session with pending input. When its App turn
 settles, the helper checks its pending inbox and prompts the same conversation
 to handle it. The helper retains actual
-turn failures and public input admission results. Recipient acknowledgements
+turn failures and public input admission results. The recipient's recorded reads
 clear handled input; an explicit stop closes the subscription and preserves
 the remaining messages.
 
@@ -271,9 +268,8 @@ has registered none.
 When the parentless `operator` session has the operator role, a Principal's
 native terminal result is retained in its turn history and sent to that session.
 `dispatch` registers the operator during routine task setup. `baton as operator
-inbox` reads its pending reports. A native actor can use `acknowledge`
-for its complete owned reads. Administrative review outside a native turn can
-use the explicit `ack REPORT_ID operator RECEIPT` compatibility form. Subordinate
+inbox` reads its pending reports. Baton records an actor's complete reads
+internally as the actor reads them. Subordinate
 reports go to their recorded parent.
 
 During an OMP turn, send guidance with:
@@ -285,7 +281,7 @@ baton guide --to worker1 --text 'Focus the review on recovery.'
 The supervisor listens for newly committed guidance throughout an active OMP
 turn and forwards it through OMP's `steer` command. The native response remains
 in the observed stream. Forwarding advances the attempt's guidance cursor. The
-recipient reads guidance with `inbox`. A successful turn or `acknowledge` records
+recipient reads guidance with `inbox`. A successful turn records
 handling for those complete owned reads. Unhandled guidance remains pending.
 
 `join ID PARENT HARNESS MODEL EFFORT WORKSPACE` registers a Player in an
@@ -728,7 +724,7 @@ measures isolated native sessions:
 starts a Codex Conductor and two OMP source reviewers in an isolated clone. The route
 file supplies each harness's executable, model and effort. The driver builds
 the selected committed revision in the clone; `BEND` can select an installed
-compiler. It verifies retained report text, acknowledgment, native session reuse
+compiler. It verifies retained report text, read recording, native session reuse
 and unchanged source checkouts.
 It retains the database, native logs, process records and source and binary hashes
 under the output directory. The command starts real model sessions.
@@ -757,8 +753,8 @@ The server stays attached to the Claude process. Its socket is created beside
 the database and closes with the server.
 
 Within its recorded native context, the Conductor reads complete reports with
-`baton inbox` and records handling with `baton acknowledge`. Baton selects the
-owned reads and creates their receipt. `baton guide --to PLAYER --text TEXT`
+`baton inbox`; Baton records the complete reads internally as the turn consumes
+them. `baton guide --to PLAYER --text TEXT`
 sends guidance. After reviewing a Player's current completion request, the
 Conductor records its decision with `baton completion-confirmed --to PLAYER`.
 It can inspect Git state with `worktree`, read a declared remote's advertised
@@ -878,7 +874,7 @@ For a correction, dispatch complete text to the same Player with `--to SESSION`.
 its recorded route and workspace, and appends to its native log. A receiver that
 finds an active turn returns `queued`; newly pending work starts after native exit.
 The native recipient turn records complete input handling and reports its result
-to the Associate Conductor. `acknowledge` resolves owned inputs from native evidence.
+to the Associate Conductor. The turn's recorded reads resolve its owned inputs.
 
 `dispatch` returns the stored input and its setup or delivery outcome. End the
 parent turn so incoming reports can resume it. The
