@@ -630,7 +630,7 @@ class AgentInput(unittest.TestCase):
 
 
 
-    def test_forwarded_guidance_records_the_read_before_a_failed_turn(self):
+    def test_forwarded_omp_input_kinds_record_reads_before_a_failed_turn(self):
         self.fx.player('omp-parent', harness='omp')
         self.fx.prepare_input('omp-owned-input', 'omp-parent', 'Complete OMP input.\nλ🙂\n',
                               kind='task')
@@ -638,26 +638,34 @@ class AgentInput(unittest.TestCase):
         stream, started = self.fx.accept_child(child, 'omp-parent')
         self.fx.eventually(lambda: self.fx.coord('player', 'omp-parent')['native'] == started['native'],
                            'The retained startup frame was not observed.')
-        self.fx.action(stream, read_steer=True, signal_steer_wait=True,
-                       check_steer_receipt=True)
-        self.assertEqual(json.loads(stream.readline()), {'waiting_for_steer': True})
-        self.fx.coord('message', 'steered-guidance', 'root', 'omp-parent', 'guidance',
-                      'Forwarded complete input.\nλ🙂\n')
-        steered = json.loads(stream.readline())['steer_received']
-        self.assertEqual((steered['type'], steered['id']), ('steer', 'steered-guidance'))
-        # The frame written to the native input stream is recorded as read at
-        # forwarding time; no turn outcome or separate action is involved.
-        self.assertEqual({row['message'] for row in self.reads()},
-                         {'omp-owned-input', 'steered-guidance'})
-        delivered = self.fx.coord('delivery', 'steered-guidance')
-        self.assertIsNone(delivered['receipt'])
-        self.assertEqual(delivered['nativeInputStatus']['read'], 'recorded')
-        # A failed turn preserves the recorded read and owes nothing again.
+        kinds = ('guidance', 'report', 'question', 'task', 'task-assignment',
+                 'task-continuation', 'recovery', 'completion-request', 'completion-confirmed')
+        expected_ids = {'omp-owned-input'}
+        for index, kind in enumerate(kinds):
+            ident = f'omp-input-{index}'
+            body = f'Complete forwarded {kind} body.\nλ🙂\n'
+            self.fx.action(stream, read_steer=True, signal_steer_wait=True,
+                           check_steer_read=True)
+            self.assertEqual(json.loads(stream.readline()), {'waiting_for_steer': True})
+            self.fx.coord('message', ident, 'root', 'omp-parent', kind, body)
+            steered = json.loads(stream.readline())['steer_received']
+            self.assertEqual((steered['type'], steered['id']), ('steer', ident))
+            expected = f'Message ({kind}) from root [id: {ident}]:\n{body}'
+            if kind == 'completion-request':
+                expected += ("\nReview the work against root's assignment and the supplied evidence. "
+                             'Confirm with completion-confirmed --to root when the assignment is satisfied. '
+                             'Otherwise use guide --to root --text TEXT to state what is missing and direct the remaining work.')
+            self.assertEqual(steered['message'], expected)
+            expected_ids.add(ident)
+            self.assertEqual({row['message'] for row in self.reads()}, expected_ids)
+            delivered = self.fx.coord('delivery', ident)
+            self.assertIsNone(delivered['receipt'])
+            self.assertEqual(delivered['nativeInputStatus']['read'], 'recorded')
+        # Failed turn settlement preserves delivery-time read records.
         self.fx.action(stream, body='Controlled native result.', complete_task=False,
                        fail=True)
         self.fx.finish(child, ok=False)
-        self.assertEqual({row['message'] for row in self.reads()},
-                         {'omp-owned-input', 'steered-guidance'})
+        self.assertEqual({row['message'] for row in self.reads()}, expected_ids)
         self.assertEqual(self.fx.coord('inbox', 'omp-parent'), [])
         self.fx.shutdown_idle_database_owner('forwarded read observer did not exit')
 
