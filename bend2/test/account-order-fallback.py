@@ -138,6 +138,20 @@ class AccountOrderFallback(unittest.TestCase):
                      '3 claude-max-incognito refused', '4 claude-max-primary open'):
             self.assertIn(text, moves[0][1])
 
+    def test_a_deactivated_bound_account_moves_at_the_launch_gate(self):
+        self.record_order()
+        self.bind('claude-max-incognito')
+        self.windows('max-incognito', OPEN)
+        self.windows('max-primary', OPEN)
+        deactivated = self.entry('account', 'deactivate', 'claude-max-incognito', '', '', '', '', '', '', '')
+        self.assertEqual(deactivated.returncode, 0, deactivated.stderr)
+        self.assertIn('moved=true', self.wake())
+        self.assertEqual(self.current('leaf'), 'claude-max-primary')
+        moves = self.query("SELECT id,recipient,body FROM messages WHERE kind='report' AND body LIKE 'account move:%'")
+        self.assertIn('root', [recipient for identifier, recipient, body in moves])
+        self.assertIn('account-inactive:claude-max-incognito', moves[0][0])
+        self.assertIn('from claude-max-incognito to claude-max-primary', moves[0][2])
+
     def test_the_last_entry_is_not_taken_on_an_unreadable_read(self):
         self.record_order()
         self.bind('claude-max-incognito')

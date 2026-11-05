@@ -206,7 +206,13 @@ rule #702 established.
 gains the two documented Claude API credit stops: `credit balance is too low`
 and `credit balance too low`. A funded attempt that receives one advances to the
 next operator-listed profile exactly as a subscription usage exhaustion does,
-because the marker feeds the existing `profile_handoff` path.
+because the marker feeds the existing `profile_handoff` path. A Claude Code
+terminal whose text names an organization-level disable (`403 Your organization
+has disabled ... access`, observed 2026-10-31 on `claude-max-incognito`)
+classifies through `access_disabled_sql` with its own cause wording and follows
+the same account-refusal path (#1420): the evidence row is recorded in
+`usage_windows` under the refused account label before any advance, and the
+seat moves to the next operator-listed account.
 
 The handoff keeps the Player identity, parentage, workspace, branch, native
 conversation, retained messages and owed input, and records the account change
@@ -224,7 +230,7 @@ separate eligibility pools; neither is converted to the other.
 ## Command surface
 
 ```
-account --action record|read|bind|attempts|select|observe|import-credit|import-spend|reconcile
+account --action record|read|bind|attempts|select|observe|import-credit|import-spend|deactivate|reconcile
         [--session SESSION] [--id LABEL] [--provider NAME] [--harness NAME]
         [--funding subscription|api_key] [--secret-ref REFERENCE]
         [--organization ID] [--detail JSON]
@@ -236,6 +242,12 @@ force for the session's next attempts and wakes its due delivery. A session with
 no account record falls back to its profile record's label, so a session
 configured before accounts existed gains the attempt record without a second
 configuration.
+
+`deactivate` records the named account as inactive with the acting authority
+(the operator when no session is selected) and the record time on the account
+row (#1420). Selection (`select`, the operator order scans and the launch
+account move) reads only active accounts, and `read` and `pool` print each
+account's state. An already inactive account keeps its earlier actor and time.
 
 ## Deliberate omissions
 
