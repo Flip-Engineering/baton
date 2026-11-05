@@ -2159,7 +2159,16 @@ def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keyd
       Result.CompileQueueResult.report_failure(attempt ++ "/result"),
     do IO<Unit>:
       left : U32 <- owner_count_locked(keydir)
-      +was_canceled : Bool <- IO.pure(Bool, U32.is_eq(left, 0))
+      +mine : Bool <- regular(keydir ++ "/owners/" ++ owner)
+      # A missing result is a cancellation when no live owner is left, as
+      # before, or when this attempt's own owner token is gone: a new request
+      # for the same key may publish its token while this attempt's
+      # cancellation is delivered, and that token must not turn the canceled
+      # outcome into a failure. Only the cancel command removes the token of
+      # a live waiter; this client removes its own token only at its terminal
+      # handling below. The count above stays to prune stale owners under the
+      # owner lock.
+      +was_canceled : Bool <- IO.pure(Bool, Bool.pick(Bool, U32.is_eq(left, 0), True{}, Bool.not(mine)))
       +signal : U32 <- IO.pure(U32, status_number(field(waited, "signal")))
       +exit_code : U32 <- IO.pure(U32, status_number(field(waited, "exit")))
       +signaled : Bool <- IO.pure(Bool, U32.is_gt(signal, 0))
