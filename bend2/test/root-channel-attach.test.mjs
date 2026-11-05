@@ -522,6 +522,40 @@ test('a later Codex endpoint delivery preserves the notice awaiting its thread r
   db.close();
 });
 
+for (const changedDuringRead of [false, true]) {
+  test(`a complete Codex read survives a same-thread endpoint change ${changedDuringRead ? 'during' : 'before'} item lookup`, async (t) => {
+    const calls = await attach(t, 'operator', (db) => {
+      db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+      db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+        .run('reconnected-input', 'lead', 'operator', 'report', 'Complete body across a context reconnect.');
+    }, ['--root-harness', 'codex', '--thread', 'thread-1']);
+    const { channel } = calls;
+    channel.activate();
+    await channel.until(() => channel.notes().length > 0, 'Codex root notice');
+    const notice = channel.notes()[0];
+    const endpoint = JSON.stringify(['another-live-context-for-thread-1']);
+    const reconnect = () => {
+      const writer = new DatabaseSync(calls.database);
+      writer.prepare('UPDATE sessions SET endpoint=? WHERE id=?').run(endpoint, 'operator');
+      writer.close();
+    };
+    if (!changedDuringRead) reconnect();
+    const claim = { id: 'reconnected-input', thread: 'thread-1', content: notice.params.content,
+      turn: 'turn-1', item: 'item-1' };
+    const result = await rootDelivery(channel, 'read-after-reconnect', claim,
+      { thread: 'thread-1', turn: 'turn-1', item: 'item-1', type: 'userMessage', text: notice.params.content },
+      changedDuringRead ? reconnect : () => {});
+    assert.equal(result.isError, undefined);
+    const context = JSON.parse(readFileSync(channel.contextLog, 'utf8').trim());
+    assert.equal(context.native, 'thread-1');
+    assert.equal(context.endpoint, endpoint);
+    const db = new DatabaseSync(calls.database, { readOnly: true });
+    assert.deepEqual(db.prepare('SELECT message,native FROM message_reads').all().map(row => ({ ...row })),
+      [{ message: 'reconnected-input', native: 'thread-1' }]);
+    db.close();
+  });
+}
+
 test('a completed Codex root read accepts a delayed receipt after the next notice is selected', async (t) => {
   const calls = await attach(t, 'operator', (db) => {
     db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
@@ -582,6 +616,33 @@ test('a read recorded while the root item lookup is pending completes idempotent
   assert.deepEqual(verify.prepare('SELECT attempt,native FROM message_reads WHERE message=?').all('concurrent')
     .map((row) => ({ ...row })), [{ attempt: 'root-channel:concurrent', native: 'thread-1' }]);
   verify.close();
+});
+
+test('a refused Codex root read names the failed condition and leaves the message owed', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('refused', 'lead', 'operator', 'report', 'Complete refused body.');
+  }, ['--root-harness', 'codex', '--thread', 'thread-1']);
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'Codex root input notice');
+  const notice = channel.notes()[0];
+  const claim = { id: 'refused', thread: 'thread-1', content: notice.params.content,
+    turn: 'turn-1', item: 'item-1' };
+  const refusal = async (id, args) => {
+    const result = await channel.call(id, 'baton2_root_delivery', args);
+    assert.equal(result.isError, true);
+    return result.content[0].text;
+  };
+  assert.match(await refusal('wrong-thread', { ...claim, thread: 'thread-2' }), /this connection serves thread thread-1\.$/);
+  assert.match(await refusal('no-item', { ...claim, item: '' }), /the claim names no turn and item\.$/);
+  assert.match(await refusal('partial', { ...claim, content: 'Only a partial notice body.' }),
+    /the content differs from the selected notice\.$/);
+
+  const unread = new DatabaseSync(calls.database, { readOnly: true });
+  assert.equal(unread.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  unread.close();
 });
 
 test('a Codex root relay without --thread follows the recorded root conversation', async (t) => {

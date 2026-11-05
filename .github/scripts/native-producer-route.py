@@ -28,6 +28,7 @@ PRODUCER_TOOLING = (
     '.github/scripts/native-producer-route.py',
     '.github/scripts/queue-native-checks.py',
     '.github/scripts/compile-cgen-exec.py',
+    '.github/scripts/service-run.py',
     '.github/scripts/prepare-native-compiler.py',
     '.github/scripts/reuse-native-main.py',
     'bend2/scripts/build-native.sh',

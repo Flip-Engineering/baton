@@ -161,6 +161,43 @@ static int dispatch_entry(int argc,char **argv) {
   free(args);free(helper);free(executable);free(runtime);return 1;
 }
 
+/* `baton doctor` runs the Claude Code agent_summary preload check (#1338). The
+   helper prints one JSON report; exec keeps its stdout and uses its exit status
+   as the command's status. */
+static int doctor_entry(int argc,char **argv) {
+  if(argc<2 || strcmp(argv[1],"doctor")) return -1;
+  char *executable=application_executable();
+  char *directory=executable?strdup(executable):NULL;
+  char *slash=directory?strrchr(directory,'/'):NULL;
+  if(!slash) {free(directory);free(executable);perror("baton doctor executable");return 1;}
+  *slash=0;
+  const char *suffixes[]={"/../libexec/baton2/agent-summary-check.mjs","/../../bend2/scripts/agent-summary-check.mjs"};
+  char *helper=NULL;
+  for(size_t i=0;i<sizeof(suffixes)/sizeof(suffixes[0]);i++) {
+    size_t size=strlen(directory)+strlen(suffixes[i])+1;
+    char *candidate=malloc(size);
+    if(!candidate) break;
+    snprintf(candidate,size,"%s%s",directory,suffixes[i]);
+    helper=realpath(candidate,NULL);free(candidate);
+    if(helper) break;
+  }
+  free(directory);free(executable);
+  if(!helper) {
+    fputs("baton doctor: agent-summary-check.mjs is missing from this installation. Install the complete Baton package.\n",stderr);
+    return 2;
+  }
+  char **args=calloc((size_t)argc+3,sizeof(*args));
+  if(!args) {free(helper);perror("baton doctor arguments");return 1;}
+  char *runtime=dispatch_runtime();
+  if(!runtime) {free(args);free(helper);perror("baton doctor runtime");return 1;}
+  int count=0;
+  args[count++]=runtime;args[count++]=helper;args[count++]="doctor";
+  for(int i=2;i<argc;i++) args[count++]=argv[i];
+  execvp(args[0],args);
+  perror("baton doctor: the runtime could not execute the installed doctor operation");
+  free(args);free(helper);free(runtime);return 1;
+}
+
 #if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_NATIVE_RECEIVER_ROUTER) || defined(BATON2_RECOVERY_HELPER)
 static int native_help_request(int argc,char **argv) {
   return argc>1 && (!strcmp(argv[1],"help") || !strcmp(argv[1],"--help") || !strcmp(argv[1],"-h"));
@@ -197,6 +234,8 @@ static int focused_receiver_verb(int argc,char **argv) {
   if(!strcmp(first,"--stop-hook") || !strcmp(first,"--redeliver-message") ||
      !strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown") ||
+     !strcmp(first,"--instance-status") || !strcmp(first,"--instance-wait") ||
+     !strcmp(first,"--drain-sweep") || !strcmp(first,"--drain-sweep-session") ||
       !strcmp(first,"--ensure-schema")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
                 !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"agent-native-input") ||
@@ -244,7 +283,10 @@ static int native_receiver_route(int argc, char **argv) {
   int focused_verb=argc>1 && (!strcmp(argv[1],"--stop-hook") ||
     !strcmp(argv[1],"--redeliver-message") || !strcmp(argv[1],"--dispatch-message") ||
     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
-    !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--ensure-schema") || recovery);
+    !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--instance-status") ||
+    !strcmp(argv[1],"--instance-wait") || !strcmp(argv[1],"--drain-sweep") ||
+    !strcmp(argv[1],"--drain-sweep-session") ||
+    !strcmp(argv[1],"--ensure-schema") || recovery);
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
       !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||
       !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
@@ -343,7 +385,9 @@ static int recovery_helper_verb(int argc,char **argv) {
   if(argc<2 || native_help_request(argc,argv)) return 0;
   if(!strcmp(argv[1],"--recover-observer") || !strcmp(argv[1],"--recover-receive") ||
      !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
-     !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--dispatch-message")) return 1;
+     !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--instance-status") ||
+     !strcmp(argv[1],"--instance-wait") || !strcmp(argv[1],"--drain-sweep") ||
+     !strcmp(argv[1],"--dispatch-message")) return 1;
   return argc>2 && !strcmp(argv[2],"recover-observer");
 }
 #endif
@@ -365,6 +409,8 @@ int main(int argc, char **argv) {
   int recovery_route=focused_recovery_route(argc,argv);
   if(recovery_route>=0) return recovery_route;
 #endif
+  int doctor=doctor_entry(argc,argv);
+  if(doctor>=0) return doctor;
   int dispatch=dispatch_entry(argc,argv);
   if(dispatch>=0) return dispatch;
 #ifdef BATON2_NATIVE_RECEIVER_ROUTER

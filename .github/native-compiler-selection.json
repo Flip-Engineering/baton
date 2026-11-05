@@ -1,0 +1,5 @@
+{
+  "schema": "baton2-native-compiler-selection-v1",
+  "archive": "/var/tmp/baton2-compile-queue/toolchains/compiler-term-compare-1447-20261105/bend-2.0.25-linux-x64-compiler-term-compare-1447-20261105.tar.gz",
+  "archive_sha256": "d83954b9d58b0be7387365bb88b26cd9543f7cb12ffa6f97c10a5e8da74c0d31"
+}

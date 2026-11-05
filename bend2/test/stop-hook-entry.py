@@ -169,6 +169,65 @@ class StopHook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout) if result.stdout.strip() else None
 
+    def test_claude_read_lines_preserve_json_escapes_and_empty_lines(self):
+        result = subprocess.run([self.binary, 'claude-read-lines-sql'],
+                                capture_output=True, text=True, env=self.env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        cases = ['', 'a', 'a\n', '\na', 'a\n\nb', r'a\nb', r'\u005c',
+                 '\\\nend', 'quote " and slash \\', 'λ🙂\nline\tvalue',
+                 ''.join(chr(i) for i in range(1, 32)), '\n' * 200,
+                 ('α\\n\t text\n' * 1200)]
+        for content in cases:
+            with self.subTest(content=repr(content[:80])):
+                rows = self.db.execute(
+                    'WITH candidate_reads(id,path,content) AS (VALUES(1,2,?)) ' + result.stdout,
+                    (content,)).fetchall()
+                self.assertEqual([row[3] for row in rows], content.split('\n'))
+                self.assertEqual([row[2] for row in rows], list(range(1, len(rows) + 1)))
+
+    def test_claude_transcript_array_preserves_all_frames(self):
+        for frames in ([], [{'text': 'λ🙂, "quote", \\n'}],
+                       [{'index': i, 'text': 'λ🙂' * 20} for i in range(3000)]):
+            source = '\n\n' + '\n\n'.join(json.dumps(frame, ensure_ascii=False)
+                                        for frame in frames) + '\n\n'
+            result = subprocess.run([self.binary, 'claude-transcript-json'], input=source,
+                                    capture_output=True, text=True, env=self.env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout), frames)
+
+    def test_claude_prompt_inheritance_tracks_only_current_native_user_anchors(self):
+        result = subprocess.run([self.binary, 'claude-prompt-frames-sql'],
+                                capture_output=True, text=True, env=self.env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        frames = []
+        for index in range(1000):
+            frame = {'type': 'user' if index % 7 == 0 else 'assistant',
+                     'sessionId': 'other-native' if index % 11 == 0 else 'native-1'}
+            if index % 3 == 0:
+                frame['promptId'] = 'prompt-%d' % (index % 5)
+            if index % 13 == 0:
+                frame['promptId'] = None
+            if index % 17 == 0:
+                frame['promptId'] = ''
+            if index % 19 == 0:
+                frame['promptId'] = index
+            frames.append(frame)
+        inherited = None
+        expected = []
+        for index, frame in enumerate(frames):
+            if (frame['type'] == 'user' and frame['sessionId'] == 'native-1'
+                    and isinstance(frame.get('promptId'), str)):
+                inherited = frame['promptId']
+            prompt = frame.get('promptId')
+            expected.append((index, inherited if prompt is None else prompt))
+        rows = self.db.execute(
+            'WITH event(value) AS (VALUES(?)), frames(key,value) AS '
+            '(SELECT key,value FROM json_each(?)), ' + result.stdout +
+            'answer AS (SELECT key,prompt_id FROM prompted_frames) '
+            'SELECT key,prompt_id FROM answer ORDER BY CAST(key AS INTEGER)',
+            (json.dumps({'session_id': 'native-1'}), json.dumps(frames))).fetchall()
+        self.assertEqual(rows, expected)
+
     def test_b1_input_arriving_mid_turn_is_handed_to_the_turn(self):
         self.owe()
         decision = self.hook()
@@ -787,6 +846,24 @@ else:
     assert reads() == []
     read_path = str(pathlib.Path(config['directory']) / 'saved-input.txt')
     pathlib.Path(read_path).write_text(rendered, encoding='utf-8')
+    if config['label'] == 'stream':
+        # Ordinary file reads precede the saved input. A matching header alone
+        # also leaves the message unread until its complete body is present.
+        for index in range(4):
+            unrelated_path = str(pathlib.Path(config['directory']) / ('source-%d.txt' % index))
+            call_id = 'unrelated-read-%d' % index
+            frame({'type':'assistant','sessionId':'native-1','message':{'content':[
+                   {'type':'tool_use','id':call_id,'name':'Read','input':{'file_path':unrelated_path}}]}})
+            noise = '\n'.join('%d\tunrelated source line λ🙂 %d' % (line+1, line)
+                              for line in range(1200))
+            if index == 0:
+                noise = '1\t' + rendered.splitlines()[0] + '\n2\tIncomplete body.'
+            frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'content':[
+                   {'type':'tool_result','tool_use_id':call_id,'content':noise}]}})
+        unrelated = invoke('post-unrelated-reads', [config['binary'],'--stop-hook'],
+                           event('PostToolUse', tool_name='Read'))
+        assert config['tail'] in json.loads(unrelated.stdout)['hookSpecificOutput']['additionalContext']
+        assert reads() == []
     frame({'type':'assistant','sessionId':'native-1','message':{'content':[
            {'type':'tool_use','id':'read-1','name':'Read','input':{'file_path':read_path}}]}})
     partial = rendered[:512]
@@ -903,7 +980,9 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         self.combined_lifecycle('Large complete body λ🙂.\n' * 25000 + 'TAIL-READ-PROOF-large', 'large')
 
     def test_streamed_history_keeps_first_prompt_inheritance_full_body_and_stop_custody(self):
-        self.combined_lifecycle('Complete streamed body λ🙂.\n' * 100 + 'TAIL-READ-PROOF-stream', 'stream')
+        self.combined_lifecycle('Complete streamed body λ🙂.\n' * 100 +
+                                'Literal \\n and \\u005c, quoted "text" and backslash \\.\n' +
+                                'TAIL-READ-PROOF-stream', 'stream')
 
     def codex_hooks(self):
         """The hook tables Codex builds from the launch's -c key=value overrides."""

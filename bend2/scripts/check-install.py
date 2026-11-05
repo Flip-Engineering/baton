@@ -113,6 +113,14 @@ BINARY_LAYOUT = (
      'build_mode': 'recovery-native-entry'},
 )
 
+def verify_root_channel(prefix):
+    directory = prefix / 'libexec/baton2'
+    for name in ('mcp-conductor.mjs', 'codex-root-relay.mjs', 'root-channel-config.mjs'):
+        helper = directory / name
+        require(helper.is_file() and not helper.is_symlink() and os.access(helper, os.R_OK),
+                'The installation lacks the root channel helper libexec/baton2/' + name)
+
+
 def verify_dispatch_runtime(prefix):
     helper = prefix / 'libexec/baton2/task-start.mjs'
     require(helper.is_file() and not helper.is_symlink() and os.access(helper, os.R_OK),
@@ -121,6 +129,23 @@ def verify_dispatch_runtime(prefix):
     require(any(path.is_file() and not path.is_symlink() and os.access(path, os.X_OK)
                 for path in runtimes),
             'The installation has no Node or bundled Bun runtime for the dispatch operation')
+
+
+# The Claude Code agent_summary preload (#1338) is pinned by SHA-256. `baton doctor` runs
+# the helper beside it.
+AGENT_SUMMARY_PRELOAD_SHA256 = 'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40'
+
+
+def verify_agent_summary_preload(prefix):
+    directory = prefix / 'libexec/baton2'
+    helper = directory / 'agent-summary-check.mjs'
+    require(helper.is_file() and not helper.is_symlink() and os.access(helper, os.R_OK),
+            'The installation lacks the doctor operation libexec/baton2/agent-summary-check.mjs')
+    preload = directory / 'no-agent-summary.js'
+    require(preload.is_file() and not preload.is_symlink() and os.access(preload, os.R_OK),
+            'The installation lacks the agent_summary preload libexec/baton2/no-agent-summary.js')
+    require(archive_digest(preload) == AGENT_SUMMARY_PRELOAD_SHA256,
+            'The agent_summary preload libexec/baton2/no-agent-summary.js differs from its pinned SHA-256')
 
 
 def verify_receiver_router(prefix, output):
@@ -366,7 +391,9 @@ def check(prefix, output, probe_native_compiler=True):
     binaries = verify_binaries(prefix, manifest, checksums)
     receiver_router = verify_receiver_router(prefix, output)
     dependency = verify_repl(prefix, manifest)
+    verify_root_channel(prefix)
     verify_dispatch_runtime(prefix)
+    verify_agent_summary_preload(prefix)
     system = platform.system()
     require(manifest.get('required_system_dependencies') == system_dependencies(system),
             'The installation manifest must record its required C toolchain and SQLite development files')

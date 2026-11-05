@@ -491,7 +491,8 @@ elif muse:
     print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user',
                       'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
 else:
-    prompt=sys.stdin.read()
+    # Claude Code keeps its stdin open after the first prompt (#1298), so its prompt is one line.
+    prompt=sys.stdin.readline() if claude else sys.stdin.read()
     if claude: prompt=json.loads(prompt)['message']['content']
     native=resume or native
     store=os.environ.get('CLAUDE_CONFIG_DIR' if claude else 'CODEX_HOME','')

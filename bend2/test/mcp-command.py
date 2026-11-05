@@ -184,6 +184,23 @@ class McpCommand(unittest.TestCase):
             expected_context=['repl', 'resolve', '--cell', citation])
         self.assertFalse(result.get('isError', False))
 
+    def test_repl_context_projects_the_selected_character_range(self):
+        citation = 'repl:repl:fixture:context@7'
+        result = self.command(stdout='{"context":{"fragment":"λ"}}\n',
+            tool='baton2_repl', arguments={'operation': 'context', 'cell': citation,
+                                         'offset': 2048, 'length': 1024},
+            session='recipient', repl=True,
+            expected_context=['repl', 'context', '--cell', citation,
+                              '--offset', '2048', '--length', '1024'])
+        self.assertFalse(result.get('isError', False))
+
+    def test_repl_checkpoint_selects_the_checked_immutable_cell(self):
+        result = self.command(stdout='{"reference":"repl-cell:fixture"}\n',
+            tool='baton2_repl', arguments={'operation': 'checkpoint', 'cell': 'repl-cell:fixture'},
+            session='author', repl=True,
+            expected_context=['repl', 'checkpoint', '--cell', 'repl-cell:fixture'])
+        self.assertFalse(result.get('isError', False))
+
     def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
         first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000
         second = 'Second body Ω\n'

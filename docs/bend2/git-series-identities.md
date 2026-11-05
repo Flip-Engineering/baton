@@ -207,10 +207,12 @@ an endpoint using the installed Node helper and the recipient's recorded model.
 origin remote and pass its GitHub repository to the helper as `--repository`.
 A nested worker registered from another worker's environment uses its own
 assignment workspace, so it receives that assignment's repository. A workspace whose
-origin is not a GitHub URL passes no repository selection. With a selection,
-the helper accepts credential requests only for that repository. With no
-selection, each request names its own repository and the helper uses that
-repository's owner installation.
+origin is not a GitHub URL passes no repository selection. In the default `git`
+profile the selection is the repository for a credential request that carries no
+path. Every request that names a repository uses that repository's owner
+installation, so a launch selected for one repository can push to another
+repository the App is installed on. The `workflow-write` profile restricts
+credentials to its selected repository.
 
 ```sh
 baton2 /absolute/path/state.db receiver lead /absolute/path/omp \
@@ -349,10 +351,57 @@ the retained Player commits keep their own attribution. `baton land` and
 model through the configured registry, and re-enter the command through the
 helper with `BATON2_GIT_IDENTITY_APPLIED` set. The helper's author and
 committer variables therefore take precedence over inherited repository or
-global Git configuration. An absent actor session or registry keeps the
-inherited environment. Verify source commit, landed commit and authenticated
-push actor separately. Conductor review, selected landing checks and
+global Git configuration. An absent registry or an actor with no recorded model
+keeps the inherited environment. Verify source commit, landed commit and
+authenticated push actor separately. Conductor review, selected landing checks and
 repository protection provide review authority.
+
+## Publication routes
+
+`baton push --repo PATH --branch BRANCH --remote REMOTE` is the maintained
+publication command. A seat and an operator shell run the same command.
+
+| Route | Series identity and credential helper |
+| --- | --- |
+| `start`, `receiver`, `configure` | Endpoint embeds `git-series.mjs launch` with the recipient's model and the assignment's repository. |
+| `dispatch-turn` and detached turns | Launch embeds the same prefix. |
+| Retained launch for a resumed or continued native session | Prefix carries the recorded model and no `--repository`. |
+| Native tool calls inside a launched seat | Inherit the helper through `GIT_CONFIG_*`, `GIT_ASKPASS` and the author variables. |
+| `baton push`, `land`, `land-checked` with `BATON_SESSION` | Re-enter through the launcher with the actor's model and its workspace's repository. |
+| `baton push` without `BATON_SESSION` | Uses the session recorded with `PATH` as its workspace, preferring the one on `BRANCH`, and continues as above. |
+| Direct `git push` in a shell outside every route above | The shell has no credential helper. Git asks for a username on a terminal and fails with `could not read Username` when none exists. |
+
+An operator wrap-up shell records no `BATON_SESSION`. For a recorded session
+checkout, `baton push` recovers the model and repository from the session
+database and the registry from `BATON2_GIT_REGISTRY` or the default registry
+path. The operator supplies the checkout path, branch and remote. A relative,
+absolute or symlinked spelling of the path resolves to the checkout path that
+the session recorded. A checkout with no
+recorded session needs `BATON_SESSION` set to a session whose model the registry
+maps, or an explicit launch:
+
+```sh
+node "$GIT_SERIES" launch --registry "$REGISTRY" --model-key MODEL \
+  --repository OWNER/REPO -- git -C PATH push REMOTE BRANCH
+```
+
+A rejected `baton push` answers `{"status":"rejected","reason":...,"identity":...}`.
+The `identity` field states one of three conditions:
+
+- `series identity applied`: the launcher wrapped the push, so the helper ran. A `Series Git operation refused`
+  line on standard error then names the registry, installation or permission
+  cause. A refusal that names a missing `issues:write` or other permission
+  concerns the App installation and its owner's approval. The operator approves
+  that change on GitHub.
+- `no series identity: BATON_SESSION is unset and no recorded session has this
+  checkout as its workspace`: the process had no launch context and none could
+  be recovered. Set `BATON_SESSION` or use the explicit launch above.
+- `no series identity for session ID`: the session has no recorded model, the
+  registry does not map it, or no registry exists at the configured path.
+  Correct the model mapping or create the registry.
+
+The helper process runs for each Git credential request and mints a new
+installation token, so no stored token expires between pushes.
 
 ## Validation
 

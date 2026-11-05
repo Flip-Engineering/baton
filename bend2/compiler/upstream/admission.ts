@@ -48,11 +48,76 @@ function available(): { bytes: number | null; source: string; limits?: unknown[]
   return { bytes, source: "MemAvailable", limits };
 }
 
-export function resident(pid: number | undefined): number | null {
+// The page size that /proc/<pid>/statm counts in: a positive integer from getconf, or null.
+let page_bytes: number | null | undefined;
+function page_size(): number | null {
+  if (page_bytes === undefined) {
+    page_bytes = null;
+    try {
+      const value = Number(execFileSync("getconf", ["PAGESIZE"], { encoding: "utf8" }).trim());
+      if (Number.isSafeInteger(value) && value > 0) page_bytes = value;
+    } catch {}
+  }
+  return page_bytes;
+}
+
+// One open statm file per process that resident() reads, keyed by its path. A read at
+// offset 0 regenerates the counters; the second field is the resident page count that
+// VmRSS of the status file reports.
+const statm = new Map<string, number>();
+const statm_buffer = Buffer.alloc(256);
+
+function statm_close(file: string): void {
+  const fd = statm.get(file);
+  if (fd === undefined) return;
+  statm.delete(file);
+  try { fs.closeSync(fd); } catch {}
+}
+
+// The resident bytes in a statm file, or undefined when it gives no valid nonzero
+// address space; the caller then reads the status file, which decides between a
+// size, 0 and null as it did before.
+function statm_resident(file: string, page: number): number | undefined {
+  // A kept descriptor names the process that had the pid when it was opened. When that
+  // process has exited, the second attempt opens the file again, which may name another one.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      let fd = statm.get(file);
+      if (fd === undefined) {
+        fd = fs.openSync(file, "r");
+        statm.set(file, fd);
+      }
+      const read = fs.readSync(fd, statm_buffer, 0, statm_buffer.length, 0);
+      const fields = statm_buffer.toString("latin1", 0, read).split(" ");
+      const size = Number(fields[0]), pages = Number(fields[1]), bytes = pages * page;
+      if (!Number.isSafeInteger(size) || size < 0 || !Number.isSafeInteger(pages) || pages < 0
+        || !Number.isSafeInteger(bytes)) {
+        statm_close(file);
+        return undefined;
+      }
+      if (size > 0) return bytes;
+      statm_close(file);
+    } catch {
+      statm_close(file);
+    }
+  }
+  return undefined;
+}
+
+// Close the statm descriptor that resident() keeps for pid, once its process stops.
+// proc is the proc file system root; a test can name another directory.
+export function forget_resident(pid: number | undefined, proc = "/proc"): void {
+  if (pid !== undefined) statm_close(proc + "/" + pid + "/statm");
+}
+
+export function resident(pid: number | undefined, proc = "/proc"): number | null {
   if (pid === undefined) return null;
   try {
     if (process.platform === "linux") {
-      const match = /^VmRSS:\s+(\d+) kB$/m.exec(fs.readFileSync("/proc/" + pid + "/status", "utf8"));
+      const page = page_size();
+      const bytes = page === null ? undefined : statm_resident(proc + "/" + pid + "/statm", page);
+      if (bytes !== undefined) return bytes;
+      const match = /^VmRSS:\s+(\d+) kB$/m.exec(fs.readFileSync(proc + "/" + pid + "/status", "utf8"));
       return match === null ? null : Number(match[1]) * 1024;
     }
     const value = execFileSync("ps", ["-o", "rss=", "-p", String(pid)], { encoding: "utf8" }).trim();
@@ -120,6 +185,13 @@ export class Admission {
     // lose initialized workers and still leave the unit waiting.
     const admit = async (): Promise<boolean> => {
       for (;;) {
+        // With one running unit per available processor, no unit starts until one
+        // completes. The refusal records the count and reads no memory.
+        const cpus = os.availableParallelism();
+        if (active.size > 0 && active.size >= cpus) {
+          this.observe("admission", { key: key(jobs[next]), allowed: false, cpus, active: active.size });
+          return false;
+        }
         const decision = evaluate();
         if (decision.limit !== "memory") return decision.allowed;
         const retirable = workers.retirable();

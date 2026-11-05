@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -206,6 +207,15 @@ def safe() -> U32:
                                  'BEND_NO_TELEMETRY': '1'})
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'resident() reads /proc statm and status files on Linux')
+    def test_resident_statm(self):
+        script = ROOT / 'bend2/test/compiler/resident_statm.ts'
+        run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                             capture_output=True, text=True, env={
+                                 **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                 'BEND_NO_TELEMETRY': '1'})
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
     def test_worker_reuse(self):
         script = ROOT / 'bend2/test/compiler/worker_reuse.ts'
         run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
@@ -245,6 +255,14 @@ def safe() -> U32:
                                  **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
                                  'BEND_NO_TELEMETRY': '1'})
         self.assertEqual(run.returncode, 0, run.stderr)
+
+    def test_driver_cache_settle(self):
+        script = ROOT / 'bend2/test/compiler/driver_cache_settle.ts'
+        run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                             capture_output=True, text=True, env={
+                                 **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                 'BEND_NO_TELEMETRY': '1'})
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
     def test_unit_cache_storage(self):
         script = ROOT / 'bend2/test/compiler/unit_cache_storage.ts'

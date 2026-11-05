@@ -92,6 +92,26 @@ class ExtractSegmentsTests(unittest.TestCase):
         self.assertLessEqual(max(loads) - min(loads), max(len(s.text.encode()) for s in blocks))
 
 
+class ScanItemsTests(unittest.TestCase):
+    def test_strings_comments_and_dialect_tokens_keep_item_bounds(self) -> None:
+        text = (
+            "#define A 1\n"
+            "static const char *s = \"};\\\"{\";\n"
+            "/* ; } */ int f(void) { return '}'; }\n"
+            "void g(void) { WL_SPIN x = 1; WL_SPUN }\n"
+            "A32_LOOP(add, x + 1)\n"
+            "// trailing ;\n"
+        )
+        items = [(item.kind, item.text) for item in shard.scan_items(text)]
+        self.assertEqual(items, [
+            ("directive", "#define A 1\n"),
+            ("code", 'static const char *s = "};\\"{";'),
+            ("code", "int f(void) { return '}'; }\n"),
+            ("code", "void g(void) { WL_SPIN x = 1; WL_SPUN }\n"),
+            ("a32_loop", "A32_LOOP(add, x + 1)"),
+        ])
+
+
 class TemplateConditionalTests(unittest.TestCase):
     def test_unclosed_host_guard_is_dropped(self) -> None:
         tail = (

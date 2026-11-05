@@ -18,6 +18,30 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    'd83954b9d58b0be7387365bb88b26cd9543f7cb12ffa6f97c10a5e8da74c0d31': {
+        'name': 'Bend 2.0.25 with @unsafe calls compared by their arguments',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'bcf4db2ba37eed73eeb01b7a97c83278ea9c653f',
+        'source_tree': '4781b376ace94411f549e4d546f7ef8357a8cce9',
+        'source_lock_sha256': '95873b5a1b2d10b8882f7b519f59d3084e7c584e8d6f9c3a13d6901f27000990',
+        'source_manifest_sha256': '98d7fffb4bff43cc274d35f1fdabbd822ee0013bfd4a23337b731718aa5e531b',
+        'source_metadata_sha256': 'eef1dfe2266b4f7919fb67c29879f665d7da59314b07912c91087008f320eb82',
+        'source_input_count': 84,
+    },
+    '73f56cb6523cea699cd43664a7231233b0d2076b74bf2be4edb680dc4fd79dcd': {
+        'name': 'Bend 2.0.25 with whole-Baton coordinator C generation optimizations',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'c2aa4f7a2a101cdaf470efb6e7fff976b7e740ff',
+        'source_tree': '5900b3789288fbaf0f0daa2e03dd9ca7c1032d34',
+        'source_lock_sha256': 'ff0c2af616658496a345c4c3f7667007805864017b09dcc46a1e2b8f390fa0ab',
+        'source_manifest_sha256': 'dd77368321ae395c18ab2070e8556d813b712122b07f0ed47e7d73792f2a2703',
+        'source_metadata_sha256': '3b6b072bfb8a957bc2181975b710bfac1401135c130de6ebf089c79813ed7025',
+        'source_input_count': 84,
+    },
     '95a6ad2b7798aa4400cc1a78ba61970aab4f749d617323a15a6eabe373be541c': {
         'name': 'Bend 2.0.25 with facts-only unit output retention',
         'official_release_artifact': False,
@@ -40,6 +64,18 @@ COMPILER_ARCHIVES = {
         'source_lock_sha256': '630bc87aa6a2bbcfdb0c070d209d7e1d3943107b3a52b6e2968309d952aba349',
         'source_manifest_sha256': '3c1ff6bed39349b49504f90a5a8d2286b55fd2adbd972680af4ca6561dc4bcb2',
         'source_metadata_sha256': 'ef084b786ff041fc2f0f7e4985da45754233ebb692794abed2bfbbda93cd70b9',
+        'source_input_count': 84,
+    },
+    '9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23': {
+        'name': 'Bend 2.0.25 with nested literal rows, linear table names, fragment digest comparison and admission at the processor limit',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'd1bbe3d2a3ff4974068e71df0a7e9936d53e775d',
+        'source_tree': 'daefeca145da0c0d094c2a3e870ab5bfae78e896',
+        'source_lock_sha256': '4abcb7bfe1535fb1e274c99c1ace67eb82ccecf6eec0c869ede207c37c0aeb8c',
+        'source_manifest_sha256': '415c5735b111b3507259aa93e53b364d68ac653bbb1e3fe4a5df77ba24f928fd',
+        'source_metadata_sha256': '314ca76d185aa51f8381dfc520819bce787216bbd8f16ea09890c10fe50ad5c5',
         'source_input_count': 84,
     },
     'd942170807fdfacc078792110e76e00a1e2b5076524ac043bf6f8534652c284d': {

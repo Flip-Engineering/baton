@@ -1,5 +1,4 @@
 import Base
-import ./agent-guidance.bend as AgentGuidance
 import ./agent-input.bend as AgentInput
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
@@ -21,6 +20,7 @@ import ../host/log-checkpoint.bend as Checkpoint
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
 import ../host/process.bend as P
+import ../host/files.bend as F
 import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
 import ../harness/claude-player.bend as Claude
@@ -56,11 +56,6 @@ def remember(+previous: String, result: Result<&1,&1,U32 & String,String>) -> St
   match result:
     case Fail{error}: Bool.pick(String,String.is_empty(previous),error_text(error),previous)
     case Done{value}: previous
-
-def remember_write(previous: String, result: Result<&1,&1,U32 & String,Unit>) -> String:
-  match result:
-    case Fail{error}: remember(previous,Fail{error})
-    case Done{unit}: previous
 
 def append_error(+previous: String, +next: String) -> String:
   Bool.pick(String,String.is_empty(next),previous,Bool.pick(String,String.is_empty(previous),next,previous ++ "\n" ++ next))
@@ -237,19 +232,34 @@ def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
-    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ AgentGuidance.actions() ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Baton records delivery and complete reads internally. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Use baton inbox to read complete input, baton report \"text\" to report progress, and baton ask \"question\" to reach your coordinator. Use baton send PLAYER \"text\" to send a report and baton guide PLAYER \"text\" to send guidance. Use baton finish \"summary\" when the assignment is ready; your coordinator confirms it with baton confirm PLAYER. Baton records delivery and complete reads internally. Direct operator instructions and explicit stops remain effective.\n" ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Baton records delivery and complete reads internally. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
 
 # Failure reports are committed while this invocation still owns the session.
 # finish delivers the settled turn to its recorded coordinator.
+def recovery_observe(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{+event,status,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
+
+def refusal_observed(+db: String, +player: String, +id: String, +event: String) -> IO(Unit):
+  do IO<Unit>:
+    observed : Unit <- AgentInput.rr_observe(db,player,id,event)
+    advanced : Unit <- AgentInput.rr_after_turn(db,player,id,event)
+    IO.pure(Unit,Unit{})
+
+def recovery_after(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{+event,status,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
+
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    AgentInput.record_initial_reads(db,player,id)
+    reads : Unit <- AgentInput.record_initial_reads(db,player,id)
+    recovery_observe(db,player,id,outcome)
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
@@ -283,10 +293,12 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
             output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
             T.Text.control_output(output))
 
-def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish(+db: String, +player: String, +id: String, log: String, +outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),quiet)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),quiet)
+    recovered : Unit <- recovery_after(db,player,id,outcome)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
 
 def status_text(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:
@@ -397,6 +409,11 @@ def codex_span_commit(+db: String, spool: String, offset: String, length: String
       committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_span(db,spool,offset,length,sql)
       Store.publish_after_commit(db,committed)
 
+def codex_span_busy_again(result: Result<&1,&1,U32 & String,String>, again: (@+db: String -> @+spool: String -> @+offset: String -> @+length: String -> @+sql: String -> IO(Result<&1,&1,U32 & String,String>)), +db: String, +spool: String, +offset: String, +length: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),Store.busy(code),again(db,spool,offset,length,sql),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
+    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
 # The span writer retries SQLITE_BUSY and SQLITE_LOCKED for the held-writer
 # failure recorded in #1054, instance B2.
 @unsafe
@@ -404,7 +421,7 @@ def codex_span_write(+db: String, +spool: String, +offset: String, +length: Stri
   do IO<Result<&1,&1,U32 & String,String>>:
     ensured : Result<&1,&1,U32 & String,String> <- DB.Sql.ensure_projection(db,C.schema())
     result : Result<&1,&1,U32 & String,String> <- codex_span_commit(db,spool,offset,length,sql,ensured)
-    Store.busy_again(result,unit => codex_span_write(db,spool,offset,length,sql))
+    codex_span_busy_again(result,codex_span_write,db,spool,offset,length,sql)
 
 def codex_span_observe_fields(+db: String, +player: String, +id: String, +spool: String, +offset: String, +length: String, +message_value: String, +terminal_value: String, sealed: Bool) -> IO(String):
   do IO<String>:
@@ -429,9 +446,6 @@ def codex_span_finished_event_span(db: String, span: Maybe<Frame.FrameSpan>, +te
     case None{}: do IO<String>:
       value : String <- IO.try(String,DB.Sql.query(db,codex_span_result_sql("NULL",C.q(terminal))))
       IO.pure(String,Tx.trim_nl(value))
-
-def codex_span_finished_event(db: String, +message: String, +terminal: String) -> IO(String):
-  codex_span_finished_event_span(db,Frame.span_of(message),terminal)
 
 def codex_span_finished_dispatch(+db: String, +player: String, +id: String, span: Maybe<Frame.FrameSpan>, +terminal: String, sealed: Bool) -> IO(String):
   match span:
@@ -1227,13 +1241,13 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,written)))
       +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
       +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
-      +forwarded_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant),"",monitor)
+      +forwarded_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,drained,spool,Bool.and(String.eq(harness,"omp\n"),relevant),"",monitor)
       +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
       +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
       +terminal_frame : Bool <- primary_terminal(db,event,"",False{})
       +settled : Bool <- IO.pure(Bool,Bool.or(Bool.not(String.is_empty(terminal)),terminal_frame))
       +claude_mode : String <- IO.pure(String,Guidance.claude_mode(claude,settled,Guidance.background_live(activity)))
-      +next_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,forwarded_cursor,Bool.and(claude,settled),claude_mode,monitor)
+      +next_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,forwarded_cursor,spool,Bool.and(claude,settled),claude_mode,monitor)
       +admitted : Bool <- terminal_admitted(db,event,next_primary,terminal_frame,String.eq(harness,"muse\n"))
       +state : String <- completion_state_event(db,id,player,event,Bool.and(admitted,Bool.not(sealed)))
       +observation_sealed : Bool <- IO.pure(Bool,terminal_observation_sealed(sealed,terminal_frame,admitted,state))
@@ -1445,7 +1459,7 @@ def retained_profile_arguments(omp: Bool, claude: Bool, muse: Bool, binding: Lis
     case True{}: Claude.argv_profile(binding,cmd,model,effort,native,String.is_empty(native))
     case False{}: retained_profile_other(omp,muse,binding,override,cmd,model,effort,sessions,prompt_file,native,completion_extension)
 
-def omp_completion_asset(+helper: String, +name: String) -> String:
+def helper_asset(+helper: String, +name: String) -> String:
   Subs.directory_of(helper) ++ "/" ++ name
 
 def omp_completion_extension(omp: Bool, +executable: String) -> IO(String):
@@ -1453,10 +1467,68 @@ def omp_completion_extension(omp: Bool, +executable: String) -> IO(String):
     case False{}: IO.pure(String,"")
     case True{}: do IO<String>:
       helper : String <- IO.try(String,HostControl.Control.agent_helper(executable))
-      IO.pure(String,omp_completion_asset(helper,"omp-completion.mjs"))
+      IO.pure(String,helper_asset(helper,"omp-completion.mjs"))
 
 def omp_completion_arguments(+arguments: String, omp: Bool, +extension: String) -> String:
   Bool.pick(String,omp,P.argv(List.append(&1,String,Tx.split_nul(arguments),Omp.completion_extension_args(extension))),arguments)
+
+# Every Claude Code process receives the pinned agent_summary preload in BUN_OPTIONS (#1338).
+# The script sits beside the other agent helpers. Bun refuses to start when a named preload
+# is missing, so a launch names the preload only when the file is present; the seat-start
+# check reports a missing preload as a finding and the seat still starts.
+def claude_preload_present(path: String, found: Result<&1,&1,U32 & String,String>) -> String:
+  match found:
+    case Done{kind}: Bool.pick(String,String.eq(kind,"1"),path,"")
+    case Fail{error}: ""
+
+def claude_preload_path(helper: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match helper:
+    case Fail{error}: IO.pure(String,"")
+    case Done{+script}: do IO<String>:
+      +path : String <- IO.pure(String,helper_asset(script,"no-agent-summary.js"))
+      found : Result<&1,&1,U32 & String,String> <- F.Files.regular(path)
+      IO.pure(String,claude_preload_present(path,found))
+
+def inherited_options(read: Result<&1,&1,U32 & String,String>) -> String:
+  match read:
+    case Done{value}: value
+    case Fail{error}: ""
+
+def claude_environment(+executable: String) -> IO(List<String>):
+  do IO<List<String>>:
+    helper : Result<&1,&1,U32 & String,String> <- HostControl.Control.agent_helper(executable)
+    preload : String <- claude_preload_path(helper)
+    inherited : Result<&1,&1,U32 & String,String> <- IO.get_env("BUN_OPTIONS")
+    IO.pure(List<String>,Claude.environment(inherited_options(inherited),preload))
+
+def claude_environment_if(claude: Bool, +executable: String) -> IO(List<String>):
+  match claude:
+    case False{}: IO.pure(List<String>,Nil{})
+    case True{}: claude_environment(executable)
+
+# Every Claude Code launch, fresh or resumed, starts the preload check in a detached process
+# (agent-summary-check.mjs seat-start), so a Claude Code update between two turns is checked
+# at the next launch. The check writes its report into the attempt directory and records each
+# finding on the seat once; its result never decides the launch. The direct turn path has no
+# attempt directory, so it passes an empty one and the check writes no report file.
+def claude_seat_check_directory(directory: String) -> List<String>:
+  match directory:
+    case "": Nil{}
+    case other: ["--directory",other]
+
+def claude_seat_check_run(helper: Result<&1,&1,U32 & String,String>, +executable: String, +database: String, +player: String, +cmd: String, +directory: String) -> IO(Unit):
+  match helper:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{+script}: do IO<Unit>:
+      ran : G.RunRes <- GitProc.runFull(List.append(&1,String,["node",helper_asset(script,"agent-summary-check.mjs"),"seat-start","--claude",cmd],List.append(&1,String,claude_seat_check_directory(directory),["--database",database,"--session",player,"--coordinator",executable])),".")
+      IO.pure(Unit,Unit{})
+
+def claude_seat_check(claude: Bool, +executable: String, +database: String, +player: String, +cmd: String, +directory: String) -> IO(Unit):
+  match claude:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      helper : Result<&1,&1,U32 & String,String> <- HostControl.Control.agent_helper(executable)
+      claude_seat_check_run(helper,executable,database,player,cmd,directory)
 
 def retained_identity_prefix(model: String, identity: String & String) -> String:
   (registry,helper)=identity
@@ -1609,7 +1681,9 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         +bridge : String <- dsh_worker_helper(dsh,executable)
         prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort,dsh_hooks_path(bridge))
         completion_extension : String <- omp_completion_extension(omp,executable)
-        +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge]) ++ identity_prefix(parts))
+        claude_entries : List<String> <- claude_environment_if(claude,executable)
+        seat_checked : Unit <- claude_seat_check(claude,executable,absolute_db,player,cmd,directory)
+        +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],claude_entries)) ++ identity_prefix(parts))
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
         history : String <- current_history(db,player)
@@ -1683,10 +1757,23 @@ def direct_retained(+db: String, +player: String, +directory: String, +cmd: Stri
     prepared : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,True{},"")
     direct_retained_prepared(db,player,directory,cwd,prompt,lock,recovery,prepared)
 
-def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+def claude_launch(entries: List<String>, cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
-    case True{}: Claude.start_player(cmd,model,effort,cwd,stderr)
-    case False{}: Claude.resume_player(cmd,model,effort,cwd,stderr,session)
+    case True{}: Claude.start_player(entries,cmd,model,effort,cwd,stderr)
+    case False{}: Claude.resume_player(entries,cmd,model,effort,cwd,stderr,session)
+
+def claude_launch_entries(executable: Result<&1,&1,U32 & String,String>, db: String, player: String, cmd: String) -> IO(List<String>):
+  match executable:
+    case Fail{error}: IO.pure(List<String>,Nil{})
+    case Done{+path}: do IO<List<String>>:
+      checked : Unit <- claude_seat_check(True{},path,db,player,cmd,"")
+      claude_environment(path)
+
+def claude_launch_configured(db: String, player: String, +cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    executable : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
+    entries : List<String> <- claude_launch_entries(executable,db,player,cmd)
+    claude_launch(entries,cmd,model,effort,cwd,stderr,session,fresh)
 
 def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, task: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
@@ -1759,7 +1846,7 @@ def launch(+db: String, +player: String, sessions: String, +cmd: String, +model:
     agy_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
     Codex.start_player(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
-    claude_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)))))))
+    claude_launch_configured(db,player,cmd,model,effort,cwd,stderr,session,String.is_empty(session)))))))
 
 # The state the workspace holds when a turn restarts: the work an interrupted
 # turn had already written.
@@ -1845,11 +1932,6 @@ def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: S
     child : Result<&1,&1,U32 & String,U32> <- launch(db,player,sessions,cmd,model,effort,cwd,stderr,native,harness,log,task)
     first : Outcome <- started(db,player,id,log,prompt,harness,child)
     supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,stderr,prompt,first)
-
-def task_read(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, sessions: String, result: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
-  match result:
-    case Fail{error}: IO.pure(Outcome,Ended{"input failed","","Player task could not be read: " ++ error_text(error),True{}})
-    case Done{prompt}: supervise(db,player,id,cmd,model,effort,cwd,task,log,session,harness,sessions,prompt)
 
 def replay_result(result: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Maybe<Outcome>>:
   match result:

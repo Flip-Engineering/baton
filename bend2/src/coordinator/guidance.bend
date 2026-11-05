@@ -5,6 +5,7 @@ import ../coordinator/message-status.bend as Status
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../host/text.bend as Text
+import ../host/jsonl-last.bend as JsonlLast
 import ../git/text.bend as Tx
 
 import ./../coordinator/frame-span.bend as Frame
@@ -136,6 +137,53 @@ def background_after(+db: String, decoded: Frame.FrameDecoded, previous: String,
 def background_live(state: String) -> Bool:
   String.eq(state,"1")
 
+# The latest task list in the retained stdout, read from the file so that an
+# observer which did not see the earlier frames (a recovery observer replaying
+# from its checkpoint) closes on the native's current list and not on a list it
+# passed on the way. The read scans the file backward from its end and stops at
+# the latest list, so it covers the frames from that list to the end of the file;
+# only frames that name background_tasks_changed or hold a JSON \u escape are
+# parsed, and the parse decides which of them is a list. The result is '0'
+# when the list names no task, '1' when it names tasks, 'none' when no list was
+# ever written and '?' when the file or its last list cannot be read.
+# A native without a retained stdout file (the direct path) has no path to read;
+# its observer state is the only record, so the result is 'none'.
+def spool_list_sql() -> String:
+  "SELECT CASE WHEN json_extract(?1,'$.type')='system' AND json_extract(?1,'$.subtype')='background_tasks_changed' THEN 1 ELSE 0 END"
+
+def spool_background_value(+value: String) -> String:
+  Bool.pick(String,String.is_empty(value),"?",value)
+
+def spool_background_text(read: Result<&1,&1,U32 & String,String>) -> String:
+  match read:
+    case Fail{error}: "?"
+    case Done{text}: spool_background_value(Tx.trim_nl(text))
+
+def spool_background_frame(+db: String, frame: String) -> IO(String):
+  do IO<String>:
+    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,background_sql(C.q(frame)))
+    IO.pure(String,spool_background_text(read))
+
+def spool_background_listed(+db: String, +frame: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(frame),IO.pure(String,"none"),spool_background_frame(db,frame))
+
+def spool_background_found(+db: String, found: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match found:
+    case Fail{error}: IO.pure(String,"?")
+    case Done{+frame}: spool_background_listed(db,frame)
+
+def spool_background_read(+db: String, spool: String) -> IO(String):
+  do IO<String>:
+    found : Result<&1,&1,U32 & String,String> <- JsonlLast.Jsonl.read_last(spool,"background_tasks_changed",spool_list_sql())
+    spool_background_found(db,found)
+
+def spool_background(+db: String, +spool: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(spool),IO.pure(String,"none"),spool_background_read(db,spool))
+
+# Stdin closes only when the stdout file agrees with the observer's state.
+def background_clear(+state: String) -> Bool:
+  Bool.or(String.eq(state,"0"),String.eq(state,"none"))
+
 # Forwards every owed message while stdin is open; a closed stdin forwards none.
 @unsafe
 def forward_all(+db: String, +player: String, +handle: U32, +attempt: String, +cursor: String) -> IO(String):
@@ -144,13 +192,19 @@ def forward_all(+db: String, +player: String, +handle: U32, +attempt: String, +c
     +next : String <- pending_live(db,player,handle,attempt,cursor,closed)
     Bool.pick(IO(String),String.eq(next,cursor),IO.pure(String,cursor),forward_all(db,player,handle,attempt,next))
 
-# Monitor observers preserve input ownership and never close stdin.
-def close_open(+handle: U32, monitor: Bool) -> IO(Unit):
+def close_confirmed(+db: String, +spool: String, +handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    state : String <- spool_background(db,spool)
+    Bool.pick(IO(Unit),background_clear(state),IO.try(Unit,P.ProcessChild.close_stdin(handle)),IO.pure(Unit,Unit{}))
+
+# Monitor observers preserve input ownership and never close stdin. Other
+# observers close an open stdin once the stdout file's latest task list is empty.
+def close_open(+db: String, +spool: String, +handle: U32, monitor: Bool) -> IO(Unit):
   match monitor:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
-      Bool.pick(IO(Unit),U32.is_eq(closed,0),IO.try(Unit,P.ProcessChild.close_stdin(handle)),IO.pure(Unit,Unit{}))
+      Bool.pick(IO(Unit),U32.is_eq(closed,0),close_confirmed(db,spool,handle),IO.pure(Unit,Unit{}))
 
 def continued_plain(db: String, player: String, +handle: U32, +attempt: String, cursor: String, ended: Bool, monitor: Bool) -> IO(String):
   match ended:
@@ -163,12 +217,12 @@ def continued_plain(db: String, player: String, +handle: U32, +attempt: String, 
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
       pending_live(db,player,handle,attempt,cursor,closed)
 
-def continued(db: String, player: String, +handle: U32, +attempt: String, +cursor: String, ended: Bool, mode: String, monitor: Bool) -> IO(String):
+def continued(+db: String, player: String, +handle: U32, +attempt: String, +cursor: String, +spool: String, ended: Bool, mode: String, monitor: Bool) -> IO(String):
   match mode:
     case "hold": forward_all(db,player,handle,attempt,cursor)
     case "drain": do IO<String>:
       +drained : String <- forward_all(db,player,handle,attempt,cursor)
-      shut : Unit <- close_open(handle,monitor)
+      shut : Unit <- close_open(db,spool,handle,monitor)
       IO.pure(String,drained)
     case other: continued_plain(db,player,handle,attempt,cursor,ended,monitor)
 
@@ -192,25 +246,25 @@ def terminal_sql(+value: String) -> String:
 def terminal_span_sql(+value: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal_span(value) ++ " THEN 1 ELSE 0 END;"
 
-def observe_text(+db: String, +player: String, handle: U32, +attempt: String, +line: String, +cursor: String, mode: String, monitor: Bool) -> IO(String):
+def observe_text(+db: String, +player: String, handle: U32, +attempt: String, +line: String, +cursor: String, +spool: String, mode: String, monitor: Bool) -> IO(String):
   do IO<String>:
     ended : String <- IO.try(String,DB.Sql.query(db,terminal_sql(line)))
-    continued(db,player,handle,attempt,cursor,String.eq(ended,"1\n"),mode,monitor)
+    continued(db,player,handle,attempt,cursor,spool,String.eq(ended,"1\n"),mode,monitor)
 
 def observe_span(+db: String, +player: String, handle: U32, +attempt: String, +spool: String, +offset: String, +length: String, +cursor: String, mode: String, monitor: Bool) -> IO(String):
   do IO<String>:
     ended : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,terminal_span_sql("?1")))
-    continued(db,player,handle,attempt,cursor,String.eq(ended,"1\n"),mode,monitor)
+    continued(db,player,handle,attempt,cursor,spool,String.eq(ended,"1\n"),mode,monitor)
 
-def observe_decoded(+db: String, +player: String, handle: U32, +attempt: String, decoded: Frame.FrameDecoded, cursor: String, mode: String, monitor: Bool) -> IO(String):
+def observe_decoded(+db: String, +player: String, handle: U32, +attempt: String, decoded: Frame.FrameDecoded, cursor: String, +stdout: String, mode: String, monitor: Bool) -> IO(String):
   match decoded:
-    case Frame.TextFrame{line}: observe_text(db,player,handle,attempt,line,cursor,mode,monitor)
+    case Frame.TextFrame{line}: observe_text(db,player,handle,attempt,line,cursor,stdout,mode,monitor)
     case Frame.SpanFrame{spool,offset,length}: observe_span(db,player,handle,attempt,spool,offset,length,cursor,mode,monitor)
     case Frame.InvalidFrame{line}: IO.pure(String,cursor)
 
 # Native responses remain in the observed stream. Terminal frames close stdin
 # for the process owner; monitor observers preserve input ownership.
-def observe(+db: String, +player: String, handle: U32, +attempt: String, decoded: Frame.FrameDecoded, +line: String, cursor: String, enabled: Bool, mode: String, monitor: Bool) -> IO(String):
+def observe(+db: String, +player: String, handle: U32, +attempt: String, decoded: Frame.FrameDecoded, +line: String, cursor: String, +stdout: String, enabled: Bool, mode: String, monitor: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,cursor)
-    case True{}: observe_decoded(db,player,handle,attempt,decoded,cursor,mode,monitor)
+    case True{}: observe_decoded(db,player,handle,attempt,decoded,cursor,stdout,mode,monitor)

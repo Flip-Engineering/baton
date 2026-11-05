@@ -206,3 +206,7 @@ sh bend2/scripts/build-native.sh bend2/test/account-credits.bend .scratch/bend2/
 .scratch/bend2/account-credits-test
 sh bend2/scripts/build-native.sh bend2/test/account-binding-smoke.bend .scratch/bend2/account-binding-smoke
 BATON2_ACCOUNT_BINDING_SMOKE="$root/.scratch/bend2/account-binding-smoke" BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/test/account-binding-smoke.py
+sh bend2/scripts/build-native.sh bend2/test/refusal-recovery-focused.bend .scratch/bend2/refusal-recovery-focused
+rm -f .scratch/bend2/refusal-recovery-focused.db
+.scratch/bend2/refusal-recovery-focused .scratch/bend2/refusal-recovery-focused.db
+BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/refusal-recovery.py

@@ -6,6 +6,8 @@ import pathlib
 import shutil
 import signal
 import sqlite3
+import struct
+import subprocess
 import sys
 import unittest
 
@@ -17,6 +19,16 @@ spec.loader.exec_module(receive)
 # Its socket commands establish process state before each stop or force request.
 FIXTURE = receive.FIXTURE.replace('import json,os,pathlib,re,socket,subprocess,sys',
                                  'import json,os,pathlib,re,signal,socket,subprocess,sys')
+FIXTURE = FIXTURE.replace("""    json.loads(sys.stdin.readline())
+    state=json.loads(sys.stdin.readline())
+    prompt=json.loads(sys.stdin.readline())['message']""", """    state=None
+    while True:
+        request=json.loads(sys.stdin.readline())
+        if request['type']=='get_state': state=request
+        if request['type']=='prompt':
+            prompt=request['message']
+            break
+    assert state is not None""", 1)
 FIXTURE = FIXTURE.replace('args=sys.argv[1:]', '''args=sys.argv[1:]
 if args[:1]==['tool_fixture']:
     connection=socket.create_connection(('127.0.0.1',config['port']))
@@ -70,9 +82,22 @@ FIXTURE = FIXTURE.replace(r"""        remaining_input=sys.stdin.read()
 
 
 class Stop(unittest.TestCase):
-    setUp = receive.Receive.setUp
+    def setUp(self):
+        receive.Receive.setUp(self)
+        origin = self.directory / 'origin.git'
+        subprocess.run(['git', 'clone', '--bare', str(self.repo), str(origin)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), 'remote', 'add', 'origin', str(origin)],
+                       check=True, capture_output=True)
+        (self.directory / 'omp').symlink_to(self.fixture)
+        private_home = self.directory / 'home'
+        private_home.mkdir()
+        self.environment = dict(os.environ, HOME=str(private_home))
+        self.environment.pop('BATON2_GIT_REGISTRY', None)
+
     close_children = receive.Receive.close_children
     owned_processes = receive.Receive.owned_processes
+    process_names = receive.Receive.process_names
     eventually = receive.Receive.eventually
     coord = receive.Receive.coord
     spawn = receive.Receive.spawn
@@ -222,6 +247,32 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.rows("SELECT phase,status FROM executions WHERE session='parent'"),
                          [{'phase': 'exited', 'status': 'signal 15'}])
         self.shutdown_idle_database_owner('restored custody left processes running')
+
+    def test_live_native_with_missing_control_endpoint_uses_owner_identity(self):
+        observer, stream, started = self.begin()
+        attempt_dir = pathlib.Path(self.rows(
+            "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
+        manifest = (attempt_dir / 'manifest').read_bytes()
+        self.assertIn(manifest[:8], (b'BATONRP1', b'BATONRP2'))
+        count = 8 if manifest[:8] == b'BATONRP2' else 6
+        header = struct.Struct(f'=8s{count}Q2I')
+        magic, *fields = header.unpack_from(manifest)
+        self.assertEqual(magic, manifest[:8])
+        lengths = fields[:count]
+        self.assertEqual(len(manifest), header.size + sum(lengths))
+        offset = header.size + sum(lengths[:5])
+        endpoint = pathlib.Path(os.fsdecode(manifest[offset:offset + lengths[5]]))
+        self.assertTrue(endpoint.exists())
+        endpoint.unlink()
+
+        stopped = self.stop()
+        self.assertEqual(stopped['status'], 'requested')
+        self.assertEqual(stopped['submittedSignal'], 15)
+        self.assertIsNone(stopped['controlError'])
+        self.finish(observer, ok=False)
+        completed = self.completed()
+        self.assertEqual(completed['nativeStatus'], 'signal 15')
+        self.shutdown_idle_database_owner('owner-verified stop left processes running')
 
     def test_live_owner_keeps_launch_window_stop_requested_until_custody_is_ready(self):
         observer, stream, started = self.begin(resist=True)

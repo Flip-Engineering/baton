@@ -8,6 +8,18 @@ import ../git/text.bend as Tx
 type IncludeScan is Data:
   IncludeScan{mode: U32, matched: U32, target: String, output: String}
 
+# A filesystem failure names the operation and the exact path it was applied to, and keeps the
+# error code and the underlying message, so a refused queue key says which file is missing.
+def failed_at(+operation: String, +path: String, result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
+  match result:
+    case Done{value}: Done{value}
+    case Fail{(+code,message)}: Fail{(code,operation ++ " " ++ path ++ ": " ++ message)}
+
+def with_path(operation: String, +path: String, act: IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- act
+    IO.pure(Result<&1,&1,U32 & String,String>,failed_at(operation,path,result))
+
 def first( +values: List<&2,String>) -> String:
   match values:
     case value <> rest: value
@@ -100,12 +112,18 @@ def mkdir_p( +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
     IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(22,"empty directory path")}),
     mkdir_parts(nonempty(String.split(path,Char.from_u32(47))),"",String.starts_with(path,"/")))
 
+def file_size_observed(observed: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
+  match observed:
+    case Fail{error}: Fail{error}
+    case Done{+record}:
+      Choice.choose(Result<&1,&1,U32 & String,String>,String.eq(observation_kind(record),"missing"),
+        _choice_unit => Fail{(2,"missing file")},
+        _choice_unit => Done{at(String.split(record,Char.from_u32(9)),3)})
+
 def file_size( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    +record : String <- IO.try(String,S.StorageHost.observe(path))
-    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(observation_kind(record),"missing"),
-      IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"missing file")}),
-      IO.pure(Result<&1,&1,U32 & String,String>,Done{at(String.split(record,Char.from_u32(9)),3)}))
+    observed : Result<&1,&1,U32 & String,String> <- S.StorageHost.observe(path)
+    IO.pure(Result<&1,&1,U32 & String,String>,file_size_observed(observed))
 
 # POSIX directory entry names never contain NUL, so a NUL-joined list
 # re-parses to the same names. Newline joining split newline-containing
@@ -237,10 +255,20 @@ def chunk_position(chunk: String & String) -> String:
   match chunk:
     case (text,next): next
 
+def chunk_failed(+path: String, +position: String, result: Result<&1,&1,U32 & String,String & String>) -> Result<&1,&1,U32 & String,String & String>:
+  match result:
+    case Done{chunk}: Done{chunk}
+    case Fail{(+code,message)}: Fail{(code,"read " ++ path ++ " at byte " ++ position ++ ": " ++ message)}
+
+def read_chunk(+path: String, +position: String) -> IO(Result<&1,&1,U32 & String,String & String>):
+  do IO<Result<&1,&1,U32 & String,String & String>>:
+    result : Result<&1,&1,U32 & String,String & String> <- F.Files.text_chunk(path,position)
+    IO.pure(Result<&1,&1,U32 & String,String & String>,chunk_failed(path,position,result))
+
 @unsafe
-def include_chunks(+path: String, position: String, +scan: IncludeScan) -> IO(Result<&1,&1,U32 & String,String>):
+def include_chunks(+path: String, +position: String, +scan: IncludeScan) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    +chunk : String & String <- IO.try(String & String,F.Files.text_chunk(path,position))
+    +chunk : String & String <- IO.try(String & String,read_chunk(path,position))
     +text : String <- IO.pure(String,chunk_text(chunk))
     next : String <- IO.pure(String,chunk_position(chunk))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(text),

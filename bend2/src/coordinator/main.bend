@@ -22,6 +22,7 @@ import ./ui-view.bend as UiView
 import ./control.bend as Control
 import ./stop-hook.bend as StopHook
 import ./wake.bend as Wake
+import ./drain-sweep.bend as DrainSweep
 import ./root-channel.bend as RootChannel
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
@@ -274,7 +275,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.Serve{}:
       IO.try(Unit,Instance.serve(db))
     case C.OwnerStatus{}:
-      IO.try(Unit,Instance.owner_status(db))
+      IO.try(Unit,Instance.owner_readiness(db))
     case C.Receive{+session,cmd,model,effort,cwd,log,+message}: do IO<Unit>:
       result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
       reported : Unit <- Receive.report_result(db,session,message,result)
@@ -286,11 +287,13 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       ran : Unit <- Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
       collected : Unit <- StoragePolicy.collect_settled(db,session)
       IO.pure(Unit, collected)
-    case C.ObserveFile{id,+player,path}:
+    case C.ObserveFile{+id,+player,path}:
       do IO<Unit>:
-        event : String <- IO.try(String,T.Text.read(path))
+        +event : String <- IO.try(String,T.Text.read(path))
         +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
         run(db,C.Observe{id,player,event,False{},Tx.trim_nl(harness)})
+        observed : Unit <- Turn.refusal_observed(db,player,id,event)
+        IO.pure(Unit,Unit{})
     case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
     case C.NativeReplyFile{parent,id,path}:
       do IO<Unit>:
@@ -495,9 +498,21 @@ def recover_cli(db: String, session: String, id: String, cursor: String, cmd: St
     case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
     case False{}: execute("",C.Invalid{})
 
+def instance_sweep_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--drain-sweep"),
+    DrainSweep.sweep(database),normal_cli([flag,database]))
+
+def instance_wait_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-wait"),
+    Custody.Instance.print_wait(database),instance_sweep_cli(database,flag))
+
+def instance_status_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-status"),
+    Custody.Instance.print_status(database),instance_wait_cli(database,flag))
+
 def instance_shutdown_cli(+database: String, +flag: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),
-    IO.try(Unit,Custody.Instance.shutdown(database)),normal_cli([flag,database]))
+    Custody.Instance.print_drain(database),instance_status_cli(database,flag))
 
 def instance_owner_cli(+database: String, +flag: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),
@@ -551,6 +566,8 @@ def legacy_cli(args: List<String>) -> IO(Unit):
       Wake.message_cli(db,id)
     case "--redeliver-message" <> +db <> +id <> Nil{}:
       Control.redeliver(db,id)
+    case "--drain-sweep-session" <> +db <> +session <> +generation <> Nil{}:
+      DrainSweep.sweep_one(db,session,generation)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:

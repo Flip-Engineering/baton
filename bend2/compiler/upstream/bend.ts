@@ -721,7 +721,22 @@ export function term_higher(tm: LTerm, env: Env = null): HTerm {
   return term_higher_inner(tm, env, { spans: new WeakMap(), ids: new WeakMap(), next: 0 });
 }
 
+// The last count results, removed from the stack, as the children array of a
+// Let, ADT or Ctr. A node with a fixed number of children pops them one by one.
+function higher_kids(results: HTerm[], count: number): HTerm[] {
+  const base = results.length - count;
+  const kids = results.slice(base);
+  results.length = base;
+  return kids;
+}
+
 function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm {
+  // A curried binder body is a lambda: build it without traversal stacks.
+  if (term.$ === "Lam") {
+    const b = term;
+    return Lam(b.k, b.i, (x: HTerm) =>
+      term_higher_inner(b.f, list_set(env, b.i, x), cache), b.s, b.q);
+  }
   // Binder callbacks retain the constructor cache and start a fresh traversal.
   type Task =
     | { visit: LTerm, env: Env }
@@ -738,11 +753,10 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
     }
     if ("build" in task) {
       const tm = task.build;
-      const kids = results.splice(results.length - task.count, task.count);
       switch (tm.$) {
         case "Let": {
           const b = tm;
-          results.push(Let(b.k, b.i, kids, (xs: HTerm[]) => {
+          results.push(Let(b.k, b.i, higher_kids(results, task.count), (xs: HTerm[]) => {
             let e = task.env;
             for (let j = 0; j < xs.length; j++) {
               e = list_set(e, b.i[j], xs[j]);
@@ -753,30 +767,63 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
         }
         case "All": {
           const b = tm;
-          results.push(All(b.q, b.k, b.i, kids[0], (x: HTerm) =>
+          const A = results.pop() as HTerm;
+          results.push(All(b.q, b.k, b.i, A, (x: HTerm) =>
             term_higher_inner(b.B, list_set(task.env, b.i, x), cache), b.s));
           break;
         }
-        case "Typ": results.push(Typ(kids[0], tm.s)); break;
-        case "Min": results.push(Min(kids[0], kids[1], tm.s)); break;
-        case "App": {
-          const f = kids[0];
-          results.push(f.$ === "Lam" ? f.f(kids[1]) : App(f, kids[1], tm.s));
+        case "Typ": {
+          const g = results.pop() as HTerm;
+          results.push(Typ(g, tm.s));
           break;
         }
-        case "ADT": results.push(ADT(tm.k, kids, tm.s, tm.r)); break;
-        case "Ctr": results.push(term_higher_ctr(tm, kids, cache)); break;
-        case "Mat": results.push(Mat(tm.k, kids[0], kids[1], tm.s)); break;
-        case "Eql": results.push(Eql(kids[0], kids[1], kids[2], tm.s)); break;
-        case "Rwt": results.push(Rwt(kids[0], kids[1], kids[2], tm.s)); break;
-        case "Ann": results.push(Ann(kids[0], kids[1], tm.s)); break;
+        case "Min": {
+          const b = results.pop() as HTerm;
+          const a = results.pop() as HTerm;
+          results.push(Min(a, b, tm.s));
+          break;
+        }
+        case "App": {
+          const x = results.pop() as HTerm;
+          const f = results.pop() as HTerm;
+          results.push(f.$ === "Lam" ? f.f(x) : App(f, x, tm.s));
+          break;
+        }
+        case "ADT": results.push(ADT(tm.k, higher_kids(results, task.count), tm.s, tm.r)); break;
+        case "Ctr": results.push(term_higher_ctr(tm, higher_kids(results, task.count), cache)); break;
+        case "Mat": {
+          const m = results.pop() as HTerm;
+          const h = results.pop() as HTerm;
+          results.push(Mat(tm.k, h, m, tm.s));
+          break;
+        }
+        case "Eql": {
+          const T = results.pop() as HTerm;
+          const b = results.pop() as HTerm;
+          const a = results.pop() as HTerm;
+          results.push(Eql(a, b, T, tm.s));
+          break;
+        }
+        case "Rwt": {
+          const f = results.pop() as HTerm;
+          const p = results.pop() as HTerm;
+          const e = results.pop() as HTerm;
+          results.push(Rwt(e, p, f, tm.s));
+          break;
+        }
+        case "Ann": {
+          const T = results.pop() as HTerm;
+          const x = results.pop() as HTerm;
+          results.push(Ann(x, T, tm.s));
+          break;
+        }
         default: throw new Error("term_higher build task for a leaf term");
       }
       continue;
     }
     const tm = task.visit;
     const here = task.env;
-    let kids: LTerm[] | null = null;
+    // Children are pushed after their build task, last child first.
     switch (tm.$) {
       case "Var": {
         if (tm.i < 0) {
@@ -817,30 +864,36 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
         }
         break;
       }
-      case "Let": kids = tm.v; break;
-      case "All": kids = [tm.A]; break;
+      case "Let": case "ADT": case "Ctr": {
+        const kids = tm.$ === "Let" ? tm.v : tm.x;
+        tasks.push({ build: tm, env: here, count: kids.length });
+        for (let i = kids.length - 1; i >= 0; i--) tasks.push({ visit: kids[i], env: here });
+        break;
+      }
+      case "All": tasks.push({ build: tm, env: here, count: 1 }, { visit: tm.A, env: here }); break;
       case "Lam": {
         const b = tm;
         results.push(Lam(b.k, b.i, (x: HTerm) =>
           term_higher_inner(b.f, list_set(here, b.i, x), cache), b.s, b.q));
         break;
       }
-      case "Typ": kids = [tm.g]; break;
+      case "Typ": tasks.push({ build: tm, env: here, count: 1 }, { visit: tm.g, env: here }); break;
       case "Qnt": case "Qua": case "Lit": results.push(tm); break;
-      case "Min": kids = [tm.a, tm.b]; break;
-      case "App": kids = [tm.f, tm.x]; break;
-      case "ADT": case "Ctr": kids = tm.x; break;
-      case "Mat": kids = [tm.h, tm.m]; break;
+      case "Min": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.b, env: here }, { visit: tm.a, env: here }); break;
+      case "App": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.x, env: here }, { visit: tm.f, env: here }); break;
+      case "Mat": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.m, env: here }, { visit: tm.h, env: here }); break;
       case "Efq": results.push(Efq(tm.s)); break;
-      case "Eql": kids = [tm.a, tm.b, tm.T]; break;
+      case "Eql":
+        tasks.push({ build: tm, env: here, count: 3 }, { visit: tm.T, env: here }, { visit: tm.b, env: here },
+          { visit: tm.a, env: here });
+        break;
       case "Rfl": results.push(Rfl(tm.s)); break;
-      case "Rwt": kids = [tm.e, tm.p, tm.f]; break;
+      case "Rwt":
+        tasks.push({ build: tm, env: here, count: 3 }, { visit: tm.f, env: here }, { visit: tm.p, env: here },
+          { visit: tm.e, env: here });
+        break;
       case "Hol": results.push(Hol(tm.k, tm.s)); break;
-      case "Ann": kids = [tm.x, tm.T]; break;
-    }
-    if (kids !== null) {
-      tasks.push({ build: tm, env: here, count: kids.length });
-      for (let i = kids.length - 1; i >= 0; i--) tasks.push({ visit: kids[i], env: here });
+      case "Ann": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.T, env: here }, { visit: tm.x, env: here }); break;
     }
   }
   return results[0];
@@ -1792,11 +1845,22 @@ export function term_show(term: LTerm, top: number = -1, bnd: Name[] = []): stri
   return go(term, top);
 }
 
+// The book an error message normalizes with. An @unsafe definition stays a call
+// in the message: normalizing a self-recursive one would never produce the message.
+function book_for_message(book: Book): Book {
+  const tlds: Record<Name, TLD> = Object.create(null);
+  for (const k of Object.keys(book.tlds)) {
+    const t = book.tlds[k];
+    tlds[k] = t.$ === "Def" && t.u === true ? { ...t, v: null } : t;
+  }
+  return { ...book, tlds };
+}
+
 export function expr_show(book: Book, x: Expr, bnd: Name[] = []): string {
   if (typeof x === "string") {
     return x;
   } else {
-    const t = term_lower(term_snf(book, x), bnd.length);
+    const t = term_lower(term_snf(book_for_message(book), x), bnd.length);
     return term_show(t, -1, bnd);
   }
 }
@@ -3185,15 +3249,79 @@ function literal_binders(rows: Rows): PVar[] {
   return binders;
 }
 
+// The binder i among the pattern q, and q with that binder replaced by r.
+function patt_binder(q: Patt, i: number): PVar | null {
+  if (q.$ === "PVar") return q.i === i ? q : null;
+  for (const x of q.x) {
+    const found = patt_binder(x, i);
+    if (found !== null) return found;
+  }
+  return null;
+}
+function patt_put(q: Patt, i: number, r: Patt): Patt {
+  if (q.$ === "PVar") return q.i === i ? r : q;
+  return patt_binder(q, i) === null ? q : { ...q, x: q.x.map((x) => patt_put(x, i, r)) };
+}
+
+// A row whose body is a match on one variable, with one pattern per row and a
+// binder row last, becomes one row per nested row, so that literal_leaf binds no
+// binder that a row body matches again. When the variable is a binder of the row's
+// own patterns, each nested row's pattern takes the binder's place and the nested
+// body reads the matched value as that pattern (a final binder row keeps the
+// binder, with the joined + mark). When it is a pending binder that no column of
+// the match holds, it gains a column after the first, in binder order, where the
+// nested rows put their patterns and every other row binds it. The nested rows
+// refine the row in order and the binder row ends them, so the first row that
+// matches a value selects the body the nested match selected.
+function literal_lift(m: Match, vars: PVar[]): Match {
+  let e = m.e;
+  const out: Rows = [], todo = [...m.r].reverse();
+  const widen = (rows: Rows, at: number, y: PVar): Rows => {
+    const bind: PVar = { $: "PVar", k: y.k, i: y.i, q: Lone(), s: y.s };
+    return rows.map((row): Case => ({ ...row, p: [...row.p.slice(0, at), bind, ...row.p.slice(at)] }));
+  };
+  while (todo.length > 0) {
+    const row = todo.pop()!, f = row.f;
+    const nested = f.$ === "Match" && f.e.length === 1 && f.e[0].$ === "Var" && f.r.length > 1
+      && f.r.every((n) => n.p.length === 1) && f.r[f.r.length - 1].p[0].$ === "PVar" ? f : null;
+    if (nested === null) { out.push(row); continue; }
+    const i = (nested.e[0] as Extract<LTerm, { $: "Var" }>).i;
+    const col = row.p.findIndex((q) => patt_binder(q, i) !== null);
+    let rows: Rows;
+    if (col >= 0) {
+      const x = patt_binder(row.p[col], i)!;
+      rows = nested.r.map((n): Case => {
+        const q = n.p[0];
+        const r: Patt = q.$ === "PVar" ? { ...x, q: quant_join(x.q, q.q) } : q;
+        return { p: row.p.map((p, j) => j === col ? patt_put(p, i, r) : p),
+          f: q.$ === "PVar" ? body_sub(n.f, q.i, r) : body_sub(n.f, i, r), g: row.g };
+      });
+    } else {
+      const y = vars.find((u) => u.i === i);
+      if (y === undefined || e.some((t) => t.$ === "Var" && t.i === i)) { out.push(row); continue; }
+      const rank = (t: LTerm): number => t.$ === "Var" ? vars.findIndex((u) => u.i === t.i) : -1;
+      let at = 1;
+      while (at < e.length && rank(e[at]) >= 0 && rank(e[at]) < vars.indexOf(y)) at += 1;
+      e = [...e.slice(0, at), Var(y.k, y.i, y.s), ...e.slice(at)];
+      out.splice(0, out.length, ...widen(out, at, y));
+      todo.splice(0, todo.length, ...widen(todo, at, y));
+      rows = nested.r.map((n): Case => ({ p: [...row.p.slice(0, at), n.p[0], ...row.p.slice(at)], f: n.f, g: row.g }));
+    }
+    for (let j = rows.length - 1; j >= 0; j--) todo.push(rows[j]);
+  }
+  return e === m.e && out.length === m.r.length && out.every((row, j) => row === m.r[j]) ? m : { ...m, e, r: out };
+}
+
 // v heads a column of string literal and binder patterns. Null keeps the
 // ordinary lowering: a row that matches a binder again (literal_leaf binds every
-// remaining binder before the row bodies), a literal row that calls the
-// definition itself and uses the matched value (the value would stand where the
-// character decision tree had the literal), or an affine value that a binder row
-// could use more than once.
-function literal_guards(m: Match, v: PVar, vars: PVar[], fr: () => number): LTerm | null {
+// remaining binder before the row bodies, and literal_lift removes the matches it
+// can), a literal row that calls the definition itself and uses the matched value
+// (the value would stand where the character decision tree had the literal), or
+// an affine value that a binder row could use more than once.
+function literal_guards(m0: Match, v: PVar, vars: PVar[], fr: () => number): LTerm | null {
   const known = LITERAL_COLUMNS;
   if (known === null) return null;
+  const m = literal_lift(m0, vars);
   if (m.r.some((row) => row.p[0].$ === "PCtr" && (row.p[0] as PCtr).lit === undefined)) return null;
   const binders = literal_binders(m.r);
   if (m.r.some((row) => body_matches(row.f, [...vars, ...binders]))) return null;
@@ -3569,6 +3697,8 @@ function literal_chain_list_helpers(p: Parse, b: Extract<Body, { $: "Match" }>,
     || p.book.ctrs["Con"] === undefined || p.book.ctrs["Nil"] === undefined) {
     return null;
   }
+  // A helper body is flattened with no pending binder, so it cannot match one.
+  if (b.r.some((row) => body_matches(row.f, literal_binders([row])))) return null;
   const frames = (q: Patt): { heads: Patt[]; rest: PVar | null } | null => {
     const heads: Patt[] = [];
     let cur: Patt = q;
@@ -3786,7 +3916,7 @@ function literal_list_rows(p: Parse, b: Match, def: Def, k: Name,
   let literals = 0;
   for (const row of b.r) {
     if (row.p.length !== 1 || lit_body_refs(row.f, k)
-      || lit_body_uses(row.f, all.i)) return null;
+      || lit_body_uses(row.f, all.i) || body_matches(row.f, literal_binders([row]))) return null;
     const heads: Patt[] = [];
     let tail = row.p[0];
     while (tail.$ === "PCtr" && tail.k === "Con" && tail.x.length === 2) {
@@ -4178,10 +4308,57 @@ export function term_snf(book: Book, term: HTerm): HTerm {
 // The last child of a node is compared by the loop: a string or list in constructor
 // form, a chain of matches or a body under binders is compared at a fixed stack depth,
 // and only the earlier children recurse. The children are compared in the same order.
+// The definition a call names, read without evaluating the call.
+function term_call_head(term: HTerm): Name | null {
+  let head = term;
+  while (head.$ === "App") {
+    head = head.f;
+  }
+  return head.$ === "Ref" ? head.k : null;
+}
+
+// The arguments of a call, in order.
+function term_call_args(term: HTerm): HTerm[] {
+  const args: HTerm[] = [];
+  let head = term;
+  while (head.$ === "App") {
+    args.push(head.x);
+    head = head.f;
+  }
+  return args.reverse();
+}
+
+// Compares two saturated calls of one @unsafe definition by their arguments. An
+// @unsafe definition can recurse without end, also under a lambda, so unfolding it
+// may never answer. Equal arguments answer true and unequal arguments answer false;
+// null means these are not such calls and the comparison continues by unfolding.
+function term_compare_unsafe_calls(book: Book, lhs: HTerm, rhs: HTerm, dep: number): boolean | null {
+  const k = term_call_head(lhs);
+  if (k === null || k !== term_call_head(rhs)) {
+    return null;
+  }
+  const def = book.tlds[k];
+  if (def === undefined || def.$ !== "Def" || def.u !== true || def.v === null) {
+    return null;
+  }
+  const a = term_call_args(lhs);
+  const b = term_call_args(rhs);
+  if (a.length !== b.length || a.length < def.n) {
+    return null;
+  }
+  return a.every((arg, i) => term_compare("EQ", book, arg, b[i], dep));
+}
+
 export function term_compare(mode: "EQ" | "LE", book: Book, lhs: HTerm, rhs: HTerm, dep: number = 0): boolean {
   for (;;) {
     if (lhs === rhs) {
       return true;
+    }
+    if (lhs.$ === "App" && rhs.$ === "App") {
+      const calls = term_compare_unsafe_calls(book, lhs, rhs, dep);
+      if (calls !== null) {
+        return calls;
+      }
     }
     let a = term_wnf(book, lhs);
     let b = term_wnf(book, rhs);

@@ -3,6 +3,8 @@
 # Claude and Codex argv one argument per line.
 import Base
 import ../src/coordinator/stop-hook.bend as StopHook
+import ../src/coordinator/claude-input-evidence.bend as ClaudeEvidence
+import ../src/coordinator/native-input.bend as NativeInput
 import ../src/harness/claude-player.bend as Claude
 import ../src/harness/codex-player.bend as Codex
 import ../src/coordinator/commands.bend as C
@@ -64,6 +66,11 @@ def lifecycle_admitted(+db: String, +directory: String, start: P.RetainedStart) 
 def decision_statement() -> IO(Unit):
   IO.print(StopHook.decision_sql("worker"))
 
+def transcript_statement() -> IO(Unit):
+  do IO<Unit>:
+    source : String <- IO.try(String,NativeInput.text_value("-"))
+    IO.print(ClaudeEvidence.transcript_json(source))
+
 def record_statement(args: List<String>) -> IO(Unit):
   match args:
     case directory <> attempt <> native <> identity <> saved <> Nil{}:
@@ -81,6 +88,9 @@ def route(args: List<String>) -> IO(Unit):
   match args:
     case "--stop-hook" <> Nil{}: StopHook.run()
     case "decision-sql" <> Nil{}: decision_statement()
+    case "claude-read-lines-sql" <> Nil{}: IO.print(ClaudeEvidence.read_lines_sql())
+    case "claude-prompt-frames-sql" <> Nil{}: IO.print(ClaudeEvidence.prompted_frames_sql())
+    case "claude-transcript-json" <> Nil{}: transcript_statement()
     case "record-sql" <> rest: record_statement(rest)
     case "arguments" <> Nil{}: lines(Claude.arguments("claude","claude-opus-5-5","high"))
     case "codex-arguments" <> Nil{}: lines(Codex.arguments("gpt-6-luna","high"))

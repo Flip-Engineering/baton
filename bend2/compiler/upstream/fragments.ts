@@ -76,7 +76,10 @@ export class Fragments {
 }
 
 export function* chunks(range: Range): Generator<string> {
-  const fd = fs.openSync(range.file, "r"), buffer = Buffer.allocUnsafe(65536), decoder = new StringDecoder("utf8");
+  // Most ranges are static image nodes of about 100 bytes; a range shorter than
+  // 64 KiB is read into a buffer of its own length.
+  const fd = fs.openSync(range.file, "r"), buffer = Buffer.allocUnsafe(Math.min(65536, range.bytes));
+  const decoder = new StringDecoder("utf8");
   const hash = createHash("sha256");
   let read = 0;
   try {
@@ -93,19 +96,9 @@ export function* chunks(range: Range): Generator<string> {
   } finally { fs.closeSync(fd); }
 }
 
+// Two ranges hold the same text when their lengths and SHA-256 digests agree.
+// write records the digest of the bytes it writes, and chunks checks the bytes
+// against it when the output reads them.
 export function equal(left: Range, right: Range): boolean {
-  if (left.bytes !== right.bytes) return false;
-  const a = fs.openSync(left.file, "r"), b = fs.openSync(right.file, "r");
-  const x = Buffer.allocUnsafe(65536), y = Buffer.allocUnsafe(65536);
-  let at = 0;
-  try {
-    while (at < left.bytes) {
-      const count = Math.min(x.length, left.bytes - at);
-      const nx = fs.readSync(a, x, 0, count, left.offset + at), ny = fs.readSync(b, y, 0, count, right.offset + at);
-      if (nx !== count || ny !== count) throw new Error("Incomplete unit fragment comparison");
-      if (!x.subarray(0, count).equals(y.subarray(0, count))) return false;
-      at += count;
-    }
-    return true;
-  } finally { fs.closeSync(a); fs.closeSync(b); }
+  return left.bytes === right.bytes && left.sha256 === right.sha256;
 }

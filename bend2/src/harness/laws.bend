@@ -47,14 +47,15 @@ def m2_omp_fresh_start_is_the_spawn_attempt(cmd, model, effort, cwd, sessions, s
   {==}
 
 law m2_claude_start_is_the_spawn_attempt:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
-  {Claude.start_player(cmd, model, effort, cwd, stderr) == P.ProcessChild.spawn(P.argv(Claude.arguments(cmd,model,effort)),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Claude.start_player(entries, cmd, model, effort, cwd, stderr) == P.ProcessChild.spawn(P.argv(Claude.with_environment(entries,Claude.arguments(cmd,model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_claude_start_is_the_spawn_attempt(cmd, model, effort, cwd, stderr):
+def m2_claude_start_is_the_spawn_attempt(entries, cmd, model, effort, cwd, stderr):
   {==}
 
 law m2_agy_start_is_the_spawn_attempt:
@@ -153,15 +154,16 @@ def m2_claude_argv_starts_a_fresh_conversation(cmd, model, effort, session):
   {==}
 
 law m5_claude_resume_carries_the_accepted_session:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Claude.resume_player(cmd, model, effort, cwd, stderr, session) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Claude.resume_player(entries, cmd, model, effort, cwd, stderr, session) == P.ProcessChild.spawn(P.argv(Claude.with_environment(entries,List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session]))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m5_claude_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session):
+def m5_claude_resume_carries_the_accepted_session(entries, cmd, model, effort, cwd, stderr, session):
   {==}
 
 law m5_agy_argv_carries_the_accepted_conversation:

@@ -1,4 +1,5 @@
 import Base
+import ./repl-schema.bend as ReplSchema
 import ../coordinator/message-status.bend as MessageStatus
 import ./log-schema.bend as LogSchema
 
@@ -189,6 +190,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ MessageStatus.schema()
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');"
+  ++ ReplSchema.schema()
   ++ messaging_schema()
   ++ log_schema()
 
@@ -362,7 +364,7 @@ def task_state_sql(+session: String) -> String:
 # A normal terminal with no other input uses this continuation to keep an open
 # assignment active and remind the worker to request completion.
 def task_continuation_sql(+session: String, +id: String) -> String:
-  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Before ending this turn, use completion-request --text SUMMARY to request the conductor completion decision. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Before ending this turn, use completion-request --text SUMMARY to request the conductor completion decision. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM refusal_recoveries active_recovery WHERE active_recovery.source=worker.id AND active_recovery.status='active') AND NOT EXISTS(SELECT 1 FROM refusal_attempts owned_attempt JOIN refusal_recoveries owned_recovery ON owned_recovery.id=owned_attempt.recovery WHERE owned_attempt.session=worker.id AND owned_recovery.status='active') AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
 
 def session_state_sql(+session: String) -> String:
   "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
@@ -572,6 +574,7 @@ def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
   +dest = historical_recipient_sql(id,player,"report",report_recipient(q(player)))
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ dest ++ ",'report'," ++ terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ dest ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ message_upsert() ++ message_conflict_sql(q(id),q(player),dest,"'report'",terminal_body_expr(event),dest ++ " IS NOT NULL AND " ++ terminal_expr(event))
   ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ event ++ " WHERE " ++ dest ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ " AND sender=" ++ q(player) ++ " AND recipient=" ++ dest ++ " AND kind='report' AND body=" ++ terminal_body_expr(event) ++ ") ON CONFLICT(id) DO NOTHING;"
+  ++ "INSERT INTO repl_context_turns(turn,owner,cell,version) SELECT t.id,t.worker,b.cell,b.version FROM turns t LEFT JOIN repl_context_bindings b ON b.owner=t.worker WHERE changes()=1 AND t.id=" ++ q(id) ++ " AND t.worker=" ++ q(player) ++ " ON CONFLICT(turn) DO NOTHING;"
   ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ event ++ ",'$.type'),json_extract(" ++ event ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ dest ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
 
 # The SQL query owns this temporary frame relation for its complete transaction.

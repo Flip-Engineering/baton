@@ -665,7 +665,7 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
 def owner_lock(keydir: String) -> IO(U32):
   IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/owners.lock"))
 
-def publish_token(+keydir: String, +requested: String) -> IO(String):
+def publish_token(+keydir: String, +requested: String, +priority: String) -> IO(String):
   do IO<String>:
     made_keydir : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(keydir))
     lock : U32 <- owner_lock(keydir)
@@ -680,7 +680,8 @@ def publish_token(+keydir: String, +requested: String) -> IO(String):
     checked : Unit <- Bool.pick(IO(Unit), exists,
       IO.die(Unit, 2, "compile-queue: owner token is already in use"), IO.pure(Unit, Unit{}))
     wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(owner_path,
-      "pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nstarted_ns=" ++ now ++ "\n"))
+      "pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nstarted_ns=" ++ now
+      ++ "\npriority=" ++ priority ++ "\n"))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
     IO.pure(String, token)
 
@@ -1654,6 +1655,89 @@ def waiters_ticket_higher(+text: String, +token: String, +priority: U32) -> IO(B
         IO.pure(Bool, U32.is_eq(alive, 1)),
       IO.pure(Bool, False{}))
 
+# Admission orders equal priorities by age. A ticket is ahead of mine when its priority is
+# greater, or when the priority is equal and the ticket is older. The age is the token
+# "<started_ns>-<pid>" that the supervisor wrote into its ticket, compared as numbers: first
+# started_ns, then pid, then the token text, which makes the order total. A token that is not
+# two non-empty runs of decimal digits joined by one hyphen has no age and is never ahead by
+# age; a ticket with my own token is mine.
+type TicketAge is Data:
+  TicketAge{valid: Bool, started: String, pid: String, text: String}
+
+def token_digits_rest(s: String) -> Bool:
+  match s:
+    case SNil{}: True{}
+    case SCon{+c, rest}: Bool.and(Char.is_digit(c), token_digits_rest(rest))
+
+def token_digits(s: String) -> Bool:
+  match s:
+    case SNil{}: False{}
+    case SCon{+c, rest}: Bool.and(Char.is_digit(c), token_digits_rest(rest))
+
+def token_decimal_trim(text: String) -> String:
+  match text:
+    case SNil{}: SNil{}
+    case SCon{+c, +rest}:
+      Bool.pick(String, Char.is_eq(c, Char.from_u32(48)),
+        token_decimal_trim(rest), SCon{c, rest})
+
+# Compare digit counts by walking the strings together. Work is proportional to token length.
+def token_decimal_width(a: String, b: String) -> Cmp:
+  match a b:
+    case SNil{} SNil{}: EQ{}
+    case SNil{} SCon{c, rest}: LT{}
+    case SCon{c, rest} SNil{}: GT{}
+    case SCon{ca, ra} SCon{cb, rb}: token_decimal_width(ra, rb)
+
+def token_decimal_order_width(a: String, b: String, width: Cmp) -> Cmp:
+  match width:
+    case LT{}: LT{}
+    case EQ{}: String.order(a, b)
+    case GT{}: GT{}
+
+def token_decimal_order(+a: String, +b: String) -> Cmp:
+  token_decimal_order_width(a, b, token_decimal_width(a, b))
+
+def token_age_parts(parts: List<&2,String>, +token: String) -> TicketAge:
+  match parts:
+    case +started <> +pid <> Nil{}:
+      Bool.pick(TicketAge, Bool.and(token_digits(started), token_digits(pid)),
+        TicketAge{True{}, token_decimal_trim(started), token_decimal_trim(pid), token},
+        TicketAge{False{}, "", "", token})
+    case other: TicketAge{False{}, "", "", token}
+
+def token_age(+token: String) -> TicketAge:
+  token_age_parts(String.split(token, Char.from_u32(45)), token)
+
+def age_before(a: TicketAge, b: TicketAge) -> Bool:
+  match a:
+    case TicketAge{a_valid, +a_started, +a_pid, a_text}:
+      match b:
+        case TicketAge{b_valid, +b_started, +b_pid, b_text}:
+          Bool.and(Bool.and(a_valid, b_valid),
+            Bool.or(Cmp.is_lt(token_decimal_order(a_started, b_started)),
+              Bool.and(Tx.str_eq(a_started, b_started),
+                Bool.or(Cmp.is_lt(token_decimal_order(a_pid, b_pid)),
+                  Bool.and(Tx.str_eq(a_pid, b_pid), String.is_lt(a_text, b_text))))))
+
+def admission_ahead(+other_priority: U32, +other_token: String, +my_priority: U32, +my_token: String) -> Bool:
+  Bool.and(Bool.not(Tx.str_eq(other_token, my_token)),
+    Bool.or(U32.is_gt(other_priority, my_priority),
+      Bool.and(U32.is_eq(other_priority, my_priority), age_before(token_age(other_token), token_age(my_token)))))
+
+# A live ticket that is ahead of mine. The scan of the admission queue asks this; the scan of the
+# flock queue (waiters_ticket_higher) keeps strict priority and the kernel's arrival order.
+def admission_ticket_ahead(+text: String, +token: String, +priority: U32) -> IO(Bool):
+  do IO<Bool>:
+    contender : Bool <- IO.pure(Bool,
+      admission_ahead(status_number(field(text, "priority")), field(text, "token"), priority, token))
+    Bool.pick(IO(Bool), contender,
+      do IO<Bool>:
+        alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(
+          status_number(field(text, "pid")), field(text, "starttime")))
+        IO.pure(Bool, U32.is_eq(alive, 1)),
+      IO.pure(Bool, False{}))
+
 def waiters_scan_one(read: Result<&1,&1,U32 & String,String>, +token: String, +priority: U32) -> IO(Bool):
   match read:
     case Fail{error}: IO.pure(Bool, False{})
@@ -1768,7 +1852,7 @@ def admission_waiter_priority(read: Result<&1,&1,U32 & String,String>, state: St
     case Fail{error}: IO.pure(Bool,False{})
     case Done{+text}:
       do IO<Bool>:
-        higher : Bool <- waiters_ticket_higher(text,token,priority)
+        higher : Bool <- admission_ticket_ahead(text,token,priority)
         Bool.pick(IO(Bool),higher,
           admission_waiter_fits(state,kind,field(text,"key"),field(text,"history_group"),stats,available,total,legacy_pid),
           IO.pure(Bool,False{}))
@@ -1814,6 +1898,81 @@ def admission_publish_claim(+state: String, +kind: String, +key: String, +token:
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
     IO.pure(AdmissionGate, AdmissionAccounted{claim,heavy})
 
+# The scheduling priority of an execution is the largest priority requested by a
+# live owner of its key. Every owner token records the priority of its request; a
+# token without one (written by an earlier executable) counts at the priority of
+# the first request, which the attempt meta records. A token whose process is gone
+# does not count. A scan holds owners.lock, as every other scan of the tokens does,
+# so a token that is being published or removed is read whole or not at all. Each
+# owner is read as a record with its own live flag, so every priority from 0 to
+# 4294967295 is a valid value and no priority stands for "no owner".
+type OwnerPriority is Data:
+  OwnerPriority{live: U32, priority: U32}
+
+def owner_priority_value(+text: String, +fallback: U32, live: U32) -> OwnerPriority:
+  OwnerPriority{live, Bool.pick(U32, non_empty(field(text, "priority")), status_number(field(text, "priority")), fallback)}
+
+def owner_priority_one(+keydir: String, +name: String, +fallback: U32) -> IO(OwnerPriority):
+  do IO<OwnerPriority>:
+    +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/owners/" ++ name))
+    +pid : U32 <- IO.pure(U32, status_number(field(text, "pid")))
+    live : U32 <- Bool.pick(IO(U32), U32.is_gt(pid, 0),
+      IO.try(U32, L.CompileQueueLifecycle.alive(pid, field(text, "starttime"))),
+      IO.pure(U32, 0))
+    IO.pure(OwnerPriority, owner_priority_value(text, fallback, U32.min(live, 1)))
+
+def owner_priority_merge(best: OwnerPriority, one: OwnerPriority) -> OwnerPriority:
+  match best:
+    case OwnerPriority{+best_live, +best_priority}:
+      match one:
+        case OwnerPriority{+one_live, +one_priority}:
+          Bool.pick(OwnerPriority, U32.is_eq(one_live, 0), OwnerPriority{best_live, best_priority},
+            Bool.pick(OwnerPriority, Bool.or(U32.is_eq(best_live, 0), U32.is_gt(one_priority, best_priority)),
+              OwnerPriority{1, one_priority}, OwnerPriority{best_live, best_priority}))
+
+def owner_priority_scan(+keydir: String, names: List<&1,String>, +fallback: U32, +best: OwnerPriority) -> IO(OwnerPriority):
+  match names:
+    case Nil{}: IO.pure(OwnerPriority, best)
+    case Con{+name, rest}:
+      do IO<OwnerPriority>:
+        +one : OwnerPriority <- owner_priority_one(keydir, name, fallback)
+        owner_priority_scan(keydir, rest, fallback, owner_priority_merge(best, one))
+
+def owner_priority_result(best: OwnerPriority, fallback: U32) -> U32:
+  match best:
+    case OwnerPriority{live, priority}: Bool.pick(U32, U32.is_eq(live, 0), fallback, priority)
+
+def owner_priority_locked(+keydir: String, +fallback: U32) -> IO(U32):
+  do IO<U32>:
+    gate : U32 <- owner_lock(keydir)
+    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(keydir ++ "/owners"))
+    best : OwnerPriority <- owner_priority_scan(keydir, Tx.split_nul(names), fallback, OwnerPriority{0, 0})
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+    IO.pure(U32, owner_priority_result(best, fallback))
+
+# One pass of a waiting supervisor: the effective priority is derived again from
+# the live owners, and the two tickets of the supervisor are replaced when it
+# differs from the priority they carry. A priority joined by a later requester
+# raises the tickets, and the cancellation or loss of that owner lowers them again,
+# through the same owners.lock scan. This runs before the admission lock is taken;
+# no caller holds the admission lock or the key lock here.
+def refresh_priority(+attempt: String, +keydir: String, +state: String, +kind: String, +key: String,
+                     +token: String, +pid: U32, +start: String, +current: U32) -> IO(U32):
+  do IO<U32>:
+    meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
+    +meta : String <- IO.pure(String, peak_text_result(meta_result))
+    +effective : U32 <- owner_priority_locked(keydir, status_number(field(meta, "priority")))
+    +history_group : String <- attempt_group(attempt)
+    +ticket : String <- IO.pure(String, waiters_ticket_text(effective, pid, start, key, history_group, token))
+    replaced : Unit <- Bool.pick(IO(Unit), U32.is_eq(effective, current), IO.pure(Unit, Unit{}),
+      do IO<Unit>:
+        wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
+          kind_waiters_dir(state, kind) ++ "/" ++ token, ticket))
+        wrote_admission : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
+          admission_root(state) ++ "/waiting/" ++ token, ticket))
+        IO.pure(Unit, Unit{}))
+    IO.pure(U32, effective)
+
 @unsafe
 def acquire_accounted_after_heavy(~again: (@+attempt: String -> @+keydir: String -> @+state: String -> @+kind: String -> @+key: String -> @+group: String -> @+token: String -> @+priority: U32 -> @+pid: U32 -> @+start: String -> @+delay: U32 -> IO(AdmissionGate)),
                                  +attempt: String, +keydir: String, +state: String, +kind: String,
@@ -1832,8 +1991,9 @@ def acquire_accounted_after_heavy(~again: (@+attempt: String -> @+keydir: String
 @unsafe
 def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state: String -> @+kind: String -> @+key: String -> @+group: String -> @+token: String -> @+priority: U32 -> @+pid: U32 -> @+start: String -> @+delay: U32 -> IO(AdmissionGate)),
                        +attempt: String, +keydir: String, +state: String, +kind: String, +key: String, +group: String,
-                       +token: String, +priority: U32, +pid: U32, +start: String, +delay: U32) -> IO(AdmissionGate):
+                       +token: String, +current: U32, +pid: U32, +start: String, +delay: U32) -> IO(AdmissionGate):
   do IO<AdmissionGate>:
+    +priority : U32 <- refresh_priority(attempt,keydir,state,kind,key,token,pid,start,current)
     +guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
     +meminfo : String <- IO.try(String, admission_meminfo(state))
     +available : U32 <- IO.pure(U32,status_number(field(meminfo,"available_kb")))
@@ -1968,9 +2128,9 @@ def supervise(+attempt: String) -> IO(Unit):
     +state : String <- IO.pure(String, field(meta, "state_root"))
     source_root : String <- IO.pure(String, field(meta, "source_root"))
     entry : String <- IO.pure(String, field(meta, "entry"))
-    +priority : U32 <- IO.pure(U32, status_number(field(meta, "priority")))
     +key : String <- IO.pure(String, field(meta, "key"))
     +keydir : String <- IO.pure(String, field(meta, "keydir"))
+    +priority : U32 <- owner_priority_locked(keydir, status_number(field(meta, "priority")))
     names : List<&2,String> <- IO.pure(List<&2,String>, fields_all(meta, "artifact_name"))
     +started : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
@@ -2186,8 +2346,12 @@ def run_config_locked(parsed: Config, +text: String, +key: String) -> IO(Unit):
   do IO<Unit>:
     state : String <- IO.pure(String, field(text, "state_root"))
     +keydir : String <- IO.pure(String, keydir_of(state, key))
-    +owner : String <- publish_token(keydir, field(text, "token"))
+    +requested : String <- IO.pure(String, priority_text(text))
+    +owner : String <- publish_token(keydir, field(text, "token"), requested)
+    +effective : U32 <- owner_priority_locked(keydir, status_number(requested))
     owner_line : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_stderr("owner=" ++ owner ++ "\n"))
+    priority_line : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_stderr(
+      "priority=" ++ requested ++ " effective=" ++ U32.show(effective) ++ "\n"))
     wait_start : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     present : Bool <- regular(keydir ++ "/active")
     made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(keydir ++ "/runs"))

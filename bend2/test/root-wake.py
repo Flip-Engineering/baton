@@ -58,6 +58,9 @@ class BusyObserver:
 spec = importlib.util.spec_from_file_location('receive_fixture', pathlib.Path(__file__).with_name('receive.py'))
 receive = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(receive)
+spec = importlib.util.spec_from_file_location('wake_wait', pathlib.Path(__file__).with_name('wake_wait.py'))
+wake_wait = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(wake_wait)
 
 # The fixture serves whichever adapter started it: Codex, OMP and Muse each name the
 # harness with a distinct argv shape. Every turn records its own invocation, accepts
@@ -134,6 +137,7 @@ class RootWake(unittest.TestCase):
 
     close_children = receive.Receive.close_children
     owned_processes = receive.Receive.owned_processes
+    process_names = receive.Receive.process_names
 
     @classmethod
     def setUpClass(cls):
@@ -148,6 +152,7 @@ class RootWake(unittest.TestCase):
         self.directory = pathlib.Path(self.temp.name)
         self.children = []
         self.controls = []
+        self.termination = wake_wait.on_termination(self.cleanup_fixture)
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
         self.environment = dict(os.environ, HOME=str(self.home))
@@ -192,8 +197,19 @@ class RootWake(unittest.TestCase):
         self.leaf_followup = self.write('leaf-followup.txt', 'Follow-up for the Claude player.\n')
 
     def tearDown(self):
-        self.close_children()
+        wake_wait.restore_termination(self.termination)
+        self.cleanup_fixture()
         self.temp.cleanup()
+
+    def cleanup_fixture(self):
+        """Idle database owners stop through the supported shutdown command; any
+        process still left is then stopped with the rest of the fixture."""
+        try:
+            stopped = wake_wait.stop_owners(EXE, self.db, self.owned_processes)
+            if stopped is not None and stopped.returncode:
+                print(f'instance shutdown for {self.db} failed: {stopped.stderr}', file=sys.stderr)
+        finally:
+            self.close_children()
 
     def write(self, name, text):
         path = self.directory / name
@@ -229,11 +245,11 @@ class RootWake(unittest.TestCase):
         (self.releases / f'{session}.{turn}.release').write_text('go\n')
 
     def eventually(self, observation, description):
-        while True:
-            result = observation()
-            if result:
-                return result
-            time.sleep(0.05)
+        return wake_wait.wait_for(observation, description, self.owned_processes, self.db,
+                                  self.diagnostics)
+
+    def diagnostics(self):
+        return wake_wait.evidence(self.directory, self.db, self.owned_processes(), self.rows)
 
     def busy_environment(self, name):
         marker = self.directory / (name + '.busy')

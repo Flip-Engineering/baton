@@ -11,12 +11,14 @@ import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./control-laws.bend as ControlLaws
 import ./naming-laws.bend as NamingLaws
+import ./land-laws.bend as LandLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
 import ./subscription-fallback.bend as Subs
 import ./agent-input.bend as AgentInput
 import ../coordinator/message-status.bend as MessageStatus
 import ../coordinator/commands.bend as C
+import ../coordinator/repl-schema.bend as ReplSchema
 import ./receive.bend as Receive
 import ./guidance.bend as Guidance
 import ./land.bend as Land
@@ -499,7 +501,7 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
 # session. The store's own schema declares that reference, so the database
 # refuses a message from an unknown sender.
 law m7_the_store_validates_the_sender_it_records:
-  {C.schema() == C.wake_claim_schema() ++ C.task_input_schema() ++ C.usage_windows_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);" ++ "CREATE INDEX IF NOT EXISTS messages_sender_kind_seq ON messages(sender,kind,seq);" ++ "CREATE INDEX IF NOT EXISTS messages_recipient_kind_seq ON messages(recipient,kind,seq);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');" ++ MessageStatus.schema() ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() ++ C.log_schema() : String}
+  {C.schema() == C.wake_claim_schema() ++ C.task_input_schema() ++ C.usage_windows_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);" ++ "CREATE INDEX IF NOT EXISTS messages_sender_kind_seq ON messages(sender,kind,seq);" ++ "CREATE INDEX IF NOT EXISTS messages_recipient_kind_seq ON messages(recipient,kind,seq);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');" ++ MessageStatus.schema() ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ ReplSchema.schema() ++ C.messaging_schema() ++ C.log_schema() : String}
 
 def m7_the_store_validates_the_sender_it_records():
   {==}
@@ -902,7 +904,7 @@ law m2_any_other_harness_launch_reaches_the_claude_adapter:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch_configured(db, player, cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_any_other_harness_launch_reaches_the_claude_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
@@ -949,27 +951,29 @@ def m5_a_resumable_agy_turn_carries_the_recorded_conversation(cmd, model, effort
   {==}
 
 law m5_a_fresh_claude_turn_starts_a_session:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, True{}) == Claude.start_player(cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.claude_launch(entries, cmd, model, effort, cwd, stderr, session, True{}) == Claude.start_player(entries, cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m5_a_fresh_claude_turn_starts_a_session(cmd, model, effort, cwd, stderr, session):
+def m5_a_fresh_claude_turn_starts_a_session(entries, cmd, model, effort, cwd, stderr, session):
   {==}
 
 law m5_a_resumable_claude_turn_carries_the_recorded_session:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, False{}) == Claude.resume_player(cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.claude_launch(entries, cmd, model, effort, cwd, stderr, session, False{}) == Claude.resume_player(entries, cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m5_a_resumable_claude_turn_carries_the_recorded_session(cmd, model, effort, cwd, stderr, session):
+def m5_a_resumable_claude_turn_carries_the_recorded_session(entries, cmd, model, effort, cwd, stderr, session):
   {==}
 
 law m5_a_fresh_muse_turn_starts_a_session:
@@ -1185,7 +1189,8 @@ law completion_preparation_checks_the_upstream_recipient:
     +generation : String <- IO.pure(String,Turn.generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    AgentInput.record_initial_reads(db,player,id)) : IO(Unit)}
+    reads : Unit <- AgentInput.record_initial_reads(db,player,id)
+    Turn.recovery_observe(db,player,id,outcome)) : IO(Unit)}
 
 def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
   {==}
@@ -1193,12 +1198,14 @@ def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr
 law completion_delivery_checks_the_upstream_recipient:
   for +db: String
   for +player: String
-  for id: String
+  for +id: String
   for log: String
-  for outcome: Turn.Outcome
+  for +outcome: Turn.Outcome
   {Turn.finish(db,player,id,log,outcome,False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),False{})) : IO(Result<&1,&1,U32 & String,Unit>)}
+    finished : Result<&1,&1,U32 & String,Unit> <- Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),False{})
+    recovered : Unit <- Turn.recovery_after(db,player,id,outcome)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,finished)) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completion_delivery_checks_the_upstream_recipient(db,player,id,log,outcome):
   {==}
