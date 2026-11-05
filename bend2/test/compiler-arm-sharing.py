@@ -80,10 +80,13 @@ class CompilerArmSharing(unittest.TestCase):
             self.assertEqual(run.returncode, 0, msg=run.stderr)
             self.assertEqual(run.stdout.strip(), expected)
 
-    def mutated_c(self, test_name):
+    def arm_share_c(self, test_name):
+        # The .ts asserts arm equality itself on the checked fixture arms and
+        # writes the plain compiled C for the runtime check below.
         source = pathlib.Path(self.temp.name) / (test_name + '.c')
-        self.run_bun(TEST_DIR / (test_name + '.ts'), self.compiler,
-                     env={**os.environ, 'ARM_EQ_C': str(source)})
+        result = self.run_bun(TEST_DIR / (test_name + '.ts'), self.compiler,
+                              env={**os.environ, 'ARM_EQ_C': str(source)})
+        self.assertIn('PASS', result.stdout)
         self.assertTrue(source.is_file(), msg='the test did not write ' + str(source))
         return source
 
@@ -116,7 +119,7 @@ class CompilerArmSharing(unittest.TestCase):
         ])
 
     def test_ann_share_regression(self):
-        source = self.mutated_c('arm_eq_ann_share')
+        source = self.arm_share_c('arm_eq_ann_share')
         self.build_and_run(source, [
             (['--host-process-keeper', 'a', 'b'], 'host'),
             (['a', 'b'], 'two'),
@@ -124,7 +127,7 @@ class CompilerArmSharing(unittest.TestCase):
         ])
 
     def test_ref_bang_share_regression(self):
-        source = self.mutated_c('arm_eq_ref_bang_share')
+        source = self.arm_share_c('arm_eq_ref_bang_share')
         self.build_and_run(source, [
             (['--host-process-keeper', 'a', 'b'], 'host'),
             (['a', 'b'], 'two'),
