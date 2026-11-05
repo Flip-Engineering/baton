@@ -10,8 +10,12 @@ import sys
 
 def main():
     target, evidence = map(Path, sys.argv[1:])
-    queue = runpy.run_path(str(Path(__file__).with_name('queue-native-checks.py')))
-    environment = queue['legacy_environment'](dict(os.environ))
+    environment = dict(os.environ)
+    # A target whose build script drives the queue builds the way the candidate
+    # does. An older target queues through its BEND and CC inputs.
+    if 'BATON2_NATIVE_QUEUE_DRIVER' not in (target / 'bend2/scripts/build-native.sh').read_text():
+        queue = runpy.run_path(str(Path(__file__).with_name('queue-native-checks.py')))
+        environment = queue['legacy_environment'](environment)
     # Each invocation computes its key, then the native client verifies and copies
     # a completed result for that key or submits the request on a miss.
     code = subprocess.run(['sh', 'bend2/scripts/build-native.sh'], cwd=target, env=environment).returncode

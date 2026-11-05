@@ -211,9 +211,18 @@ def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, Str
 def busy(+code: U32) -> Bool:
   Bool.or(U32.is_eq(code,5),U32.is_eq(code,6))
 
-def busy_again(result: Result<&1,&1,U32 & String,String>, again: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+# The busy step of a store retry loop. It receives the loop and its arguments
+# unapplied and matches the result first, so a law that reaches a store write
+# compares this call without unfolding the loop: the checker unfolds a saturated
+# call, including one under a lambda, and an @unsafe loop never ends that.
+def busy_command_again(result: Result<&1,&1,U32 & String,String>, again: (@+db: String -> @+command: C.Command -> IO(Result<&1,&1,U32 & String,String>)), +db: String, +command: C.Command) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
-    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),busy(code),again(Unit{}),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
+    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),busy(code),again(db,command),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
+    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
+def busy_sql_again(result: Result<&1,&1,U32 & String,String>, again: (@+db: String -> @+sql: String -> IO(Result<&1,&1,U32 & String,String>)), +db: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),busy(code),again(db,sql),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
     case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
 
 # Applies a command whose statements are idempotent, again after each busy
@@ -226,7 +235,7 @@ def busy_again(result: Result<&1,&1,U32 & String,String>, again: Unit -> IO(Resu
 def apply_through_busy(+db: String, +command: C.Command) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- apply(db,command)
-    busy_again(result,unit => apply_through_busy(db,command))
+    busy_command_again(result,apply_through_busy,db,command)
 
 # The same retry for a statement the caller already built. The observer's
 # read-mark and native-request writes use it, so a busy answer leaves the span
@@ -236,13 +245,13 @@ def apply_through_busy(+db: String, +command: C.Command) -> IO(Result<&1,&1,U32 
 def transact_through_busy(+db: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- transact_sql(db,sql)
-    busy_again(result,unit => transact_through_busy(db,sql))
+    busy_sql_again(result,transact_through_busy,db,sql)
 
 @unsafe
 def query_through_busy(+db: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
-    busy_again(result,unit => query_through_busy(db,sql))
+    busy_sql_again(result,query_through_busy,db,sql)
 
 
 # Wake-claim transitions for issue #685. The table is owned by this module:

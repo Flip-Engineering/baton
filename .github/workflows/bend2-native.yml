@@ -650,7 +650,8 @@ jobs:
           test "$(git -C "$run/source" rev-parse HEAD)" = "$BATON2_TARGET_COMMIT"
           selection=()
           if grep -q -- --default-selection .github/scripts/prepare-native-compiler.py; then
-            selection=(--default-selection .github/native-compiler-selection.json)
+            # The target builds with the compiler its own tree selects and pins.
+            selection=(--default-selection "$run/source/.github/native-compiler-selection.json")
           elif [ -z "$BATON2_RETAINED_COMPILER_ARCHIVE$BATON2_RETAINED_COMPILER_SHA256" ]; then
             echo "Candidate $(git rev-parse HEAD) predates tree-owned compiler selection (.github/native-compiler-selection.json); integrate main or give retained_compiler_archive and retained_compiler_archive_sha256." > "$run/evidence/compiler-selection.stderr"
             exit 78
