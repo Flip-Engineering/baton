@@ -1,7 +1,7 @@
 """Focused checks for the per-thread SQLite read cache (issue #943).
 
-The fixture compiles the verbatim BatonSql row callback, busy handler and the
-marked read-cache section of bend2/src/host/sqlite.c. It exercises two helper
+The fixture compiles the verbatim BatonSql row callback, failure text helpers,
+busy handler and the marked read-cache section of bend2/src/host/sqlite.c. It exercises two helper
 threads, path switching, file replacement, committed-write visibility,
 autocommit rollback, busy handling, UTF-8 refusal, fork rejection and
 thread-exit cleanup.
@@ -68,6 +68,8 @@ def build_fixture():
         PRELUDE
         + struct_block(lines)
         + function_block(lines, 'static int baton_sql_row')
+        + function_block(lines, 'static long long baton_sql_now_ms')
+        + function_block(lines, 'static char *baton_sql_failure_text')
         + function_block(lines, 'static int baton_sql_busy')
         + ''.join(lines[begin + 1:end])
         + DRIVER.read_text())

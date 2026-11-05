@@ -406,12 +406,13 @@ def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,
 
 # M-8: the canonical guard owner reads its current durable attempt and only then
 # runs the pending admission continuation. The acquired attempt retains the
-# supplied lock while its recorded recovery arguments are used.
+# supplied lock. An empty attempt takes fresh recovery arguments; a recorded
+# attempt uses its recorded recovery arguments.
 def recorded_attempt_before_pending(+db: String, +session: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +directory : String <- IO.try(String,DB.Sql.query(db,Store.recorded_retained_sql(session)))
     +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
-    recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
+    recovery : Maybe<String> <- Bool.pick(IO(Maybe<String>),String.is_empty(attempt),IO.pure(Maybe<String>,None{}),IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt)))
     Receive.acquired_attempt(db,session,lock,attempt,recovery,again,pending)
 
 law native_admission_reads_current_attempt_before_pending_input:
