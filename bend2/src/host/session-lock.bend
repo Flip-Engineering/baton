@@ -6,6 +6,11 @@ def SessionLock.release(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
 def SessionLock.try_acquire(database: String, session: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
   import "./process-spawn.c"
 
+# Drain workers use a distinct host lock purpose. Its lock path cannot collide
+# with an ordinary session lock for any session ID.
+def SessionLock.try_acquire_drain_sweep(database: String, session: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
+  import "./process-spawn.c"
+
 # A serve task waits for the current session owner to release its physical lock.
 def SessionLock.wait_acquire(database: String, session: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
