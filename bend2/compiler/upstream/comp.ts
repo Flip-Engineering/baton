@@ -29,7 +29,7 @@ export function diagnostic(event: string, details: Record<string, unknown> = {})
     elapsed_ms: performance.now() - diagnostic_started,
     memory: process.memoryUsage(),
     caches: { probes: PROBES.length, teles: TELES.size, opens: OPENS.size,
-      uses: USES.size, folds: FOLDS.size, spines: SPINES.size, consts: CONSTS.size },
+      uses: USES.size, folds: FOLDS.size, spines: SPINES.size },
     ...details,
   }) + "\n");
 }
@@ -775,7 +775,7 @@ let LAY_KEY_NEXT = 0;
 
 const CYCLES: Map<Bend.Name, boolean> = new Map();
 
-const CONSTS: Map<HTerm, boolean> = new Map();
+let CONSTS = new WeakMap<HTerm, boolean>();
 
 let LITS = new WeakMap<HTerm, HTerm>();
 
@@ -860,10 +860,11 @@ function weak_memo<K extends object, V>(m: WeakMap<K, V>, k: K, f: () => V): V {
 // TELES retains telescope type terms from definitions and fixed-point passes.
 // Reset probe indices with these caches; index 0 retains DUMMY.
 function memo_gc(): void {
-  [OPENS, USES, FOLDS, SPINES, CONSTS, TELES, SUMS, SHAPES,
+  [OPENS, USES, FOLDS, SPINES, TELES, SUMS, SHAPES,
     HINT_INNER, BODY_INNER].forEach((m) => m.clear());
   PROBES.length = 1;
   LITS = new WeakMap();
+  CONSTS = new WeakMap();
 }
 
 // Probe

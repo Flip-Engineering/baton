@@ -57,6 +57,14 @@ def safe() -> U32:
             self.assertEqual(claims,
                              {'Abstract', 'dependent', 'annotated', 'erased_use', 'Holder'})
 
+    def test_constant_memo_lifetime(self):
+        script = ROOT / 'bend2/test/compiler/constant_memo_lifetime.ts'
+        run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                             capture_output=True, text=True, env={
+                                 **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                 'BEND_NO_TELEMETRY': '1'})
+        self.assertEqual(run.returncode, 0, run.stderr)
+
     def test_literal_chain(self):
         with tempfile.TemporaryDirectory(prefix='bend-emission-') as temporary:
             directory = Path(temporary)
