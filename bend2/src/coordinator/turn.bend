@@ -416,6 +416,11 @@ def codex_span_commit(+db: String, spool: String, offset: String, length: String
       committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_span(db,spool,offset,length,sql)
       Store.publish_after_commit(db,committed)
 
+def codex_span_busy_again(result: Result<&1,&1,U32 & String,String>, again: (@+db: String -> @+spool: String -> @+offset: String -> @+length: String -> @+sql: String -> IO(Result<&1,&1,U32 & String,String>)), +db: String, +spool: String, +offset: String, +length: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),Store.busy(code),again(db,spool,offset,length,sql),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
+    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
 # The span writer retries SQLITE_BUSY and SQLITE_LOCKED for the held-writer
 # failure recorded in #1054, instance B2.
 @unsafe
@@ -423,7 +428,7 @@ def codex_span_write(+db: String, +spool: String, +offset: String, +length: Stri
   do IO<Result<&1,&1,U32 & String,String>>:
     ensured : Result<&1,&1,U32 & String,String> <- DB.Sql.ensure_projection(db,C.schema())
     result : Result<&1,&1,U32 & String,String> <- codex_span_commit(db,spool,offset,length,sql,ensured)
-    Store.busy_again(result,unit => codex_span_write(db,spool,offset,length,sql))
+    codex_span_busy_again(result,codex_span_write,db,spool,offset,length,sql)
 
 def codex_span_observe_fields(+db: String, +player: String, +id: String, +spool: String, +offset: String, +length: String, +message_value: String, +terminal_value: String, sealed: Bool) -> IO(String):
   do IO<String>:
