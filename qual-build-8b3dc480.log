@@ -1,0 +1,9 @@
+Error:
+- expected : a defined name
+- observed : node_eval_notice
+Context:
+- node : String
+Location: knowledge_v1.node_statements
+287 | def node_statements(+node: String) -> String:
+288>|   node_insert(node) ++ node_eval_request(node) ++ node_eval_notice(node) ++ node_notice(node) ++ node_errors(node) ++ node_answer(node)
+289 | 

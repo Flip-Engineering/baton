@@ -1,0 +1,16 @@
+All terms check, but 15 defs rely on unsafe or foreign code:
+- run
+- read_command
+- execute
+- keeper
+- normal_cli
+- keeper_cli
+- dispatch_cli
+- recover_cli
+- instance_shutdown_cli
+- instance_owner_cli
+- recover_context_query_cli
+- recover_direct_cli
+- observe_context_runtime_cli
+- cli
+- main

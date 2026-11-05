@@ -1,0 +1,7 @@
+Error:
+- expected : a fresh name (duplicate declaration: knowledge.deliver_eval_message)
+- observed : '('
+Location:
+638 | # notice, then delivers the notice and answers the stored request.
+639>| def deliver_eval_message(db: String, nid: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+640 |   match saved:

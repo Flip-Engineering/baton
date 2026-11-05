@@ -1,0 +1,15 @@
+Error:
+- expected : finding
+- observed : finding (consumed more than once)
+Context:
+- db               : String
+- id               : String
+- promoter         : String
+- source_kind      : String
+- source           : String
+- destination_kind : String
+- destination      : String
+Location: knowledge.promote_scoped
+624 | 
+625>| def promote_scoped(+db: String, +id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String) -> IO(Unit):
+626 |   do IO<Unit>:
