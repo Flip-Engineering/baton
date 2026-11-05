@@ -176,6 +176,9 @@ class PackageLicenses(unittest.TestCase):
         PACKAGE.write_json(prefix / 'manifest.json', manifest)
         helper = prefix / 'libexec/baton2/task-start.mjs'
         shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', helper)
+        for name in ('mcp-conductor.mjs', 'codex-root-relay.mjs', 'root-channel-config.mjs',
+                     'agent-summary-check.mjs', 'no-agent-summary.js'):
+            shutil.copyfile(ROOT / 'bend2/scripts' / name, prefix / 'libexec/baton2' / name)
         LAYOUT.FINALIZE.finalize(prefix)
         output = self.home / 'unusable-runtime-check'
         output.mkdir()
@@ -187,6 +190,11 @@ class PackageLicenses(unittest.TestCase):
         actual_run = subprocess.run
 
         def run(argv, **kwargs):
+            if len(argv) == 3 and argv[-1] == 'register-receiver':
+                return subprocess.CompletedProcess(
+                    argv, 78, stdout='',
+                    stderr='baton: focused receiver is missing or not executable. '
+                           'Install the complete Baton package.\n')
             if argv in help_commands:
                 return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
             if argv == guide_command:
@@ -203,6 +211,9 @@ class PackageLicenses(unittest.TestCase):
                          help_commands + [guide_command, runtime_command])
         self.assertIsNone(records[-1]['returncode'])
         self.assertTrue(records[-1]['error'])
+        probe = json.loads((output / 'receiver-router-probe.json').read_text())
+        self.assertEqual(probe['returncode'], 78)
+        self.assertFalse(probe['database_created'])
 
     def test_project_and_upstream_documents_keep_separate_bytes_and_metadata(self):
         license_data = b'Project license fixture\r\n'
