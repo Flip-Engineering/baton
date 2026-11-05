@@ -363,6 +363,15 @@ def CompileQueueResult.write_with_stage(+path: String, +status: String, +code: S
 def CompileQueueResult.write(+path: String, +status: String, +code: String, +kind: String, +key: String, +started: String, +finished: String, +attempt: String, +work: String, +stdout: String, +stderr: String, +detail: String, +names: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   CompileQueueResult.write_with_stage(path, status, code, kind, key, started, finished, attempt, work, stdout, stderr, detail, "", names)
 
+# Install staging is private to the publishing process. Two requesters of one
+# key can publish the same destination without sharing the
+# artifact-publication lock, so a destination-derived staging name lets one
+# publisher remove or move the staging file of the other.
+def CompileQueueResult.staging_path(+destination: String) -> IO(String):
+  do IO<String>:
+    +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
+    IO.pure(String, destination ++ ".queue-tmp." ++ U32.show(pid))
+
 def CompileQueueResult.retain_rows(+work: String, +destination: String, +names: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match names:
     case Nil{}:
@@ -372,7 +381,7 @@ def CompileQueueResult.retain_rows(+work: String, +destination: String, +names: 
         CompileQueueResult.retain_rows(work, destination, rest),
         do IO<Result<&1,&1,U32 & String,Unit>>:
           +target : String <- IO.pure(String, destination ++ "/" ++ name)
-          +staging : String <- IO.pure(String, target ++ ".queue-tmp")
+          +staging : String <- CompileQueueResult.staging_path(target)
           made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(CompileQueueResult.dirname(target)))
           removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
           installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(work ++ "/" ++ name, target, staging))
@@ -384,7 +393,7 @@ def CompileQueueResult.retain_artifacts(+work: String, +destination: String, +na
 def CompileQueueResult.retain_external(+path: String, +destination: String, +name: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +target : String <- IO.pure(String, destination ++ "/" ++ name)
-    +staging : String <- IO.pure(String, target ++ ".queue-tmp")
+    +staging : String <- CompileQueueResult.staging_path(target)
     removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
     installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(path, target, staging))
     IO.pure(Result<&1,&1,U32 & String,Unit>, Done{installed})
@@ -505,7 +514,7 @@ def CompileQueueResult.copy_row_fields(fields: List<&2,String>, +keydir: String)
   match fields:
     case name <> +destination <> tail:
       do IO<Result<&1,&1,U32 & String,Unit>>:
-        +staging : String <- IO.pure(String, destination ++ ".queue-tmp")
+        +staging : String <- CompileQueueResult.staging_path(destination)
         removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
         installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(keydir ++ "/completed/artifacts/" ++ name, destination, staging))
         IO.pure(Result<&1,&1,U32 & String,Unit>, Done{installed})
