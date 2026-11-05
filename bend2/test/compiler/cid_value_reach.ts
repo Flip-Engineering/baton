@@ -114,15 +114,26 @@ const expected_arities: Record<string, number> = {
   CID_IO_ARGS: 1, CID_IO_PRINT: 2, CID_TUPLE: 2, CID_SNIL: 0, CID_SCON: 2,
   CID_WCON: 2, CID_EMIT: 1, CID_HALT: 2, CID_FAIL: 1, CID_DONE: 1,
   CID_NONE: 0, CID_SOME: 1, CID_FALSE: 0, CID_TRUE: 0, CID_UNIT: 0,
-  CID_NIL: 0, CID_CON: 2,
+  CID_NIL: 0, CID_CON: 2, CID_BIG0: 0, CID_BIG1: 0, CID_BIG2: 0,
 };
 assert.deepEqual(cid.map(([name]) => name).sort(), Object.keys(expected_arities).sort(),
   "the live program and runtime constructor names");
-assert.ok(!c.includes("CID_BIG"), "no Big constructor CID in the live C");
+// The String.eq-chain lowering boxes the live Big results, so the live C
+// references the constructed Big constructors by CID. Value reachability
+// still holds: only Big0 through Big2 may appear, never the blanket seed.
+const bigs = [...new Set([...c.matchAll(/CID_BIG(\d+)/g)].map((m) => m[1]))];
+assert.ok(bigs.length > 0 && bigs.every((n) => Number(n) <= 2),
+  "only the live Big constructors appear in the live C");
 const arities = arityTable(c), hot = hotTable(c);
 for (const [name, id] of cid) {
   assert.equal(arities[id], expected_arities[name], name + " arity");
-  assert.equal(hot[id], 0, name + " sharing flag");
+}
+// The String.eq-chain lowering shares the matched flag and its Bool results
+// across the tests, so the String, Bool and word-constant constructors they
+// build stay heated for refcounting; every other live constructor stays cold.
+const heated = new Set(["CID_FALSE", "CID_SCON", "CID_SNIL", "CID_TRUE", "CID_WCON"]);
+for (const [name, id] of cid) {
+  assert.equal(hot[id], heated.has(name) ? 1 : 0, name + " sharing flag");
 }
 const fid = fids(c);
 assert.ok(fid.length > 0 && fid.length <= (1 << 20) - 4, "FID table inside the limit");

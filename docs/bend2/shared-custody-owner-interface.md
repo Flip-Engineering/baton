@@ -84,6 +84,9 @@ def Instance.attach(database: String, directory: String)
 def Instance.attach_owned(database: String, directory: String, lock: U32)
   -> IO(Result<&1,&1,U32 & String,U32>)
 def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>)
+def Instance.drain(database: String) -> IO(Result<&1,&1,U32 & String,String>)
+def Instance.owner_status(database: String) -> IO(Result<&1,&1,U32 & String,String>)
+def Instance.owner_wait(database: String) -> IO(Result<&1,&1,U32 & String,String>)
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
 def Instance.commit(handle: U32, schema: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>)
 def Instance.restore(handle: U32, schema: U32) -> IO(Result<&1,&1,U32 & String,String>)
@@ -98,10 +101,80 @@ The same rule applies to `ProcessChild` and `SessionLock` callers
 `Instance.admit` returns the `RetainedStart` shape that `ProcessChild.retain`
 returns, so a caller keeps its existing `retained_start` handling. When the owner
 refuses an admission that started no custody (`EINVAL`, `ESTALE`, `ENOENT`,
-`ENOMEM`), the client removes the attempt directory and manifest it created, so a
-retry prepares them again. A refusal that may leave custody running (`EEXIST` for
+`ENOMEM`, `ESHUTDOWN`), the client removes the attempt directory and manifest it
+created, so a retry prepares them again. A refusal that may leave custody running (`EEXIST` for
 an attempt that already launched, `EBUSY` for an attempt the owner already holds)
 leaves the directory in place.
+
+## Owner drain
+
+`--instance-shutdown DATABASE` asks the owner to drain and prints the owner
+status. A draining owner admits no new attempt. It keeps serving the attempts it
+holds and every attach, recover, state, commit, start, cancel and signal request
+for them, so each attempt completes and recovers as before. When its last attempt
+retires, the owner removes its socket and record and exits. Because attempts
+only leave a draining owner, new admissions cannot extend a drain. The request
+returns while the owner is still alive; the printed state is `draining`.
+
+`--instance-status DATABASE` prints one JSON object and starts no owner:
+
+```json
+{"state":"draining","pid":4242,"owner":7,"epoch":3,"attempts":1,
+ "drainGated":true,"executable":"/opt/baton/bin/baton","sha256":"..."}
+```
+
+`state` is `absent`, `running` or `draining`. `executable` is the link of
+`/proc/PID/exe`, where PID comes from the credentials of the socket that
+answered; it ends in ` (deleted)` when an install replaced the file after the
+owner started. `sha256` is the hash of the file the owner process has open, which
+is the code it runs. `drainGated` is false for an owner that predates the gate.
+`--instance-wait DATABASE` blocks, without a limit, until the owner that answers
+now has exited or a successor replaced it, then prints the status. It decides
+liveness the way every client does, by connecting to the owner socket, so a stale
+record or a reused pid never keeps it waiting. The caller interrupts it.
+
+An admission that a draining owner refuses ends as `ESHUTDOWN`. The client
+removes the attempt directory it created, and the refusal text, which starts with
+`ESHUTDOWN:`, names the owner pid and executable. The receive path
+(`receive.bend`, `started`) classifies that prefix with `Drain.drain_refusal`
+and defers the start. Under the held session lock it marks the wake claim that the
+admission took as `drain-deferred`, by the exact owner and generation it read,
+settles the execution row as exited with status `drain-deferred` so `stall` still
+lists the session, keeps the input owed, and writes one durable report of kind
+`instance-drain-deferred` to the recorded orchestrator.
+
+The owner re-drives the input. It launches `SELF --drain-sweep DATABASE`,
+detached, when it starts and after it has exited a drain and released the
+election. The sweep (`coordinator/drain-sweep.bend`) reads the durable deferred
+session rows and launches one `--drain-sweep-session` child per row. Each child
+holds a separate nonblocking sweep lock for its session while it runs the
+existing delivery path. The delivery path takes the normal session lock and
+re-reads the claim and custody state. A live claimed owner is adopted; otherwise
+the owed message is claimed with the next generation and launched. The receiver
+continues to own the existing wake claim, session lock and retained native
+identity. A child blocked in a managed admission RPC therefore holds only that
+session's sweep lock. Later timer or owner sweeps return immediately for that
+session while starting workers for other deferred sessions. A child failure
+leaves the durable deferred row available to the next sweep. A reading of the
+owed input clears the claim; the next sweep removes the deferred row after it
+observes no owed input. The delivery starts a successor owner from the
+executable of the admitting client. The Linux user service and timer described
+in `deploy/drain-sweep/README.md` repeat the sweep after host restart and on
+later retry rounds.
+
+An owner that runs an older release does not gate admissions. `--instance-shutdown`
+therefore also creates a marker file, `owner-KEY.drain-TOKEN-EPOCH`, in the
+per-user IPC directory. The name carries the owner incarnation, so no client reads
+or removes another incarnation's marker, and the owner removes its own marker when
+it exits. A marker that cannot be written fails `--instance-shutdown` before the
+drain is requested, so a failed gate is never reported as a drain and the call
+can be repeated. A client of this release refuses a genuinely new custody start, one
+whose attempt directory has no `launch` marker, while the marker of the owner
+that answers exists. An attempt that the owner already holds, or that already
+launched, passes the client and the owner decides. The marker does not stop a
+client of an older release from reaching an older owner. An older owner is
+replaced only after `--instance-status` reports `absent` and a later admission
+reports the successor's executable and hash.
 
 ## Unchanged caller surface
 
@@ -321,6 +394,25 @@ passes `"0"`, which reports `gap` and still delivers every later commit.
   incarnation keeps the cursor and reports `gap` for the earlier incarnation.
 - A write through a retired capability is refused.
 - `Instance.shutdown` ends the owner, and a later attempt starts a new one.
+- `drain` returns while the owner lives, with state `draining`; a new admission
+  is refused with `ESHUTDOWN` naming the owner pid and executable, both through
+  the client marker and, with the marker removed, through the owner; an admission
+  of the held attempt is not stopped by the marker; the held attempt keeps
+  running and an owner of another database is unaffected; `owner-wait` returns
+  `absent` after the held attempt ends and after an owner died and left its
+  record; the next admission starts a successor whose pid differs and whose
+  executable and hash match the admitting client; a marker of another
+  incarnation neither blocks nor is removed (`test/shared-instance.py`).
+- The classification and report texts of the deferral are laws in
+  `coordinator/instance-drain-laws.bend`; the claim statements are laws in
+  `coordinator/store.bend`. The owner launches the sweep when it starts and after
+  its drain (`test/shared-instance.py`, with the `--drain-sweep` mode of
+  `test/instance.bend`). Focused sweep acceptance must hold one managed admission
+  RPC open while another deferred session proceeds, confirm repeated sweeps do
+  not start duplicate delivery for the blocked session, and confirm a later
+  round retries after the blocked worker exits. It must also prove that a stale
+  worker cannot clear a newer deferred generation and that existing native
+  identity remains unchanged.
 
 `test/process.py`, `test/retained-control.py`, `test/receive.py` and
 `test/native-cli.py` run unchanged as regression controls for the launch path.
