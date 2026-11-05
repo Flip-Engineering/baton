@@ -211,11 +211,6 @@ def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, Str
 def busy(+code: U32) -> Bool:
   Bool.or(U32.is_eq(code,5),U32.is_eq(code,6))
 
-def busy_again(result: Result<&1,&1,U32 & String,String>, again: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
-  match result:
-    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),busy(code),again(Unit{}),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
-    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
-
 # The busy step of a store retry loop. It receives the loop and its arguments
 # unapplied and matches the result first, so a law that reaches a store write
 # compares this call without unfolding the loop: the checker unfolds a saturated
