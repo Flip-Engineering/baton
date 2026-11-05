@@ -466,12 +466,17 @@ def rr_is_refusal(+text: String) -> Bool:
   Bool.and(Bool.not(String.starts_with(normalized,"i can't help but")),
     Bool.or(rr_prefix(normalized,"i can't help"),Bool.or(rr_prefix(normalized,"i cannot help"),Bool.or(rr_prefix(normalized,"i can't assist"),Bool.or(rr_prefix(normalized,"i cannot assist"),Bool.or(rr_prefix(normalized,"i must decline"),Bool.or(rr_prefix(normalized,"i won't help"),Bool.or(rr_prefix(normalized,"i will not help"),Bool.or(rr_prefix(normalized,"i'm unable to help"),Bool.or(rr_prefix(normalized,"i am unable to help"),Bool.or(rr_prefix(normalized,"i'm sorry, but i can't"),Bool.or(rr_prefix(normalized,"i'm sorry, but i cannot"),Bool.or(rr_prefix(normalized,"i’m sorry, but i can’t"),Bool.or(rr_prefix(normalized,"i’m sorry, but i cannot"),False{}))))))))))))))
 
-def rr_refusal_description(+db: String, +event: String) -> IO(String):
+def rr_event_refusal_description(+db: String, +event: String) -> IO(String):
   do IO<String>:
     +description : String <- rr_scalar(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") AND json_type(" ++ C.q(event) ++ ",'$.refusal_description')='text' THEN json_extract(" ++ C.q(event) ++ ",'$.refusal_description') WHEN json_valid(" ++ C.q(event) ++ ") AND json_type(" ++ C.q(event) ++ ",'$.baton.refusal_description')='text' THEN json_extract(" ++ C.q(event) ++ ",'$.baton.refusal_description') WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='turn.failed' THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.error.message')," ++ C.q(event) ++ ") WHEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' THEN coalesce(nullif(json_extract(" ++ C.q(event) ++ ",'$.payload.text'),''),nullif(json_extract(" ++ C.q(event) ++ ",'$.payload.reason'),'')," ++ C.q(event) ++ ") ELSE " ++ C.terminal_body_expr(C.q(event)) ++ " END")
     explicit : String <- rr_scalar(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") AND (coalesce(json_extract(" ++ C.q(event) ++ ",'$.baton.outcome'),'')='model-refusal' OR coalesce(json_extract(" ++ C.q(event) ++ ",'$.modelRefusal'),0)=1 OR json_type(" ++ C.q(event) ++ ",'$.refusal_description')='text' OR json_type(" ++ C.q(event) ++ ",'$.baton.refusal_description')='text') THEN 1 ELSE 0 END")
     terminal : String <- rr_scalar(db,"SELECT CASE WHEN (" ++ C.terminal_expr(C.q(event)) ++ "=1) OR json_extract(" ++ C.q(event) ++ ",'$.type')='turn.failed' THEN 1 ELSE 0 END")
     Bool.pick(IO(String),Bool.or(String.eq(explicit,"1"),Bool.and(String.eq(terminal,"1"),rr_is_refusal(description))),IO.pure(String,description),IO.pure(String,""))
+
+def rr_refusal_description(+db: String, +event: String) -> IO(String):
+  do IO<String>:
+    valid : String <- rr_scalar(db,"SELECT json_valid(" ++ C.q(event) ++ ")")
+    Bool.pick(IO(String),String.eq(valid,"1"),rr_event_refusal_description(db,event),IO.pure(String,""))
 
 def rr_failed(+db: String, +event: String) -> IO(Bool):
   do IO<Bool>:

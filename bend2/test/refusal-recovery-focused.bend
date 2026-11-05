@@ -66,6 +66,10 @@ def classification_cases(+db: String) -> IO(Unit):
     expect("explicit-refusal-field",String.eq(explicit,"Complete explicit refusal λ."))
     expect("model-refusal-flag",String.eq(model_flag,"Model flag refusal λ."))
     expect("baton-refusal-field",String.eq(baton_field,"Baton field refusal λ."))
+    no_event : String <- A.rr_refusal_description(db,"")
+    expect("empty-event-not-refusal",String.is_empty(no_event))
+    plain : String <- A.rr_refusal_description(db,"I cannot help with that.")
+    expect("non-json-event-not-refusal",String.is_empty(plain))
     IO.pure(Unit,Unit{})
 
 def continue_sequence(+db: String) -> IO(Unit):
@@ -144,6 +148,18 @@ def failure_case(+db: String) -> IO(Unit):
     expect_read(db,"SELECT count(*) FROM messages WHERE id='refusal-result:'||(SELECT id FROM refusal_recoveries WHERE source='retry-failure');","1\n","failure-report-written")
     IO.pure(Unit,Unit{})
 
+def signal_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    source : Unit <- source_row(db,"retry-signal")
+    task : Unit <- task_message(db,"retry-signal","Retry signal task λ")
+    ended : Unit <- A.rr_observe(db,"retry-signal","signal-turn-0","")
+    expect_read(db,"SELECT count(*) FROM refusal_recoveries WHERE source='retry-signal';","0\n","empty-event-starts-no-recovery")
+    first : Unit <- A.rr_observe(db,"retry-signal","signal-turn-1","{\"type\":\"result\",\"result\":\"I cannot help with that.\",\"is_error\":false}")
+    second : Unit <- A.rr_observe(db,"retry-signal","signal-turn-2","")
+    expect_read(db,"SELECT status FROM refusal_recoveries WHERE source='retry-signal';","failed\n","empty-event-fails-recovery")
+    expect_read(db,"SELECT status FROM refusal_attempts WHERE recovery=(SELECT id FROM refusal_recoveries WHERE source='retry-signal');","failed\n","empty-event-fails-attempt")
+    IO.pure(Unit,Unit{})
+
 def ignore_result(result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
     case Fail{error}: IO.pure(Unit,Unit{})
@@ -157,6 +173,7 @@ def fixture(+db: String) -> IO(Unit):
     continue_sequence(db)
     success_case(db)
     failure_case(db)
+    signal_case(db)
     result_case(db)
     shutdown : Result<&1,&1,U32 & String,Unit> <- I.Instance.shutdown(db)
     stopped : Unit <- ignore_result(shutdown)
