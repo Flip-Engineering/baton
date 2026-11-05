@@ -1,0 +1,13 @@
+F
+======================================================================
+FAIL: test_lifecycle (__main__.SqliteReadReuse.test_lifecycle)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate/bend2/test/sqlite-read-reuse.py", line 113, in test_lifecycle
+    self.assertIn('ok ' + label, result.stdout)
+AssertionError: 'ok fork-rejected' not found in 'ok two_threads\nok fork-forget-inherited\nok fork-tls-destructor\nok fork-parent-after\nok path-first\nok path-second\nok path-again\nok write-before\nok write-after\nok autocommit-transaction\nok autocommit-after\nok read-only\nok read-only-after\nok replacement-before\nok replacement-after\nok multi-statement\nok busy-read\nok encoding-refusal\nok encoding-utf8\nok lifecycle\n'
+
+----------------------------------------------------------------------
+Ran 1 test in 553.544s
+
+FAILED (failures=1)

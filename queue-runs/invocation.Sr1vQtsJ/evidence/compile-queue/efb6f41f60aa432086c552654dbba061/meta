@@ -1,0 +1,10 @@
+kind=cc
+cwd=/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate
+state_root=/var/tmp/baton2-compile-queue
+source_root=/
+entry=
+priority=0
+key=9888936fd5e309d82b089a0a0f2024b9c4896bb326258bf9ac620cb7ffb6e0c8
+keydir=/var/tmp/baton2-compile-queue/keys/9888936fd5e309d82b089a0a0f2024b9c4896bb326258bf9ac620cb7ffb6e0c8
+attempt=/var/tmp/baton2-compile-queue/keys/9888936fd5e309d82b089a0a0f2024b9c4896bb326258bf9ac620cb7ffb6e0c8/runs/1793218299395195654-1602004
+artifact_name=output

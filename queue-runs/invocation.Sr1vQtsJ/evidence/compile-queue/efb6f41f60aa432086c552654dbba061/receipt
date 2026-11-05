@@ -1,0 +1,5 @@
+status=completed
+key=9888936fd5e309d82b089a0a0f2024b9c4896bb326258bf9ac620cb7ffb6e0c8
+reused=0
+owner=4314acaaf86944b08535ee52bcf600af
+artifact-output=/var/tmp/baton2-1208-sqlite-read-reuse-aed5dd3d/candidate/.scratch/bend2/sqlite-read-reuse
