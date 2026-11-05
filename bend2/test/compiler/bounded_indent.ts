@@ -64,11 +64,11 @@ try {
   // exercises the indentation cap, so use the generic lowering in its temp
   // compiler copies. The branch C lowering has its own test.
   const bendSource = fs.readFileSync(path.join(upstream, "bend.ts"), "utf8");
-  const lower = "literal_chain(p, body, vars, def, k)\n      ?? body_flatten(body, vars, () => p.sc.frs++));";
-  const generic = "body_flatten(body, vars, () => p.sc.frs++));";
-  fs.writeFileSync(path.join(temp, "bend.ts"),
-    bendSource.includes(lower)
-      ? replaceOnce(bendSource, lower, generic) : bendSource);
+  const lower = "literal_chain(p, body, vars, def, k)\n      ?? literal_columns(p, def, k, vars, () => body_flatten(body, vars, () => p.sc.frs++))";
+  const generic = "body_flatten(body, vars, () => p.sc.frs++)";
+  // replaceOnce asserts the anchor: a lowering edit that moves it fails here,
+  // so the fixture cannot silently compile through the literal path again.
+  fs.writeFileSync(path.join(temp, "bend.ts"), replaceOnce(bendSource, lower, generic));
   const source = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");
   const capped = source.match(/function file_push\(fl: File, line: string\): void \{\n[\s\S]*?\n\}/)?.[0];
   assert.ok(capped !== undefined, "file_push definition");
