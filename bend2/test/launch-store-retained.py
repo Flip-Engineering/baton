@@ -43,6 +43,7 @@ class RetainedStore(unittest.TestCase):
     def setUp(self):
         if not EXE.is_file():
             self.fail(f'retained store fixture not built at {EXE}')
+        (ROOT / '.scratch/bend2').mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
