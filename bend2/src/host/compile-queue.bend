@@ -1517,9 +1517,46 @@ def outside_state_next(previous: OutsideState, sample: Maybe<&2,U32>) -> Outside
   match previous:
     case OutsideState{baseline, growth}: outside_state_next_sample(baseline,growth,sample)
 
+# A command that wrote its compile marker has finished compiling. Its claim
+# ends while the command keeps running, so an unmeasured command of another
+# key can be admitted and the link phase overlaps with the next compile.
+# The claim file is found by the supervisor identity the watcher already
+# holds; its usage record goes with it, mirroring the reap of a claim whose
+# lock is no longer held.
+def claim_matches_supervisor(+text: String, +supervisor: U32, +supervisor_start: String) -> Bool:
+  Bool.and(Tx.str_eq(field(text, "pid"), U32.show(supervisor)),
+    Tx.str_eq(field(text, "starttime"), supervisor_start))
+
+def claim_end_one(+state: String, +dir: String, +name: String,
+                  +supervisor: U32, +supervisor_start: String) -> IO(Unit):
+  do IO<Unit>:
+    text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name))
+    Bool.pick(IO(Unit), claim_matches_supervisor(text, supervisor, supervisor_start),
+      do IO<Unit>:
+        removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(dir ++ "/" ++ name))
+        usage_removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name))
+        IO.pure(Unit, Unit{}),
+      IO.pure(Unit, Unit{}))
+
+def claim_end_files(names: List<&1,String>, +state: String, +dir: String,
+                    +supervisor: U32, +supervisor_start: String) -> IO(Unit):
+  match names:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case name <> rest:
+      do IO<Unit>:
+        ended_one : Unit <- claim_end_one(state, dir, name, supervisor, supervisor_start)
+        claim_end_files(rest, state, dir, supervisor, supervisor_start)
+
+def claim_end(+state: String, +supervisor: U32, +supervisor_start: String) -> IO(Unit):
+  do IO<Unit>:
+    +dir : String <- IO.pure(String, admission_root(state) ++ "/running")
+    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(dir))
+    claim_end_files(Tx.split_nul(names), state, dir, supervisor, supervisor_start)
+
 @unsafe
 def watch_heavy_go(+attempt: String, +pid: U32, +start: String,
-                   +supervisor: U32, +supervisor_start: String, +peak: U32, outside: OutsideState) -> IO(Unit):
+                   +supervisor: U32, +supervisor_start: String, +peak: U32, outside: OutsideState,
+                   +ended: U32) -> IO(Unit):
   do IO<Unit>:
     child_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
     release_child_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
@@ -1537,6 +1574,7 @@ def watch_heavy_go(+attempt: String, +pid: U32, +start: String,
     +growth : U32 <- IO.pure(U32,outside_state_growth(next_outside))
     usage_written : Unit <- record_usage_measured(attempt,pid,sample,growth,outside_sample)
     marker : Bool <- exit_marker_matches(attempt, pid, start)
+    compiled : Bool <- regular(attempt ++ "/compiled")
     Bool.pick(IO(Unit), Bool.and(marker, U32.is_eq(release_child_alive, 0)),
       do IO<Unit>:
         recorded : Unit <- peak_record(attempt,next_peak)
@@ -1547,14 +1585,22 @@ def watch_heavy_go(+attempt: String, +pid: U32, +start: String,
         Bool.pick(IO(Unit), U32.is_eq(supervisor_alive, 0), IO.pure(Unit, Unit{}),
           do IO<Unit>:
             slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(250))
-            watch_heavy_go(attempt, pid, start, supervisor, supervisor_start,next_peak,next_outside)),
-        do IO<Unit>:
-          slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(250))
-          watch_heavy_go(attempt, pid, start, supervisor, supervisor_start,next_peak,next_outside)))
+            watch_heavy_go(attempt, pid, start, supervisor, supervisor_start,next_peak,next_outside,ended)),
+        Bool.pick(IO(Unit), Bool.and(compiled, U32.is_eq(ended, 0)),
+          do IO<Unit>:
+            recorded : Unit <- peak_record(attempt,next_peak)
+            recorded_group : Unit <- group_peak_record(attempt,next_peak)
+            claim_ended : Unit <- claim_end(state, supervisor, supervisor_start)
+            released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
+            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(250))
+            watch_heavy_go(attempt, pid, start, supervisor, supervisor_start,next_peak,next_outside,1),
+          do IO<Unit>:
+            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(250))
+            watch_heavy_go(attempt, pid, start, supervisor, supervisor_start,next_peak,next_outside,ended))))
 
 def watch_heavy(+attempt: String, +pid: U32, +start: String,
                 +supervisor: U32, +supervisor_start: String) -> IO(Unit):
-  watch_heavy_go(attempt,pid,start,supervisor,supervisor_start,0,OutsideState{None{},0})
+  watch_heavy_go(attempt,pid,start,supervisor,supervisor_start,0,OutsideState{None{},0},0)
 
 def watch_heavy_supervisor(parsed: Maybe<&2,U32>, pid: U32, attempt: String, start: String,
                            supervisor_start: String) -> IO(Unit):
