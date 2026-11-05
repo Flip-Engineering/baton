@@ -31,7 +31,7 @@ def selection_sql(+session: String) -> String:
   ++ " AND " ++ Status.owed_sql("m") ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY m.seq)"
 
 def output_sql(+saved: String) -> String:
-  "SELECT CASE WHEN json_array_length(" ++ C.q(saved) ++ ")>0 THEN json_object('hookSpecificOutput',json_object('hookEventName','PostToolUse','additionalContext','Baton input for this turn. Handle the following complete messages:' || char(10) || (SELECT group_concat('Message (' || json_extract(value,'$.kind') || ') from ' || json_extract(value,'$.sender') || ' [id: ' || json_extract(value,'$.id') || ']:' || char(10) || json_extract(value,'$.body') || char(10) || 'The complete input is available in this turn.',char(10)||char(10)) FROM json_each(" ++ C.q(saved) ++ ")))) ELSE '' END;"
+  "SELECT CASE WHEN json_array_length(" ++ C.q(saved) ++ ")>0 THEN json_object('hookSpecificOutput',json_object('hookEventName','PostToolUse','additionalContext','Baton input for this turn. Handle the following complete messages:' || char(10) || (SELECT group_concat(" ++ Status.complete_message_sql("json_extract(value,'$.id')","json_extract(value,'$.kind')","json_extract(value,'$.sender')","json_extract(value,'$.body')") ++ " || char(10) || 'The complete input is available in this turn.',char(10)||char(10)) FROM json_each(" ++ C.q(saved) ++ ")))) ELSE '' END;"
 
 # The statement binds the complete body to the active owned execution.
 def record_sql(+session: String, +directory: String, +attempt: String, +native: String, identity: String, saved: String) -> String:
