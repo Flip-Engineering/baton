@@ -83,6 +83,7 @@ class DispatchRuntimeGuard(unittest.TestCase):
                 mock.patch.object(CHECK, 'verify_repl', return_value=dependency), \
                 mock.patch.object(CHECK, 'verify_root_channel'), \
                 mock.patch.object(CHECK, 'verify_dispatch_runtime'), \
+                mock.patch.object(CHECK, 'verify_dsh_helpers'), \
                 mock.patch.object(CHECK, 'verify_agent_summary_preload'), \
                 mock.patch.object(CHECK, 'system_dependencies', return_value=[]), \
                 mock.patch.object(CHECK.platform, 'system', return_value='Darwin'), \

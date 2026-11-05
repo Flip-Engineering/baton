@@ -69,7 +69,10 @@ binary's role, installed path, SHA256, source pin, entry and build mode.
 `SHA256SUMS` covers the four executable paths, the manifest and the install
 receipt. `install-receipt.json` binds the manifest hash and binary pins.
 `libexec/baton2/check-install.py` verifies those files, the full general CLI
-sibling and all three role binaries, and the required REPL payload. It refuses a missing, non-executable, altered or
+sibling and all three role binaries, and the required REPL payload. It also
+requires the DSH helpers `libexec/baton2/dsh-worker.mjs` and
+`libexec/baton2/dsh-baton-hooks.mjs`, which a DSH launch resolves beside the
+receiver executable. It refuses a missing, non-executable, altered or
 unrecorded binary and reports the verified binary pins in its result.
 
 ## Upgrade an existing coordination schema

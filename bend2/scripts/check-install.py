@@ -131,6 +131,17 @@ def verify_dispatch_runtime(prefix):
             'The installation has no Node or bundled Bun runtime for the dispatch operation')
 
 
+# A DSH launch resolves its worker bridge and hooks plugin beside the receiver
+# executable (#1215). A layout that lacks either file cannot launch DSH, so the
+# installation check refuses it before activation.
+def verify_dsh_helpers(prefix):
+    directory = prefix / 'libexec/baton2'
+    for name in ('dsh-worker.mjs', 'dsh-baton-hooks.mjs'):
+        helper = directory / name
+        require(helper.is_file() and not helper.is_symlink() and os.access(helper, os.R_OK),
+                'The installation lacks the DSH helper libexec/baton2/' + name)
+
+
 # The Claude Code agent_summary preload (#1338) is pinned by SHA-256. `baton doctor` runs
 # the helper beside it.
 AGENT_SUMMARY_PRELOAD_SHA256 = 'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40'
@@ -393,6 +404,7 @@ def check(prefix, output, probe_native_compiler=True):
     dependency = verify_repl(prefix, manifest)
     verify_root_channel(prefix)
     verify_dispatch_runtime(prefix)
+    verify_dsh_helpers(prefix)
     verify_agent_summary_preload(prefix)
     system = platform.system()
     require(manifest.get('required_system_dependencies') == system_dependencies(system),

@@ -1583,15 +1583,37 @@ def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: Strin
 
 # The worker bridge and the input and completion plugin ship in one directory:
 # the installed package's libexec/baton2 or the source checkout's bend2/scripts.
-def dsh_worker_helper(dsh: Bool, executable: String) -> IO(String):
-  match dsh:
-    case False{}: IO.pure(String,"")
-    case True{}: IO.try(String,HostControl.Control.agent_helper(executable))
-
+# A DSH launch names both files in its patch and environment, so a receiver
+# layout that stages only one of them cannot launch DSH; preparation refuses
+# that layout with the missing file named (#1215).
 def dsh_hooks_path(bridge: String) -> String:
   match bridge:
     case "": ""
     case path: Subs.directory_of(path) ++ "/dsh-baton-hooks.mjs"
+
+def dsh_hooks_checked(+bridge: String, found: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
+  match found:
+    case Done{kind}: Bool.pick(Result<&1,&1,U32 & String,String>,String.eq(kind,"1"),Done{bridge},Fail{(2,"The DSH hooks plugin is not staged beside the receiver executable: " ++ dsh_hooks_path(bridge))})
+    case Fail{error}: Fail{(2,"The DSH hooks plugin is not staged beside the receiver executable: " ++ dsh_hooks_path(bridge))}
+
+def dsh_bridge_checked(helper: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match helper:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"The DSH worker bridge is not staged beside the receiver executable: dsh-worker.mjs")})
+    case Done{+bridge}: do IO<Result<&1,&1,U32 & String,String>>:
+      found : Result<&1,&1,U32 & String,String> <- F.Files.regular(dsh_hooks_path(bridge))
+      IO.pure(Result<&1,&1,U32 & String,String>,dsh_hooks_checked(bridge,found))
+
+def dsh_worker_helper(dsh: Bool, executable: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match dsh:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      helper : Result<&1,&1,U32 & String,String> <- HostControl.Control.agent_helper(executable)
+      dsh_bridge_checked(helper)
+
+def retained_dsh_result(assets: Result<&1,&1,U32 & String,String>, next: String -> IO(Result<&1,&1,U32 & String,RetainedLaunch>)) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+  match assets:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
+    case Done{bridge}: next(bridge)
 
 type IdentityParts is Data:
   IdParts{prefix: String, resolver: String}
@@ -1673,21 +1695,22 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
         +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
         home : String <- dsh_home_if(dsh,db,absolute_db,player)
-        +bridge : String <- dsh_worker_helper(dsh,executable)
-        prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort,dsh_hooks_path(bridge))
-        completion_extension : String <- omp_completion_extension(omp,executable)
-        claude_entries : List<String> <- claude_environment_if(claude,executable)
-        seat_checked : Unit <- claude_seat_check(claude,executable,absolute_db,player,cmd,directory)
-        +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],claude_entries)) ++ identity_prefix(parts))
-        +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
-        store : String <- current_store(db,player,harness)
-        history : String <- current_history(db,player)
-        launch_credit : Maybe<List<String>> & String <- Accounts.credit_launch_gate(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store,Accounts.credit_guard_qualified())
-        recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
-        +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,completion_extension,history,Tx.trim_nl(harness),account,launch_credit)))
-        +runtime_args : String <- IO.pure(String,Bool.pick(String,muse,Muse.with_runtime_hooks(args,absolute_db,player,directory,executable),args))
-        launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,runtime_args,initial,omp,claude,level,seal_prompt)
-        IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch))
+        assets : Result<&1,&1,U32 & String,String> <- dsh_worker_helper(dsh,executable)
+        retained_dsh_result(assets, +bridge => do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
+          prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort,dsh_hooks_path(bridge))
+          completion_extension : String <- omp_completion_extension(omp,executable)
+          claude_entries : List<String> <- claude_environment_if(claude,executable)
+          seat_checked : Unit <- claude_seat_check(claude,executable,absolute_db,player,cmd,directory)
+          +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],claude_entries)) ++ identity_prefix(parts))
+          +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
+          store : String <- current_store(db,player,harness)
+          history : String <- current_history(db,player)
+          launch_credit : Maybe<List<String>> & String <- Accounts.credit_launch_gate(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store,Accounts.credit_guard_qualified())
+          recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
+          +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,completion_extension,history,Tx.trim_nl(harness),account,launch_credit)))
+          +runtime_args : String <- IO.pure(String,Bool.pick(String,muse,Muse.with_runtime_hooks(args,absolute_db,player,directory,executable),args))
+          launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,runtime_args,initial,omp,claude,level,seal_prompt)
+          IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch)))
 
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:

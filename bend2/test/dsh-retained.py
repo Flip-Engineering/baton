@@ -106,6 +106,8 @@ class DshRetained(unittest.TestCase):
                         self.receiver_helpers / 'dsh-worker.mjs')
         shutil.copyfile(ROOT / 'bend2/scripts/dsh-baton-hooks.mjs',
                         self.receiver_helpers / 'dsh-baton-hooks.mjs')
+        shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs',
+                        self.receiver_helpers / 'git-series.mjs')
 
     def assert_retained_prepare_bridge(self):
         self.start_owner()
@@ -114,7 +116,7 @@ class DshRetained(unittest.TestCase):
              'deepseek/deepseek-flash', 'max'],
             text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        bridge = next((line.split('\t', 1)[1] for line in result.stdout.splitlines()
+        bridge = next((line.split('\t', 1)[1].split('=', 1)[1] for line in result.stdout.splitlines()
                        if line.startswith('arg\tBATON_DSH_WORKER_BRIDGE=')), '')
         expected_bridge = str(self.receiver_helpers / 'dsh-worker.mjs')
         expected_hooks = str(self.receiver_helpers / 'dsh-baton-hooks.mjs')
@@ -123,7 +125,7 @@ class DshRetained(unittest.TestCase):
         self.assertTrue((self.receiver_helpers / 'dsh-baton-hooks.mjs').is_file())
         tools = (self.patches / 'dsh-tools.patch.yml').read_text()
         self.assertIn('name: ' + repr(expected_hooks), tools)
-        self.assertIn('input\tfixture task', result.stdout)
+        self.assertIn('fixture task\nkeep\t0', result.stdout)
 
     def run_fixture(self):
         result = subprocess.run(
@@ -159,6 +161,20 @@ class DshRetained(unittest.TestCase):
     def test_retained_prepare_resolves_dsh_assets_from_package_stage(self):
         self.stage_receiver(package=True)
         self.assert_retained_prepare_bridge()
+
+    def test_retained_prepare_refuses_overlay_receiver_without_dsh_hooks(self):
+        # An overlay receiver carries a new binary over an older libexec that
+        # stages the worker bridge without its hooks plugin (#1215). Retained
+        # preparation must refuse that layout; it must not prepare a launch
+        # whose tools patch names a plugin file that is not staged.
+        self.stage_receiver()
+        (self.receiver_helpers / 'dsh-baton-hooks.mjs').unlink()
+        self.start_owner()
+        result = subprocess.run(
+            [str(self.receiver_bin), 'prepare', str(self.link), str(self.attempt), '/usr/bin/dsh',
+             'deepseek/deepseek-flash', 'max'],
+            text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_patch_inputs_are_the_minimal_roster_and_max_effort(self):
         self.run_fixture()
