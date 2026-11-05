@@ -17,6 +17,14 @@ Independent source review checked literal expansion, constructor mutation, varia
 cache lifetimes, and garbage collection. The full production Main build and release qualification
 remain separate acceptance evidence.
 
+`cache.patch` (commit `d37af25dd358adb0e718e559cc73ddacc3b17233`) caches emitted C by proven
+inputs. The cache is on by default; `BEND_CGEN_CACHE=0` opts out and `BEND_CGEN_CACHE_DIR`
+relocates the store. A hit is served only after verifying the receipt, artifact hashes and full
+input manifest; anything uncertain is a miss and runs the ordinary compiler.
+`0002-5c3715b7-emit-lits-leaves.patch` (commit `5c3715b7580467532717577c14931cbbb0a9e167`)
+walks a word match's leaves once, not once per pass, removing repeated work from the fixed-point
+loop while preserving the same emitted C.
+
 ## Rebuild
 
 On Linux x64 with Python 3.12, `patch`, and network access:
@@ -30,15 +38,21 @@ runtime, retains complete command streams, and packages the full upstream distri
 updated executable and explicit source provenance. Each rebuild records its own archive and
 executable hashes. Build paths and captured execution records can change these hashes.
 
-The retained distribution is `bend-2.0.25-baton741-pure-memo-full-linux-x64.tar.gz`, SHA256
-`38bb1813d52ddc7b816a8a01f971fe8503959fef54795ca22eb346b5cfc069a7`.
+The retained distribution is `bend-2.0.25-baton741-cgen-cache-full-linux-x64.tar.gz`, SHA256
+`ca9f19566db10332c56d5253ad4944d05e675b64ce07b3e12d6ff335c6485d8a`, 72,031,164 bytes.
 Its executable SHA256 is
-`b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0`.
+`94383bb15b262f5bcd34ae2684d74a06e0f81e88736a75e17c9d8cbe9dbb79dc`, and its manifest SHA256 is
+`3f5870dc691523757fd0f7c72a5dd27b67c7653ac1faa0b987f34c387916f726`.
+The previous pure-memo distribution
+(`38bb1813d52ddc7b816a8a01f971fe8503959fef54795ca22eb346b5cfc069a7`) remains in
+`previous_distributions` for rollback.
 The full archive includes the original and patched sources, Base, effects, guide, patch, Bun
 archive, build recipe, and complete measured command records.
 
 ## Measurements
 
+The table below records the pure-memo fork. The cgen cache changes compile wall time, not the
+generated C, and is measured separately.
 The actual repository entries below were compiled on the homelab EPYC 7551 with the official
 Bend executable, the official TypeScript sources under Bun 1.3.14, and the changed sources under
 the same Bun runtime. All three generated C files were byte-identical for each entry.
