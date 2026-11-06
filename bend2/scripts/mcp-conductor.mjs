@@ -33,6 +33,7 @@ let inputWitness = null;
 let nativeEvent = false;
 let claude = null;
 let rootHarness = 'claude-code';
+let nativeSession = null;
 let relayThread = null;
 let registerRoot = false;
 // True when the relay named its conversation, so the conductor does not follow a changed record.
@@ -58,6 +59,9 @@ for (let i = 2; i < process.argv.length; i++) {
     }
   } else if (arg === '--register') {
     registerRoot = true;
+  } else if (arg === '--native-session') {
+    nativeSession = process.argv[++i];
+    if (!nativeSession) throw new Error('--native-session requires the Claude conversation ID');
   } else if (arg === '--thread') {
     relayThread = process.argv[++i];
     if (!relayThread) throw new Error('--thread requires the Codex root thread ID');
@@ -1158,18 +1162,26 @@ function recordedRole() {
 
 function initialInstructions() {
   const guidance = `Baton ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use the advertised task dispatch tool for complete task text or an existing UTF-8 file. Baton retains task input and setup outcomes in its database, resolves the recorded route and preserves an existing assignment. Scratchpads contain deliberately authored working notes. Baton stores complete task text in the database. Use baton2_receiver to configure an ordinary receive endpoint where needed. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers send completion requests to their current coordinator when the assignment is ready. The coordinator reviews the assignment and supplied evidence. A satisfied assignment is confirmed with completion-confirmed to end the Player, or with --next TEXT to confirm and dispatch its next assignment together. Guidance states what is missing and directs the remaining work. Baton selects the recipient's current completion request. Baton generates mutation IDs and records recipient handling from actual native evidence. Agents can inspect current state without copying control IDs or receipts. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. ${replInput ? 'Use baton2_repl to evaluate Bend2 source and retain checked definitions in the attached actor\'s notebook; action help with arguments ["repl"] describes source composition and the bundled compiler.' : ''} Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`;
-  if (!nativeAttachmentInput || rootHarness === 'codex') return guidance;
+  if (rootHarness === 'codex') return guidance;
   const selected = selectedSession();
-  const native = nativeSelector(processFacts(process.ppid));
+  const clientNative = nativeSelector(processFacts(process.ppid));
+  if (nativeSession !== null && clientNative !== null && nativeSession !== clientNative) {
+    throw new Error('The selected Claude conversation differs from the native client session selector.');
+  }
+  const native = nativeSession ?? clientNative;
   if (native !== null) {
-    if (selected?.native && selected.native !== native) {
+    if (nativeSession === null && selected?.native && selected.native !== native) {
       throw new Error('The native client session selector differs from the recorded conversation.');
     }
-    if (!selected?.native) {
+    if (selected?.harness !== 'claude-code' || selected?.native !== native) {
+      if (hasParent(selected) && selected?.native) {
+        throw new Error('The selected Claude conversation differs from the recorded Player conversation.');
+      }
       if (hasParent(selected)) coord('connect', sessionId, native, selected.endpoint || '');
-      else coord('attach', sessionId, 'claude-code', native, selected?.endpoint || '');
+      else coord('attach', sessionId, 'claude-code', native, '');
     }
   }
+  if (!nativeAttachmentInput) return guidance;
   return coordInputRaw(guidance, 'native-attachment-input', sessionId, 'mcp-instructions');
 }
 

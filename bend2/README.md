@@ -798,6 +798,12 @@ database host. Each orchestra database has its own server entry and its own
 server name. `--dangerously-load-development-channels` takes several values;
 pass one `server:NAME` value for each orchestra.
 
+`--resume ROOT_SESSION` also passes `--native-session ROOT_SESSION` to the
+remote conductor. During initialization it attaches that Claude conversation
+and preserves pending messages and the operator role. The SSH process on the
+database host cannot discover the local Claude session ID from its process
+arguments. Supply `--resume` when generating an SSH entry for an existing root.
+
 The root attaches as the `operator` session. The operator keeps its operator
 role, so reports and questions from parentless Conductors select it as their
 recipient. The channel retains pending input for automatic delivery and read

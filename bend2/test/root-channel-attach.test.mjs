@@ -73,7 +73,8 @@ test('ssh configuration runs the conductor on the database host', (t) => {
   // The remote shell receives the third argument as one command line.
   const remote = spawnSync('sh', ['-c', entry.args[2]], { encoding: 'utf8' });
   assert.equal(remote.status, 0, remote.stderr);
-  assert.deepEqual(remote.stdout.trimEnd().split('\n'), [CONDUCTOR, database, baton, '--session', 'operator']);
+  assert.deepEqual(remote.stdout.trimEnd().split('\n'), [CONDUCTOR, database, baton, '--session', 'operator',
+    '--native-session', 'claude-root-thread']);
   assert.match(result.stderr, new RegExp(`claude --resume claude-root-thread --mcp-config FILE --dangerously-load-development-channels server:${name}`));
 });
 
@@ -177,7 +178,8 @@ db.close();
       await until(() => responses.some((r) => r.id === id), 'ping answered');
     },
     async deliver(id) {
-      const registration = recorded.find((args) => ['attach', 'connect'].includes(args[0]));
+      const registration = recorded.findLast((args) => ['attach', 'connect'].includes(args[0])
+        && args[args[0] === 'attach' ? 4 : 3]);
       const endpoint = JSON.parse(registration[registration[0] === 'attach' ? 4 : 3]);
       const delivery = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', session, '--deliver', endpoint[7], id],
         { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -208,6 +210,33 @@ test('an operator attachment keeps the operator role', async (t) => {
   assert.deepEqual(attached.slice(0, 3), ['attach', 'operator', 'claude-code']);
   assert.deepEqual(JSON.parse(attached[4]).slice(4, 7), ['--session', 'operator', '--deliver']);
   assert.equal(calls.filter((argv) => argv[0] === 'role').length, 0, JSON.stringify(calls));
+});
+
+test('a resumed Claude root selects its conversation before initialization across SSH', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=?,endpoint=? WHERE id=?')
+      .run('codex', 'previous-codex-thread', '["node","stale-conductor"]', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('question-before-attach', 'worker', 'operator', 'question', 'A retained blocking question.');
+  }, ['--native-session', 'claude-on-mac'], true);
+  const selected = calls.find((args) => args[0] === 'attach');
+  assert.deepEqual(selected, ['attach', 'operator', 'claude-code', 'claude-on-mac', '']);
+  const db = new DatabaseSync(calls.database);
+  assert.deepEqual({ ...db.prepare('SELECT harness,native FROM sessions WHERE id=?').get('operator') },
+    { harness: 'claude-code', native: 'claude-on-mac' });
+  assert.equal(db.prepare('SELECT role FROM session_roles WHERE session=?').get('operator').role, 'operator');
+  calls.channel.activate();
+  await calls.channel.until(() => calls.channel.notes().length > 0, 'retained question delivered');
+  assert.ok(calls.channel.notes()[0].params.content.includes('A retained blocking question.'));
+  assert.equal(db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+    .run('question-after-attach', 'worker', 'operator', 'question', 'A new blocking question.');
+  await calls.channel.deliver('question-after-attach');
+  assert.ok(calls.channel.notes().at(-1).params.content.includes('A new blocking question.'));
+  await calls.channel.call('read-question', 'baton2_delivery', { id: 'question-after-attach' });
+  assert.deepEqual(db.prepare('SELECT message,native FROM message_reads').all().map(row => ({ ...row })),
+    [{ message: 'question-after-attach', native: 'claude-on-mac' }]);
+  db.close();
 });
 
 test('a Codex root relay preserves its harness, thread and operator role', async (t) => {
