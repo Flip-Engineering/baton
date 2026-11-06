@@ -1683,7 +1683,7 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         completion_extension : String <- omp_completion_extension(omp,executable)
         claude_entries : List<String> <- claude_environment_if(claude,executable)
         seat_checked : Unit <- claude_seat_check(claude,executable,absolute_db,player,cmd,directory)
-        +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],claude_entries)) ++ identity_prefix(parts))
+        +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON2_CREDIT_RESERVATION=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],claude_entries)) ++ identity_prefix(parts))
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
         history : String <- current_history(db,player)
