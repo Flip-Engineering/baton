@@ -88,7 +88,7 @@ test('a database that does not exist on this host is refused', (t) => {
 });
 
 // The fake coordinator records each argv as one JSON line.
-async function attach(t, session, setup = () => {}, extraArgs = [], nativeAttachment = false) {
+async function attach(t, session, setup = () => {}, extraArgs = [], nativeAttachment = false, initializationError = null) {
   const dir = scratch(t);
   const database = orchestra(dir);
   const connection = new DatabaseSync(database);
@@ -158,6 +158,12 @@ db.close();
   const calls = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []);
   send({ id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } } });
   await until(() => responses.some((r) => r.id === 1), 'initialize answered');
+  if (initializationError !== null) {
+    assert.match(responses.find(r => r.id === 1).error?.message ?? '', initializationError);
+    const recorded = calls().filter(argv => argv[0] === database).map(argv => argv.slice(1));
+    recorded.database = database;
+    return recorded;
+  }
   assert.equal(responses.find((r) => r.id === 1).error, undefined, 'initialize succeeded');
   send({ method: 'notifications/initialized' });
   send({ id: 2, method: 'tools/list' });
@@ -212,32 +218,25 @@ test('an operator attachment keeps the operator role', async (t) => {
   assert.equal(calls.filter((argv) => argv[0] === 'role').length, 0, JSON.stringify(calls));
 });
 
-test('a resumed Claude root selects its conversation before initialization across SSH', async (t) => {
-  const calls = await attach(t, 'operator', (db) => {
-    db.prepare('UPDATE sessions SET harness=?,native=?,endpoint=? WHERE id=?')
-      .run('codex', 'previous-codex-thread', '["node","stale-conductor"]', 'operator');
-    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
-      .run('question-before-attach', 'worker', 'operator', 'question', 'A retained blocking question.');
-  }, ['--native-session', 'claude-on-mac'], true);
-  const selected = calls.find((args) => args[0] === 'attach');
-  assert.deepEqual(selected, ['attach', 'operator', 'claude-code', 'claude-on-mac', '']);
-  const db = new DatabaseSync(calls.database);
-  assert.deepEqual({ ...db.prepare('SELECT harness,native FROM sessions WHERE id=?').get('operator') },
-    { harness: 'claude-code', native: 'claude-on-mac' });
-  assert.equal(db.prepare('SELECT role FROM session_roles WHERE session=?').get('operator').role, 'operator');
-  calls.channel.activate();
-  await calls.channel.until(() => calls.channel.notes().length > 0, 'retained question delivered');
-  assert.ok(calls.channel.notes()[0].params.content.includes('A retained blocking question.'));
-  assert.equal(db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
-  db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
-    .run('question-after-attach', 'worker', 'operator', 'question', 'A new blocking question.');
-  await calls.channel.deliver('question-after-attach');
-  assert.ok(calls.channel.notes().at(-1).params.content.includes('A new blocking question.'));
-  await calls.channel.call('read-question', 'baton2_delivery', { id: 'question-after-attach' });
-  assert.deepEqual(db.prepare('SELECT message,native FROM message_reads').all().map(row => ({ ...row })),
-    [{ message: 'question-after-attach', native: 'claude-on-mac' }]);
-  db.close();
-});
+for (const nativeAttachment of [true, false]) {
+  test(`a resumed Claude entry preserves a different recorded Codex root (native input ${nativeAttachment})`, async t => {
+    const endpoint = '["node","retained-codex-relay"]';
+    const calls = await attach(t, 'operator', db => {
+      db.prepare('UPDATE sessions SET harness=?,native=?,endpoint=? WHERE id=?')
+        .run('codex', 'recorded-codex-thread', endpoint, 'operator');
+      db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+        .run('pending-question', 'worker', 'operator', 'question', 'Retained blocking input.');
+    }, ['--native-session', 'claude-on-mac'], nativeAttachment, /differs from the recorded root conversation/);
+    assert.equal(calls.some(args => ['attach', 'connect', 'native-attachment-input'].includes(args[0])), false);
+    const db = new DatabaseSync(calls.database, { readOnly: true });
+    assert.deepEqual({ ...db.prepare('SELECT harness,native,endpoint FROM sessions WHERE id=?').get('operator') },
+      { harness: 'codex', native: 'recorded-codex-thread', endpoint });
+    assert.equal(db.prepare('SELECT role FROM session_roles WHERE session=?').get('operator').role, 'operator');
+    assert.equal(db.prepare('SELECT body FROM messages WHERE id=?').get('pending-question').body, 'Retained blocking input.');
+    assert.equal(db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+    db.close();
+  });
+}
 
 test('a Codex root relay preserves its harness, thread and operator role', async (t) => {
   const calls = await attach(t, 'operator', (db) => {

@@ -1169,19 +1169,16 @@ function initialInstructions() {
     throw new Error('The selected Claude conversation differs from the native client session selector.');
   }
   const native = nativeSession ?? clientNative;
-  if (native !== null) {
-    if (nativeSession === null && selected?.native && selected.native !== native) {
-      throw new Error('The native client session selector differs from the recorded conversation.');
-    }
-    if (selected?.harness !== 'claude-code' || selected?.native !== native) {
-      if (hasParent(selected) && selected?.native) {
-        throw new Error('The selected Claude conversation differs from the recorded Player conversation.');
-      }
-      if (hasParent(selected)) coord('connect', sessionId, native, selected.endpoint || '');
-      else coord('attach', sessionId, 'claude-code', native, '');
-    }
+  if (native !== null && selected?.native
+      && (selected.harness !== 'claude-code' || selected.native !== native)) {
+    const owner = hasParent(selected) ? 'Player' : 'root';
+    throw new Error(`The selected Claude conversation differs from the recorded ${owner} conversation; its identity and endpoint are preserved. Use the root notice subscription for an independent native root.`);
   }
   if (!nativeAttachmentInput) return guidance;
+  if (native !== null && !selected?.native) {
+    if (hasParent(selected)) coord('connect', sessionId, native, selected.endpoint || '');
+    else coord('attach', sessionId, 'claude-code', native, selected?.endpoint || '');
+  }
   return coordInputRaw(guidance, 'native-attachment-input', sessionId, 'mcp-instructions');
 }
 
