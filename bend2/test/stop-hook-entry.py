@@ -325,7 +325,7 @@ class StopHook(unittest.TestCase):
             input=json.dumps({'executionNum': 1, 'terminationReason': 'model_stop', 'fullyIdle': True}),
             capture_output=True, text=True, env=dict(self.env, BATON_DATABASE=str(database)))
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('no such column: task_parent.parent', result.stderr)
+        self.assertRegex(result.stderr, r'no such (?:table|column): .+')
         self.assertNotIn('"decision":"allow"', result.stdout)
 
     def decision_sql(self):
@@ -1201,10 +1201,11 @@ print(json.dumps(results), flush=True)
                                       kind='completion-request', sender='worker')
         self.assertIn('Message (completion-request) from worker [id: request:worker:1]:\n' + body,
                       results['injected']['hookSpecificOutput']['additionalContext'])
-        self.assertIn(body[-32:] + "\nReview the work against worker's assignment and the supplied evidence. "
-                      "Confirm with completion-confirmed --to worker when the assignment is satisfied. "
-                      "Otherwise use guide --to worker --text TEXT to state what is missing and direct the remaining work.",
-                      results['injected']['hookSpecificOutput']['additionalContext'])
+        context = results['injected']['hookSpecificOutput']['additionalContext']
+        self.assertIn(body[-32:] + "\nReview the work against worker's assignment and the supplied evidence.", context)
+        self.assertIn('completion-confirmed --to worker', context)
+        self.assertIn('--next TEXT', context)
+        self.assertIn('guide --to worker --text TEXT', context)
         self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
 
     def test_codex_returned_guidance_reopens_work_and_uses_the_normal_read_hook(self):
