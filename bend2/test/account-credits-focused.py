@@ -173,10 +173,10 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.query("SELECT body FROM messages WHERE id LIKE '%:account-exhausted'"), [])
         self.assertEqual(self.query("SELECT body FROM messages WHERE id='task-1'"), [('original task',)])
 
-    def test_omp_openai_api_selection_precedes_subscription_recording_order(self):
+    def test_omp_api_funding_selection_keeps_its_route(self):
         self.record('omp-sub', harness='omp', provider='openai')
         self.assertEqual(self.record('omp-key', harness='omp', funding='api_key', provider='openai').returncode, 0)
-        self.assertEqual(self.json_account('select', harness='omp')['selected'], 'omp-key')
+        self.assertEqual(self.json_account('select', harness='omp', funding='api_key')['selected'], 'omp-key')
 
     def test_codex_and_muse_api_key_routes_are_refused(self):
         for harness in ('codex', 'muse'):

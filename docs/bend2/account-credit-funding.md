@@ -116,10 +116,11 @@ request evidence. A successful Responses call establishes that the configured
 route accepts a request. Provider usage and cost observations keep their reported
 values; a missing monetary value remains unknown.
 
-OpenAI OMP API accounts precede subscription accounts during selection. A provider
-refusal retains the selected API account and its unfinished input, and sends the
-cause to the parent. The coordinator can then choose the next action. The
-account's native configuration controls any OMP provider fallback.
+Use `account select --harness omp --funding api_key` to select API funding, and
+bind the named account before dispatch. A provider refusal retains the selected
+OpenAI API account and its unfinished input, and sends the cause to the parent.
+The coordinator can then choose the next action. The account's native
+configuration controls any OMP provider fallback.
 
 ## Request-level reservation
 

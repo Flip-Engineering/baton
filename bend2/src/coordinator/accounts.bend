@@ -1054,9 +1054,9 @@ def credit_request_facts_for(+db: String, +body: String) -> IO(CreditRequestFact
     IO.pure(CreditRequestFacts,credit_request_facts_fields(fields))
 
 # One row per account, fields separated by the ASCII unit separator, in operator
-# recording order, with the OpenAI OMP API route first.
+# recording order.
 def account_row_sql() -> String:
-  "SELECT id||char(31)||provider||char(31)||harness||char(31)||funding||char(31)||secret_ref||char(31)||organization||char(31)||verified_at FROM accounts ORDER BY CASE WHEN provider='openai' AND harness='omp' AND funding='api_key' THEN 0 ELSE 1 END,CASE WHEN priority='' THEN 9999 ELSE CAST(priority AS INTEGER) END,rowid;"
+  "SELECT id||char(31)||provider||char(31)||harness||char(31)||funding||char(31)||secret_ref||char(31)||organization||char(31)||verified_at FROM accounts ORDER BY CASE WHEN priority='' THEN 9999 ELSE CAST(priority AS INTEGER) END,rowid;"
 
 def account_rows_flat(fields: List<&2,String>, tail: List<&2,AccountRecord>) -> List<&2,AccountRecord>:
   match fields:
