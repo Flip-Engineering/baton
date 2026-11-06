@@ -1331,10 +1331,11 @@ def ordered_accounts(+db: String, +harness: String) -> IO(List<&2,AccountRecord>
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     IO.pure(List<&2,AccountRecord>,harness_accounts(account_lines(Tx.split_lines(rows),Nil{}),harness))
 
-# The request-level promotional-credit guard. It stays false until the release
-# qualification records the guard as proven; the launch gate below reads it too.
+# The request-level promotional-credit guard is on: an Anthropic API-key launch
+# reserves its maximum charge from the newest usable credit observation, records
+# the authorization and then starts; the launch gate below reads this value.
 def credit_guard_qualified() -> Bool:
-  False{}
+  True{}
 
 def credit_route(+account: AccountRecord) -> Bool:
   Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))

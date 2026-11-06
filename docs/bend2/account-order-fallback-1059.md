@@ -50,7 +50,7 @@ On a refusal, Baton scans the order from its head and gives each entry one state
 | State | Meaning | Effect |
 | --- | --- | --- |
 | refused | the account that just refused | skipped |
-| not launchable | an Anthropic `api_key` account while the promotional-credit guard is false | skipped |
+| not launchable | (none: the promotional-credit guard is on, so an Anthropic `api_key` account is ordered like any other) | skipped |
 | held | the account's usage gate is held | skipped |
 | open | no hold | the seat moves here |
 | unknown | the usage read could not be read and no hold stands | the seat moves here, unless the account is `claude-max-primary` |
