@@ -798,10 +798,52 @@ database host. Each orchestra database has its own server entry and its own
 server name. `--dangerously-load-development-channels` takes several values;
 pass one `server:NAME` value for each orchestra.
 
+`--resume ROOT_SESSION` also passes `--native-session ROOT_SESSION` to the
+remote conductor. During initialization it attaches that Claude conversation
+and preserves pending messages and the operator role. The SSH process on the
+database host cannot discover the local Claude session ID from its process
+arguments. Supply `--resume` when generating an SSH entry for an existing root.
+
 The root attaches as the `operator` session. The operator keeps its operator
 role, so reports and questions from parentless Conductors select it as their
 recipient. The channel retains pending input for automatic delivery and read
 tracking. Attachment must preserve unread input and the native conversation.
+
+### Root input through a native background job
+
+`bend2/scripts/root-notice.mjs` subscribes to the database owner's committed
+change stream and writes complete root messages to stdout. It exits after
+writing a batch. A native harness background job delivers that completion
+to its running conversation. Run the subscriber on the database host with
+`--database PATH --coordinator EXECUTABLE --session ROOT --native NATIVE_ID`.
+The default includes retained unread input; `--new` selects messages committed
+after the subscription command starts.
+
+`root-notice-ssh.mjs --ssh HOST --script REMOTE_SCRIPT` runs the subscriber
+through SSH and passes the other arguments to it. `--node REMOTE_NODE` selects
+the remote Node executable. `--as-user USER` runs the remote subscriber through
+`sudo -n -u USER --`. The SSH login must already have that noninteractive
+sudo permission. For the Mac root connecting to the homelab, use
+`--ssh atari-homelab-lan --as-user batonci`.
+The scripts require Node 22 or later and use its
+standard library. The native harness must run this command as a background job
+that delivers completion output to its owning conversation.
+
+`--index` emits one notification containing metadata and retained byte counts
+for every message in the committed snapshot. The recipient reads complete
+bodies through `baton read MESSAGE_ID` or `baton DATABASE inbox ROOT` before
+acting. The message bodies remain stored in full.
+
+Independent native roots can subscribe to the same recipient. The subscriber
+preserves the recorded harness, conversation and endpoint. It appends a
+`root-notice-written` event to the existing `.root.log` after writing stdout.
+Messages remain unread until their recipient records a complete read. A
+subscription failure exits with its actual cause and leaves that input
+available for the next subscription. Repeated notices after interruption are
+permitted. Each notification includes re-arm guidance. After reading and
+handling a batch, start the same background command with `--new` omitted.
+Pending replay includes messages committed while that batch was handled. One
+job completion covers all messages selected by that snapshot.
 
 The JavaScript resident `impl/scripts/mcp-web.mjs` has been removed. A Claude
 Code configuration that still names it starts no server and receives no
