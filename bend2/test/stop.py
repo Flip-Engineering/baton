@@ -17,9 +17,14 @@ spec.loader.exec_module(receive)
 
 # The fixture acknowledges TERM only when a test explicitly requests resistance.
 # Its socket commands establish process state before each stop or force request.
-FIXTURE = receive.FIXTURE.replace('import json,os,pathlib,re,socket,subprocess,sys',
-                                 'import json,os,pathlib,re,signal,socket,subprocess,sys')
-FIXTURE = FIXTURE.replace("""    json.loads(sys.stdin.readline())
+def patched(text, old, new):
+    assert old in text, old
+    return text.replace(old, new, 1)
+
+
+FIXTURE = patched(receive.FIXTURE, 'import json,os,pathlib,re,socket,sqlite3,subprocess,sys,time',
+                  'import json,os,pathlib,re,signal,socket,sqlite3,subprocess,sys,time')
+FIXTURE = patched(FIXTURE, """    json.loads(sys.stdin.readline())
     state=json.loads(sys.stdin.readline())
     prompt=json.loads(sys.stdin.readline())['message']""", """    state=None
     while True:
@@ -28,17 +33,17 @@ FIXTURE = FIXTURE.replace("""    json.loads(sys.stdin.readline())
         if request['type']=='prompt':
             prompt=request['message']
             break
-    assert state is not None""", 1)
-FIXTURE = FIXTURE.replace('args=sys.argv[1:]', '''args=sys.argv[1:]
+    assert state is not None""")
+FIXTURE = patched(FIXTURE, 'args=sys.argv[1:]', '''args=sys.argv[1:]
 if args[:1]==['tool_fixture']:
     connection=socket.create_connection(('127.0.0.1',config['port']))
     stream=connection.makefile('rwb',buffering=0)
     stream.write((json.dumps({'role':'tool','pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp()})+'\\n').encode())
     stream.readline()
-    sys.exit(0)''', 1)
-FIXTURE = FIXTURE.replace("'pid':os.getpid(),'ppid':os.getppid(),'session':session",
-                          "'pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp(),'session':session", 1)
-FIXTURE = FIXTURE.replace("    if action.get('progress'):", """    if action.get('resist_term'):
+    sys.exit(0)''')
+FIXTURE = patched(FIXTURE, "'pid':os.getpid(),'ppid':os.getppid(),'session':session",
+                          "'pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp(),'session':session")
+FIXTURE = patched(FIXTURE, "    if action.get('progress'):", """    if action.get('resist_term'):
         signal.signal(signal.SIGTERM, lambda signum, frame: reply({'signal': signum}))
         reply({'resists_term': True})
         continue
@@ -51,34 +56,7 @@ FIXTURE = FIXTURE.replace("    if action.get('progress'):", """    if action.get
         tool=subprocess.Popen([sys.executable,__file__,'tool_fixture'],stdin=subprocess.DEVNULL)
         reply({'tool_spawned':tool.pid})
         continue
-    if action.get('progress'):""", 1)
-
-# The stop helper runs one turn for each supported retained harness. The shared
-# fixture speaks Codex, OMP and DSH; these insertions add the Muse task-file
-# envelope and the Claude user-frame envelope.
-FIXTURE = FIXTURE.replace(r"""omp='--mode' in args""", r"""omp='--mode' in args
-muse='--prompt-file' in args
-claude='--input-format' in args""", 1)
-FIXTURE = FIXTURE.replace(r"""else:
-    prompt=sys.stdin.read()
-    native=resume or native
-    print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)""", r"""elif muse:
-    prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
-    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user','payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
-elif claude:
-    prompt=json.loads(sys.stdin.readline())['message']['content']
-    print(json.dumps({'type':'system','subtype':'init','session_id':native}),flush=True)
-else:
-    prompt=sys.stdin.read()
-    native=resume or native
-    print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)""", 1)
-FIXTURE = FIXTURE.replace(r"""        remaining_input=sys.stdin.read()
-    elif failure:""", r"""        remaining_input=sys.stdin.read()
-    elif muse:
-        print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.terminal.completed','payload':{'kind':'run_terminal','terminal':'completed','command_id':'fixture-primary','text':body}}),flush=True)
-    elif claude:
-        print(json.dumps({'type':'result','session_id':native,'result':body,'is_error':failure}),flush=True)
-    elif failure:""", 1)
+    if action.get('progress'):""")
 
 
 class Stop(unittest.TestCase):
@@ -90,6 +68,7 @@ class Stop(unittest.TestCase):
         subprocess.run(['git', '-C', str(self.repo), 'remote', 'add', 'origin', str(origin)],
                        check=True, capture_output=True)
         (self.directory / 'omp').symlink_to(self.fixture)
+        (self.directory / 'dsh').symlink_to(self.fixture)
         private_home = self.directory / 'home'
         private_home.mkdir()
         self.environment = dict(os.environ, HOME=str(private_home))
@@ -144,12 +123,13 @@ class Stop(unittest.TestCase):
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept_child(observer, 'parent',
                                             'Stop observer exited before native startup')
+        # A read needs the native identity, which the observer records from the first frame.
+        self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
+                        'native identity was not recorded')
         self.action(stream, read_only=True)
         self.assertEqual(json.loads(stream.readline()), {'read': True})
         self.action(stream, progress='output before terminal stop')
         self.assertEqual(json.loads(stream.readline()), {'progress_written': 'output before terminal stop'})
-        self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
-                        'native identity was not recorded')
         if resist:
             self.action(stream, resist_term=True)
             self.assertEqual(json.loads(stream.readline()), {'resists_term': True})
@@ -368,7 +348,8 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertIn('output before terminal stop', self.output_log().read_text())
         report = self.rows('SELECT * FROM messages WHERE id=?', [completed['reportId']])[0]
-        self.assertTrue(receive.read_recorded(self.db, report['id'], 'root'))
+        self.eventually(lambda: receive.read_recorded(self.db, report['id'], 'root'),
+                        'the parent did not read the stop report')
         self.assertEqual(json.loads(report['body'])['nativeStatus'], 'signal 15')
         self.assertEqual(json.loads(report['body'])['workspace'], str(self.checkouts / 'parent'))
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
@@ -419,7 +400,8 @@ class Stop(unittest.TestCase):
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('force-stop', 'parent', 'operator-stop')['nativeStatus'], 'signal 9')
-        self.assertTrue(receive.read_recorded(self.db, completed['reportId'], 'root'))
+        self.eventually(lambda: receive.read_recorded(self.db, completed['reportId'], 'root'),
+                        'the parent did not read the stop report')
 
     def test_explicit_force_reconciles_dsh_attempt_after_observer_loss(self):
         self.explicit_force_reaches_same_term_resistant_attempt_after_observer_loss('dsh')
