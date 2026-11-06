@@ -161,8 +161,8 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.record('omp-key', harness='omp', funding='api_key', provider='openai').returncode, 0)
         self.record('omp-sub', harness='omp', provider='openai', secret='/fixture/personal')
         self.bind('omp-key', 'omp-leaf')
-        event = json.dumps({'type': 'result', 'is_error': True,
-                            'result': 'You exceeded your current quota, please check your plan and billing details.'})
+        event = json.dumps({'type': 'agent_end', 'messages': [
+            {'role': 'assistant', 'stopReason': 'error', 'errorMessage': '402 Insufficient Balance'}]})
         ended = self.entry('handoff', 'omp-leaf', 'turn-omp', event)
         self.assertEqual(ended.returncode, 0, ended.stderr)
         self.assertEqual(ended.stdout.strip(), 'exhausted')
