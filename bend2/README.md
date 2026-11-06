@@ -809,6 +809,30 @@ role, so reports and questions from parentless Conductors select it as their
 recipient. The channel retains pending input for automatic delivery and read
 tracking. Attachment must preserve unread input and the native conversation.
 
+### Root input through a native background job
+
+`bend2/scripts/root-notice.mjs` subscribes to the database owner's committed
+change stream and writes complete root messages to stdout. It exits after
+writing a batch. A native harness background job delivers that completion
+to its running conversation. Run the subscriber on the database host with
+`--database PATH --coordinator EXECUTABLE --session ROOT --native NATIVE_ID`.
+The default includes retained unread input; `--new` selects messages committed
+after the subscription command starts.
+
+`root-notice-ssh.mjs --ssh HOST --script REMOTE_SCRIPT` runs the subscriber
+through SSH and passes the other arguments to it. `--node REMOTE_NODE` selects
+the remote Node executable. The scripts require Node 22 or later and use its
+standard library. The native harness must run this command as a background job
+that delivers completion output to its owning conversation.
+
+Independent native roots can subscribe to the same recipient. The subscriber
+preserves the recorded harness, conversation and endpoint. It appends a
+`root-notice-written` event to the existing `.root.log` after writing stdout.
+Messages remain unread until their recipient records a complete read. A
+subscription failure exits with its actual cause and leaves that input
+available for the next subscription. Repeated notices after interruption are
+permitted. Start another background subscription after handling a batch.
+
 The JavaScript resident `impl/scripts/mcp-web.mjs` has been removed. A Claude
 Code configuration that still names it starts no server and receives no
 Baton notifications. Replace that entry with the conductor entry above.
