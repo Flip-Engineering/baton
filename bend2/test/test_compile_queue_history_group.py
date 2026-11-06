@@ -415,6 +415,27 @@ class HistoryGroupTests(unittest.TestCase):
                               env=dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(self.state)),
                               capture_output=True, text=True, timeout=60)
 
+    def test_history_rebuild_reports_a_history_write_failure(self):
+        self.measured("first", "one")
+        (group,) = self.group_records()
+        attempt, = list((self.state / "keys").glob("*/runs/*"))
+        keydir = attempt.parent.parent
+        expected_result = (attempt / "result").read_bytes()
+        expected_artifact = (keydir / "completed" / "artifacts" / "output").read_bytes()
+        destination = self.state / "history" / group
+        destination.unlink()
+        destination.mkdir()
+        (destination / "retained").write_text("existing directory\n")
+
+        rebuilt = self.rebuild_history()
+
+        self.assertNotEqual(rebuilt.returncode, 0, rebuilt.stdout + rebuilt.stderr)
+        self.assertNotIn("history=recorded", rebuilt.stdout)
+        self.assertIn("directory", rebuilt.stderr.lower())
+        self.assertTrue(destination.is_dir())
+        self.assertEqual((attempt / "result").read_bytes(), expected_result)
+        self.assertEqual((keydir / "completed" / "artifacts" / "output").read_bytes(), expected_artifact)
+
     def test_verified_legacy_receipt_reconstructs_the_actual_profile(self):
         self.measured("first", "one")
         (group, peak), = self.group_records().items()

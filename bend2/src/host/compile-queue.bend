@@ -1059,10 +1059,8 @@ def group_peak_raise(+state: String, +group: String, +peak: U32, key: String, at
     +old_text : String <- IO.pure(String, peak_text_result(old_result))
     +prior : U32 <- IO.pure(U32, status_number(field(old_text, "peak_kb")))
     raised : Unit <- Bool.pick(IO(Unit), U32.is_gt(peak, prior),
-      do IO<Unit>:
-        ignored : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
-          state ++ "/history/" ++ group, "peak_kb=" ++ U32.show(peak) ++ "\nkey=" ++ key ++ "\nattempt=" ++ attempt ++ "\n")
-        IO.pure(Unit, Unit{}),
+      IO.try(Unit, L.CompileQueueLifecycle.write_text(
+        state ++ "/history/" ++ group, "peak_kb=" ++ U32.show(peak) ++ "\nkey=" ++ key ++ "\nattempt=" ++ attempt ++ "\n")),
       IO.pure(Unit, Unit{}))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
     IO.pure(Unit, Unit{})
