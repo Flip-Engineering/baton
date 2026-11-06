@@ -215,7 +215,7 @@ def record_fields(+db: String, +session: String, +directory: String, +saved: Str
 # directory ends it through the same refusal as before, so custody, explicit
 # stops and stale-attempt refusal are unchanged.
 @unsafe
-def record_when(+db: String, +session: String, +directory: String, saved: String, read: Bool, fields: List<String>) -> IO(Unit):
+def record_when(+db: String, +session: String, +directory: String, +saved: String, +read: Bool, +fields: List<String>) -> IO(Unit):
   match fields:
     case attempt_hex <> native_hex <> Nil{}: record_fields(db,session,directory,saved,read,fields)
     case other: do IO<Unit>:
