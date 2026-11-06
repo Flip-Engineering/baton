@@ -821,9 +821,18 @@ after the subscription command starts.
 
 `root-notice-ssh.mjs --ssh HOST --script REMOTE_SCRIPT` runs the subscriber
 through SSH and passes the other arguments to it. `--node REMOTE_NODE` selects
-the remote Node executable. The scripts require Node 22 or later and use its
+the remote Node executable. `--as-user USER` runs the remote subscriber through
+`sudo -n -u USER --`. The SSH login must already have that noninteractive
+sudo permission. For the Mac root connecting to the homelab, use
+`--ssh atari-homelab-lan --as-user batonci`.
+The scripts require Node 22 or later and use its
 standard library. The native harness must run this command as a background job
 that delivers completion output to its owning conversation.
+
+`--index` emits one notification containing metadata and retained byte counts
+for every message in the committed snapshot. The recipient reads complete
+bodies through `baton read MESSAGE_ID` or `baton DATABASE inbox ROOT` before
+acting. The message bodies remain stored in full.
 
 Independent native roots can subscribe to the same recipient. The subscriber
 preserves the recorded harness, conversation and endpoint. It appends a
@@ -831,7 +840,10 @@ preserves the recorded harness, conversation and endpoint. It appends a
 Messages remain unread until their recipient records a complete read. A
 subscription failure exits with its actual cause and leaves that input
 available for the next subscription. Repeated notices after interruption are
-permitted. Start another background subscription after handling a batch.
+permitted. Each notification includes re-arm guidance. After reading and
+handling a batch, start the same background command with `--new` omitted.
+Pending replay includes messages committed while that batch was handled. One
+job completion covers all messages selected by that snapshot.
 
 The JavaScript resident `impl/scripts/mcp-web.mjs` has been removed. A Claude
 Code configuration that still names it starts no server and receives no

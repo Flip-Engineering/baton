@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 
-export async function rootNotice({ database, coordinator, session, native, fresh = false }, output = process.stdout) {
+export async function rootNotice({ database, coordinator, session, native, fresh = false, index = false }, output = process.stdout) {
   database = realpathSync(database);
   coordinator = realpathSync(coordinator);
   const db = new DatabaseSync(database, { readOnly: true });
@@ -36,9 +36,13 @@ export async function rootNotice({ database, coordinator, session, native, fresh
           SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient)) ORDER BY m.seq`)
         .all(session, after, fresh ? 1 : 0);
       if (!rows.length) continue;
-      const content = rows.map(row => `Message (${row.kind}) from ${row.sender} [id: ${row.id}]:\n${row.body}`
+      const content = rows.map(row => index
+        ? `Message (${row.kind}) from ${row.sender} [id: ${row.id}] retained ${Buffer.byteLength(row.body)} bytes; read the complete body with baton read ${row.id}.`
+        : `Message (${row.kind}) from ${row.sender} [id: ${row.id}]:\n${row.body}`
         + (row.kind === 'completion-request' ? `\nReview ${row.sender}'s assignment and supplied evidence. Confirm completion when satisfied, or guide the remaining work.` : '')).join('\n\n');
-      const notice = { type: 'baton-root-input', recipient: session, native, messages: rows, content };
+      const messages = index ? rows.map(({ body, ...row }) => ({ ...row, bodyBytes: Buffer.byteLength(body) })) : rows;
+      const notice = { type: 'baton-root-input', recipient: session, native, messages, content,
+        rearm: 'Read the complete pending input through Baton, then start this background subscription again with --new omitted. Pending replay includes input committed while the previous batch was handled.' };
       await new Promise((resolve, reject) => output.write(JSON.stringify(notice) + '\n', error => error ? reject(error) : resolve()));
       appendFileSync(database + '.root.log', JSON.stringify({ type: 'root-notice-written', recipient: session,
         native, messages: rows.map(row => row.id), state: 'written-to-background-job', read: 'unrecorded' }) + '\n');
@@ -62,6 +66,7 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--new') options.fresh = true;
+    else if (flag === '--index') options.index = true;
     else if (['--database', '--coordinator', '--session', '--native'].includes(flag)) {
       const value = argv[++i];
       if (!value) throw new Error(flag + ' requires a value.');

@@ -37,12 +37,15 @@ const socket=require('net').createConnection(${JSON.stringify(join(dir, 'events.
 socket.pipe(process.stdout);
 socket.on('error',error=>{console.error(error.message);process.exitCode=1;});
 `, { mode: 0o755 });
-  const start = (native, fresh = true, ssh = false) => {
-    if (ssh) writeFileSync(join(dir, 'ssh'), '#!/bin/sh\nshift 2\nexec /bin/sh -c "$1"\n', { mode: 0o755 });
+  const start = (native, fresh = true, ssh = false, index = false) => {
+    if (ssh) {
+      writeFileSync(join(dir, 'ssh'), '#!/bin/sh\nshift 2\nexec /bin/sh -c "$1"\n', { mode: 0o755 });
+      writeFileSync(join(dir, 'sudo'), '#!/bin/sh\n[ "$1 $2 $3 $4" = "-n -u batonci --" ] || exit 2\nshift 4\nexec "$@"\n', { mode: 0o755 });
+    }
     const child = spawn(process.execPath, [ssh ? resolve('bend2/scripts/root-notice-ssh.mjs') : script,
-      ...(ssh ? ['--ssh', 'fixture-host', '--node', process.execPath, '--script', script] : []),
+      ...(ssh ? ['--ssh', 'fixture-host', '--as-user', 'batonci', '--node', process.execPath, '--script', script] : []),
       '--database', database, '--coordinator', coordinator,
-      '--session', 'operator', '--native', native, ...(fresh ? ['--new'] : [])],
+      '--session', 'operator', '--native', native, ...(fresh ? ['--new'] : []), ...(index ? ['--index'] : [])],
     { env: { ...process.env, PATH: dir + ':' + process.env.PATH } });
     let out = '', error = '';
     child.stdout.on('data', chunk => { out += chunk; });
@@ -106,4 +109,22 @@ test('a stopped root keeps the message pending and emits no delivery record', as
   assert.match(ended.error, /explicitly stopped/);
   assert.equal(ended.out, '');
   assert.equal(existsSync(f.database + '.root.log'), false);
+});
+
+test('an index notice batches pending input and preserves the complete bodies for reads and re-arming', async t => {
+  const f = await fixture(t);
+  const body = 'Complete retained question: café.\n' + 'details '.repeat(3000);
+  const insert = f.db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)');
+  insert.run('first', 'worker-a', 'operator', 'question', body);
+  insert.run('second', 'worker-b', 'operator', 'report', 'Blocking report.');
+  const run = f.start('claude-on-mac', false, false, true);
+  const ended = await run.ended;
+  assert.equal(ended.code, 0, ended.error);
+  const notice = JSON.parse(ended.out);
+  assert.deepEqual(notice.messages.map(row => row.id), ['first', 'second']);
+  assert.equal(notice.messages[0].bodyBytes, Buffer.byteLength(body));
+  assert.equal(Object.hasOwn(notice.messages[0], 'body'), false);
+  assert.equal(f.db.prepare('SELECT body FROM messages WHERE id=?').get('first').body, body);
+  assert.match(notice.rearm, /--new omitted/);
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
 });

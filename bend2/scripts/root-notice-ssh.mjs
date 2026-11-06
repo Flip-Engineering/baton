@@ -6,15 +6,17 @@ const args = process.argv.slice(2), remote = [], options = { node: 'node' };
 try {
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
-    if (['--ssh', '--script', '--node'].includes(flag)) {
+    if (['--ssh', '--script', '--node', '--as-user'].includes(flag)) {
       const value = args[++i];
       if (!value) throw new Error(flag + ' requires a value.');
-      options[flag.slice(2)] = value;
+      options[flag.slice(2).replaceAll('-', '_')] = value;
     } else remote.push(flag);
   }
   if (!options.ssh || !options.script) throw new Error('--ssh HOST and --script PATH are required.');
   const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
-  const child = spawn('ssh', ['-T', options.ssh, 'exec ' + [options.node, options.script, ...remote].map(quote).join(' ')],
+  const command = [...(options.as_user ? ['sudo', '-n', '-u', options.as_user, '--'] : []),
+    options.node, options.script, ...remote];
+  const child = spawn('ssh', ['-T', options.ssh, 'exec ' + command.map(quote).join(' ')],
     { stdio: 'inherit' });
   const forward = signal => child.kill(signal);
   process.on('SIGINT', () => forward('SIGINT'));
