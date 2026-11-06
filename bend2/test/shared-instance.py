@@ -1374,7 +1374,7 @@ class SharedInstance(unittest.TestCase):
         return frame.unpack(received)
 
     def test_resume_reopens_admission_and_preserves_the_live_attempt(self):
-        directory, first = self.begin('resume-held', payload='before\n')
+        directory, first = self.begin('resume-held', mode='hold', payload='before\n')
         self.line(first, 'admitted')
         self.hold(directory / 'stdout', 'echo:before', child=first)
         owner = self.owner_status()
@@ -1405,10 +1405,11 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('echo:new', self.wait_run(second))
         self.assertEqual(self.owner_pid(), owner['pid'])
         self.write(directory, 'exit\n')
-        self.assertIn('attempt-complete', self.wait_run(first))
+        self.hold(directory / 'stdout', 'native-done', child=first)
+        self.assertIn('hold-released', self.wait_run(first))
 
     def test_resume_uses_the_current_owner_witness(self):
-        directory, first = self.begin('resume-stale', payload='before\n')
+        directory, first = self.begin('resume-stale', mode='hold', payload='before\n')
         self.line(first, 'admitted')
         self.hold(directory / 'stdout', 'echo:before', child=first)
         self.assertEqual(self.command('drain', self.db).returncode, 0)
@@ -1418,10 +1419,11 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(self.owner_status()['state'], 'draining')
         self.assertTrue(self.drain_marker().exists())
         self.write(directory, 'exit\n')
-        self.assertIn('attempt-complete', self.wait_run(first))
+        self.hold(directory / 'stdout', 'native-done', child=first)
+        self.assertIn('hold-released', self.wait_run(first))
 
     def test_resume_drives_the_deferred_input_sweep(self):
-        directory, first = self.begin('resume-sweep', payload='before\n')
+        directory, first = self.begin('resume-sweep', mode='hold', payload='before\n')
         self.line(first, 'admitted')
         self.hold(directory / 'stdout', 'echo:before', child=first)
         self.eventually(lambda: self.sweep_count() > 0, 'initial owner sweep did not run')
@@ -1431,7 +1433,8 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(reply[1], 0, reply)
         self.eventually(lambda: self.sweep_count() > before, 'resume did not drive the sweep')
         self.write(directory, 'exit\n')
-        self.assertIn('attempt-complete', self.wait_run(first))
+        self.hold(directory / 'stdout', 'native-done', child=first)
+        self.assertIn('hold-released', self.wait_run(first))
 
     def executable_sha256(self):
         return hashlib.sha256(EXE.read_bytes()).hexdigest()
