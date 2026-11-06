@@ -37,9 +37,13 @@ const socket=require('net').createConnection(${JSON.stringify(join(dir, 'events.
 socket.pipe(process.stdout);
 socket.on('error',error=>{console.error(error.message);process.exitCode=1;});
 `, { mode: 0o755 });
-  const start = (native, fresh = true) => {
-    const child = spawn(process.execPath, [script, '--database', database, '--coordinator', coordinator,
-      '--session', 'operator', '--native', native, ...(fresh ? ['--new'] : [])]);
+  const start = (native, fresh = true, ssh = false) => {
+    if (ssh) writeFileSync(join(dir, 'ssh'), '#!/bin/sh\nshift 2\nexec /bin/sh -c "$1"\n', { mode: 0o755 });
+    const child = spawn(process.execPath, [ssh ? resolve('bend2/scripts/root-notice-ssh.mjs') : script,
+      ...(ssh ? ['--ssh', 'fixture-host', '--node', process.execPath, '--script', script] : []),
+      '--database', database, '--coordinator', coordinator,
+      '--session', 'operator', '--native', native, ...(fresh ? ['--new'] : [])],
+    { env: { ...process.env, PATH: dir + ':' + process.env.PATH } });
     let out = '', error = '';
     child.stdout.on('data', chunk => { out += chunk; });
     child.stderr.on('data', chunk => { error += chunk; });
@@ -81,10 +85,10 @@ test('independent native roots receive complete committed questions and keep the
   assert.deepEqual(calls, Array(2).fill([f.database, 'ui-subscribe', '0', '0']));
 });
 
-test('pending input replays after an interrupted subscriber without recording a read', async t => {
+test('the SSH adapter forwards retained complete input and leaves it unread', async t => {
   const f = await fixture(t);
   f.db.exec("INSERT INTO messages VALUES(1,'retained','worker','operator','report','Retained failure report')");
-  const run = f.start('claude-on-mac', false);
+  const run = f.start('claude-on-mac', false, true);
   const ended = await run.ended;
   assert.equal(ended.code, 0, ended.error);
   assert.equal(JSON.parse(ended.out).messages[0].id, 'retained');
