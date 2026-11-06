@@ -209,12 +209,10 @@ def decimal_sub(+a: String, +b: String) -> String:
 def funding_known(+funding: String) -> Bool:
   Bool.or(String.eq(funding,"subscription"),String.eq(funding,"api_key"))
 
-# An API-key funding route launches only on the claude-code harness, whose
-# retained launch resolves the secret reference into the child's environment.
-# Other harnesses authenticate through their own stores, so recording an
-# API-key route for them would record a funding route the launch never uses.
+# Claude resolves API keys through the packaged helper. OMP resolves them from
+# its configured provider store, selected through PI_CODING_AGENT_DIR.
 def funding_route_ok(+harness: String, +funding: String) -> Bool:
-  Bool.or(String.eq(funding,"subscription"),Bool.and(String.eq(funding,"api_key"),String.eq(harness,"claude-code")))
+  Bool.or(String.eq(funding,"subscription"),Bool.and(String.eq(funding,"api_key"),Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"omp"))))
 
 def harness_launchable(+harness: String) -> Bool:
   Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),Bool.or(String.eq(harness,"muse"),String.eq(harness,"claude-code"))))
@@ -424,7 +422,7 @@ def credit_request_admission(+account: AccountRecord, +meter: CreditMeter, +curr
   CAdmitted{meter_organization(meter),meter_cycle(meter),decimal_add(meter_reserved(meter),max_charge),estimate_left(meter_balance(meter),decimal_add(meter_reserved(meter),max_charge)),estimate_left(meter_monthly_cap(meter),decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge))}))))))
 
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
-  Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
+  Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),String.eq(harness,"omp")),Some{Subs.store_binding(harness,secret_ref)},Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)})))
 
 # The packaged resolver sits beside the resolved identity helper, so it is
 # installed and versioned with the runtime this deployment resolves.
@@ -1056,9 +1054,9 @@ def credit_request_facts_for(+db: String, +body: String) -> IO(CreditRequestFact
     IO.pure(CreditRequestFacts,credit_request_facts_fields(fields))
 
 # One row per account, fields separated by the ASCII unit separator, in operator
-# recording order.
+# recording order, with the OpenAI OMP API route first.
 def account_row_sql() -> String:
-  "SELECT id||char(31)||provider||char(31)||harness||char(31)||funding||char(31)||secret_ref||char(31)||organization||char(31)||verified_at FROM accounts ORDER BY CASE WHEN priority='' THEN 9999 ELSE CAST(priority AS INTEGER) END,rowid;"
+  "SELECT id||char(31)||provider||char(31)||harness||char(31)||funding||char(31)||secret_ref||char(31)||organization||char(31)||verified_at FROM accounts ORDER BY CASE WHEN provider='openai' AND harness='omp' AND funding='api_key' THEN 0 ELSE 1 END,CASE WHEN priority='' THEN 9999 ELSE CAST(priority AS INTEGER) END,rowid;"
 
 def account_rows_flat(fields: List<&2,String>, tail: List<&2,AccountRecord>) -> List<&2,AccountRecord>:
   match fields:
@@ -1090,7 +1088,7 @@ def account_insert_sql(+id: String, +provider: String, +harness: String, +fundin
 # observation that verified it.
 def record_admitted(+db: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, present: Bool) -> IO(Unit):
   match present:
-    case False{}: IO.die(Unit,2,"Account recording requires a label without whitespace or control characters, a provider name, a launchable harness (codex, omp, muse or claude-code), a funding route of subscription or api_key (api_key launches only on claude-code), and a nonempty secret-store reference without control characters. No account was recorded.")
+    case False{}: IO.die(Unit,2,"Account recording requires a label without whitespace or control characters, a provider name, a launchable harness (codex, omp, muse or claude-code), a funding route of subscription or api_key (api_key launches on claude-code or omp), and a nonempty secret-store reference without control characters. No account was recorded.")
     case True{}: do IO<Unit>:
       saved : String <- IO.try(String,commit_read(db,account_insert_sql(id,provider,harness,funding,secret_ref)))
       IO.print(Tx.trim_nl(saved))
@@ -1540,10 +1538,20 @@ def advance_in_order(+db: String, +session: String, +id: String, +harness: Strin
 
 # A harness with recorded accounts follows their order. A harness without recorded
 # accounts keeps the operator profile list.
+def organization_route(chosen: Maybe<&2,AccountRecord>) -> Bool:
+  match chosen:
+    case None{}: False{}
+    case Some{+account}: Bool.and(String.eq(account_provider(account),"openai"),Bool.and(String.eq(account_harness(account),"omp"),String.eq(account_funding(account),"api_key")))
+
+def organization_refused(+db: String, +session: String, +id: String, +cause: String) -> IO(Bool):
+  do IO<Bool>:
+    reported : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),Subs.report_body(db,session,id,"organization-api-unavailable","The organization API account refused this attempt. Its account and unfinished work remain recorded; cause: " ++ cause))
+    IO.pure(Bool,False{})
+
 def handoff_ordered(+db: String, +session: String, +id: String, +event: String, +native: String, +cmd: String, +cwd: String, +cause: String, +harness: String, +label: String, +helper: String, +bound: Maybe<&2,AccountRecord>, +ordered: List<&2,AccountRecord>) -> IO(Bool):
-  Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),accounts_empty(ordered)),
+  Bool.pick(IO(Bool),organization_route(bound),organization_refused(db,session,id,cause),Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),accounts_empty(ordered)),
     handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound),
-    advance_in_order(db,session,id,harness,label,native,cmd,cwd,cause,helper,bound,ordered))
+    advance_in_order(db,session,id,harness,label,native,cmd,cwd,cause,helper,bound,ordered)))
 
 # --- the order at a wake and at a launch ------------------------------------------
 #
@@ -1567,8 +1575,9 @@ def order_gate_held(+db: String, +session: String, +helper: String, +gate: UW.Ga
     +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
     +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
+    bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
     +label : String <- handoff_label_io(db,session)
-    Bool.pick(IO(UW.Gate),accounts_empty(ordered),IO.pure(UW.Gate,gate),do IO<UW.Gate>:
+    Bool.pick(IO(UW.Gate),Bool.or(organization_route(bound),accounts_empty(ordered)),IO.pure(UW.Gate,gate),do IO<UW.Gate>:
       scan : Scan <- scan_order(db,session,helper,True{},label,"current account, held by live read " ++ held_receipt(gate),ordered)
       order_gate_scan(db,session,harness,gate,scan))
 
@@ -1598,10 +1607,11 @@ def order_move_decided(+db: String, +session: String, +harness: String, +label: 
 
 def order_move_scan(+db: String, +session: String, +harness: String, +label: String, native: String, cmd: String, cwd: String, +receipt: String, +ordered: List<&2,AccountRecord>) -> IO(Bool):
   do IO<Bool>:
-    bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    +bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    +locked : Bool = organization_route(bound)
     +from_store : String <- store_in_force(db,session,harness,bound)
     scan : Scan <- scan_order(db,session,"",False{},label,"current account, held by live read " ++ receipt,ordered)
-    order_move_decided(db,session,harness,label,native,cmd,cwd,receipt,accounts_count(ordered),from_store,scan)
+    Bool.pick(IO(Bool),locked,IO.pure(Bool,False{}),order_move_decided(db,session,harness,label,native,cmd,cwd,receipt,accounts_count(ordered),from_store,scan))
 
 # Before a launch, a seat whose current account is held moves to the first
 # available entry from the wake gate's recorded reads. Returns whether it moved.
@@ -1657,7 +1667,7 @@ def handoff(+db: String, +session: String, +id: String, +event: String, native: 
 # --- the account selected for each attempt -----------------------------------
 
 def attempt_insert_sql(+session: String, +attempt: String, +predecessor: String, +account: AccountRecord) -> String:
-  "INSERT OR REPLACE INTO account_attempts(attempt,session,turn,account,organization,funding,secret_ref,workload,started_at,recorded,predecessor) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ ",coalesce((SELECT id FROM executions WHERE session=" ++ C.q(session) ++ " AND directory=" ++ C.q(attempt) ++ "),'')," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ "," ++ C.q(account_funding(account)) ++ "," ++ C.q(account_secret_ref(account)) ++ ",CASE WHEN " ++ C.q(account_funding(account)) ++ "='api_key' THEN 'agent-sdk' WHEN " ++ C.q(account_harness(account)) ++ "='claude-code' THEN 'subscription' ELSE " ++ C.q(account_harness(account)) ++ " END,CAST(strftime('%s','now') AS INTEGER),CURRENT_TIMESTAMP," ++ C.q(predecessor) ++ ";"
+  "INSERT OR REPLACE INTO account_attempts(attempt,session,turn,account,organization,funding,secret_ref,workload,started_at,recorded,predecessor) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ ",coalesce((SELECT id FROM executions WHERE session=" ++ C.q(session) ++ " AND directory=" ++ C.q(attempt) ++ "),'')," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ "," ++ C.q(account_funding(account)) ++ "," ++ C.q(account_secret_ref(account)) ++ ",CASE WHEN " ++ C.q(account_funding(account)) ++ "='api_key' AND " ++ C.q(account_harness(account)) ++ "='claude-code' THEN 'agent-sdk' WHEN " ++ C.q(account_harness(account)) ++ "='claude-code' THEN 'subscription' ELSE " ++ C.q(account_harness(account)) ++ " END,CAST(strftime('%s','now') AS INTEGER),CURRENT_TIMESTAMP," ++ C.q(predecessor) ++ ";"
   ++ "SELECT json_object('attempt',attempt,'session',session,'turn',turn,'account',account,'organization',organization,'funding',funding,'secretRef',secret_ref,'workload',workload,'outcome',outcome,'errorText',error_text,'startedAt',started_at,'endedAt',ended_at,'predecessor',predecessor,'recorded',recorded) FROM account_attempts WHERE attempt=" ++ C.q(attempt) ++ ";"
 
 # The completion facts of one attempt: the provider outcome, the provider's
