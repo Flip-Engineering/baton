@@ -11,8 +11,21 @@ import { fileURLToPath } from 'node:url';
 export const REPOSITORY_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const PERMISSIONS = { contents: 'write', pull_requests: 'write', metadata: 'read' };
 export const WORKFLOW_PERMISSIONS = { ...PERMISSIONS, workflows: 'write' };
-export const GH_PERMISSIONS = { ...PERMISSIONS, issues: 'write', actions: 'read',
-  checks: 'read', statuses: 'read' };
+// One gh command needs the permissions its own operation uses. A read needs
+// repository read access: metadata read plus issues or pull-requests read
+// access (a write grant includes read access). Each write needs the write
+// permission of the resource it changes. The token still carries the
+// installation's full grant, so GitHub decides resource-specific access on
+// private repositories with everything the installation holds.
+export const GH_READ_PERMISSIONS = { metadata: 'read' };
+export const GH_READ_ACCESS = [['issues', 'read'], ['pull_requests', 'read']];
+export const GH_ISSUE_WRITE_PERMISSIONS = { metadata: 'read', issues: 'write' };
+export const GH_PULL_REQUEST_WRITE_PERMISSIONS = { metadata: 'read', pull_requests: 'write' };
+export const GH_ACTIONS_WRITE_PERMISSIONS = { metadata: 'read', actions: 'write' };
+export const GH_CONTENTS_WRITE_PERMISSIONS = { metadata: 'read', contents: 'write' };
+export const GH_CHECKS_WRITE_PERMISSIONS = { metadata: 'read', checks: 'write' };
+export const GH_STATUSES_WRITE_PERMISSIONS = { metadata: 'read', statuses: 'write' };
+export const GH_COMMENT_ACCESS = [['issues', 'write'], ['pull_requests', 'write']];
 export const API_ROOT = 'https://api.github.com';
 export const SERIES = ['gpt', 'muse', 'deepseek', 'claude', 'glm', 'kimi'];
 export const SERIES_LABELS = { gpt: 'GPT', muse: 'Muse', deepseek: 'DeepSeek',
@@ -64,6 +77,16 @@ function minimum_permissions(granted, source, permissions = PERMISSIONS) {
       && (granted[permission] === level || (level === 'read' && granted[permission] === 'write')),
     `${source} requires ${permission}:${level} permission.`);
   }
+}
+
+function any_permission(granted, source, alternatives) {
+  require(object(granted) && alternatives.some(([permission, level]) =>
+    granted[permission] === level || (level === 'read' && granted[permission] === 'write')),
+  `${source} requires ${alternatives.map(([permission, level]) => permission + ':' + level).join(' or ')} permission.`);
+}
+
+function installation_source(installation, owner) {
+  return `The GitHub installation ${installation.id} (${installation.app_slug} for ${owner})`;
 }
 
 function path(value) {
@@ -355,7 +378,7 @@ export function app_jwt(directory, github, now = Math.floor(Date.now() / 1000)) 
   return unsigned + '.' + signature.toString('base64url');
 }
 
-function verify_installation(installation, github, owner, permissions) {
+function verify_installation(installation, github, owner, permissions, any_of = null) {
   require(Number.isSafeInteger(installation.id) && installation.id > 0 && installation.app_id === github.appId
     && installation.app_slug === github.slug,
     'The GitHub installation differs from the selected App identity.');
@@ -363,11 +386,13 @@ function verify_installation(installation, github, owner, permissions) {
     && same_repository(installation.account.login, owner)
     && (installation.suspended_at ?? null) === null,
     'The GitHub installation account is incorrect or suspended.');
-  minimum_permissions(installation.permissions, 'The GitHub installation', permissions);
+  const source = installation_source(installation, installation.account.login);
+  minimum_permissions(installation.permissions, source, permissions);
+  if (any_of !== null) any_permission(installation.permissions, source, any_of);
 }
 
 async function repository_installation(directory, github, repository, permissions, jwt, request,
-  registration_permissions = null) {
+  registration_permissions = null, any_of = null) {
   const requested = repository_path(repository);
   const owner = requested.split('/')[0];
   const signed = jwt(directory, github), app = await request('/app', signed);
@@ -394,13 +419,13 @@ async function repository_installation(directory, github, repository, permission
       const moved = /^\/repositories\/([1-9][0-9]*)\/installation$/.exec(error.api_path);
       require(moved, 'The canonical installation path is invalid.');
       installation = await request(error.api_path, signed);
-      verify_installation(installation, github, installation.account?.login ?? '', permissions);
+      verify_installation(installation, github, installation.account?.login ?? '', permissions, any_of);
       const token = await issued_token(installation, signed, request, PERMISSIONS);
       metadata = await repository_metadata('/repositories/' + moved[1], token, request);
     } else throw error;
     canonical = metadata.full_name;
   }
-  verify_installation(installation, github, canonical.split('/')[0], permissions);
+  verify_installation(installation, github, canonical.split('/')[0], permissions, any_of);
   return { installation, signed, repository: canonical };
 }
 
@@ -419,13 +444,15 @@ function valid_expiration(value) {
 }
 
 async function issued_token(installation, signed, request, permissions, body,
-  profile = 'git', repository = null) {
+  profile = 'git', repository = null, any_of = null) {
   const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, body)
     .catch(error => {
       if (error instanceof Missing || !(error instanceof Refusal)) throw error;
       throw new Refusal(`${error.message} The token request serves ${repository}.`);
     });
-  minimum_permissions(issued.permissions, 'The issued token', permissions);
+  const source = `The issued token for installation ${installation.id} (${installation.app_slug})`;
+  minimum_permissions(issued.permissions, source, permissions);
+  if (any_of !== null) any_permission(issued.permissions, source, any_of);
   if (profile === 'workflow-write') {
     require(issued.repository_selection === 'selected' && Array.isArray(issued.repositories)
       && issued.repositories.length === 1 && typeof issued.repositories[0]?.full_name === 'string'
@@ -476,12 +503,12 @@ async function renamed_repository(github, signed, repository, request, permissio
   }
 }
 
-async function repository_token(directory, github, repository, permissions, body, jwt, request, profile = 'git') {
+async function repository_token(directory, github, repository, permissions, body, jwt, request, profile = 'git', any_of = null) {
   minimum_permissions(github.permissions, 'The App identity', profile === 'gh' ? PERMISSIONS : permissions);
   const { installation, signed, repository: canonical } = await repository_installation(directory, github, repository,
-    permissions, jwt, request, profile === 'workflow-write' ? permissions : null);
+    permissions, jwt, request, profile === 'workflow-write' ? permissions : null, any_of);
   if (profile === 'workflow-write') body = { ...body, repositories: [canonical.split('/')[1]] };
-  return issued_token(installation, signed, request, permissions, body, profile, canonical);
+  return issued_token(installation, signed, request, permissions, body, profile, canonical, any_of);
 }
 
 // Each account owner has its own installation. The workflow-write profile
@@ -493,9 +520,90 @@ export function installation_token(directory, github, repository, jwt = app_jwt,
   return repository_token(directory, github, repository, permissions, body, jwt, request, profile);
 }
 
+function gh_read_requirement() {
+  return { permissions: GH_READ_PERMISSIONS, any_of: GH_READ_ACCESS };
+}
+
+function gh_write_requirement(permissions, any_of = null) {
+  return { permissions, any_of };
+}
+
+function gh_api_requirement(command) {
+  const value_flags = new Set(['-H', '--header', '-q', '--jq', '-t', '--template',
+    '--hostname', '--preview', '--cache']);
+  const field_flags = new Set(['-f', '-F', '--field', '--raw-field', '--input']);
+  let method = null, has_fields = false, endpoint = null;
+  for (let index = 1; index < command.length; index++) {
+    const argument = command[index];
+    if (argument === '--') { endpoint ??= command[index + 1] ?? null; break; }
+    if (!argument.startsWith('-')) { endpoint ??= argument; continue; }
+    if (argument === '-X' || argument === '--method') method = command[++index] ?? '';
+    else if (argument.startsWith('--method=')) method = argument.slice(9);
+    else if (argument.startsWith('-X')) method = argument.slice(2);
+    else if (field_flags.has(argument)) { has_fields = true; index++; }
+    else if (argument.startsWith('--field=') || argument.startsWith('--raw-field=')
+      || argument.startsWith('--input=') || /^-[fF]/.test(argument)) has_fields = true;
+    else if (value_flags.has(argument)) index++;
+  }
+  method = (method ?? (has_fields ? 'POST' : 'GET')).toUpperCase();
+  if (method === 'GET' || method === 'HEAD') return gh_read_requirement();
+  const route = (endpoint ?? '').replace(/^\//, '').split('?')[0];
+  if (/(^|\/)pulls(\/|$)/.test(route)) return gh_write_requirement(GH_PULL_REQUEST_WRITE_PERMISSIONS);
+  if (/issues\/[^/]+\/comments(\/|$)/.test(route)) {
+    return gh_write_requirement(GH_READ_PERMISSIONS, GH_COMMENT_ACCESS);
+  }
+  if (/(^|\/)issues(\/|$)/.test(route)) return gh_write_requirement(GH_ISSUE_WRITE_PERMISSIONS);
+  if (/(^|\/)actions\//.test(route)) return gh_write_requirement(GH_ACTIONS_WRITE_PERMISSIONS);
+  if (/(^|\/)(check-runs|check-suites)(\/|$)/.test(route)) return gh_write_requirement(GH_CHECKS_WRITE_PERMISSIONS);
+  if (/(^|\/)statuses\//.test(route)) return gh_write_requirement(GH_STATUSES_WRITE_PERMISSIONS);
+  if (/(^|\/)(releases|contents|git|branches|merges|forks|dispatches|pages)(\/|$)/.test(route)) {
+    return gh_write_requirement(GH_CONTENTS_WRITE_PERMISSIONS);
+  }
+  return gh_write_requirement(PERMISSIONS);
+}
+
+// The permission requirement of one gh command, or null for a command that
+// only reads local state and runs with no wrapper token. An unlisted write
+// operation keeps the base Git permissions and GitHub decides the rest with
+// the issued full-grant token.
+export function gh_permissions(command) {
+  if (!Array.isArray(command) || command.length === 0) return null;
+  const verb = command[0];
+  if (['--help', '-h', 'help', '--version', 'version', 'completion',
+    'config', 'alias', 'extension'].includes(verb)) return null;
+  for (const argument of command) {
+    if (argument === '--') break;
+    if (argument === '--help' || (argument === '-h' && verb !== 'api')) return null;
+  }
+  const sub = command[1] && !command[1].startsWith('-') ? command[1] : '';
+  const read = (...names) => names.includes(sub) ? gh_read_requirement() : null;
+  switch (verb) {
+    case 'api': return gh_api_requirement(command);
+    case 'search': case 'browse': case 'status': return gh_read_requirement();
+    case 'issue': return read('view', 'list', 'status') ?? gh_write_requirement(GH_ISSUE_WRITE_PERMISSIONS);
+    case 'pr': return read('view', 'list', 'checks', 'status', 'diff', 'checkout')
+      ?? gh_write_requirement(GH_PULL_REQUEST_WRITE_PERMISSIONS);
+    case 'run': return read('view', 'list', 'watch', 'download') ?? gh_write_requirement(GH_ACTIONS_WRITE_PERMISSIONS);
+    case 'workflow': return read('view', 'list') ?? gh_write_requirement(GH_ACTIONS_WRITE_PERMISSIONS);
+    case 'release': return read('view', 'list', 'download', 'verify', 'verify-asset')
+      ?? gh_write_requirement(GH_CONTENTS_WRITE_PERMISSIONS);
+    case 'repo': return read('view', 'list', 'set-default', 'clone', 'license')
+      ?? gh_write_requirement(PERMISSIONS);
+    case 'label': return read('list') ?? gh_write_requirement(GH_ISSUE_WRITE_PERMISSIONS);
+    case 'auth': return read('status', 'token') ?? gh_write_requirement(PERMISSIONS);
+    case 'cache': return read('list', 'view') ?? gh_write_requirement(GH_ACTIONS_WRITE_PERMISSIONS);
+    case 'secret': case 'variable': return read('list', 'get') ?? gh_write_requirement(PERMISSIONS);
+    default: return gh_write_requirement(PERMISSIONS);
+  }
+}
+
 // Each gh command receives the installation's full grant for its target owner.
-export function gh_installation_token(directory, github, repository, jwt = app_jwt, request = api) {
-  return repository_token(directory, github, repository, GH_PERMISSIONS, {}, jwt, request, 'gh');
+// The installation and the issued token must hold the command's own
+// requirement; the default requirement is a read.
+export function gh_installation_token(directory, github, repository, jwt = app_jwt, request = api,
+  requirement = gh_read_requirement()) {
+  return repository_token(directory, github, repository, requirement.permissions, {}, jwt, request, 'gh',
+    requirement.any_of ?? null);
 }
 
 function origin_repository(environment) {
@@ -536,14 +644,20 @@ function real_gh(environment) {
 
 export async function gh(command, inherited = process.env, execute = exec_command,
   issue = gh_installation_token, origin = origin_repository) {
-  const repository = gh_repository(command, inherited, origin);
+  const requirement = gh_permissions(command);
   const program = real_gh(inherited);
+  if (requirement === null) {
+    execute(program, [program, ...command], { ...inherited });
+    return;
+  }
+  const repository = gh_repository(command, inherited, origin);
   require(inherited.BATON2_GH_REGISTRY && inherited.BATON2_GH_SERIES,
     'The gh wrapper requires a series launch environment.');
   const [, directory, github] = selected_identity(path(inherited.BATON2_GH_REGISTRY), null, inherited.BATON2_GH_SERIES);
   const environment = { ...inherited };
   delete environment.GITHUB_TOKEN;
-  environment.GH_TOKEN = await issue(directory, github, repository);
+  environment.GH_TOKEN = await issue(directory, github, repository,
+    undefined, undefined, requirement);
   execute(program, [program, ...command], environment);
 }
 
