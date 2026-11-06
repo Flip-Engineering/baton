@@ -23,50 +23,30 @@ INSERT INTO session_roles(session,role) VALUES('coordinator','conductor'),('work
 INSERT INTO messages(id,sender,recipient,kind,body) VALUES('dispatch:assignment','coordinator','worker','task','Do the work.');
 INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture','dispatch:assignment','worker','','fixture');
 """
-# The fake agent ignores repeated completion reminders, then requests completion.
-HONOURING = r'''import json, os, sqlite3, subprocess, sys
+# The fake agent requests completion and ends its native turn before review.
+HONOURING = r'''import json, os, subprocess, sys
 args = sys.argv[1:]
 settings = json.loads(args[args.index('--settings') + 1])
 command = settings['hooks']['Stop'][0]['hooks'][0]['command']
-post_tool_commands = [hook['command'] for group in settings['hooks'].get('PostToolUse', []) for hook in group['hooks']]
 binary = os.environ['BATON_STOP_HOOK']
 database = os.environ['BATON_DATABASE']
-log = open(sys.argv[0] + '.stops', 'a')
-for index, active in enumerate((False, True, True, True)):
-    if index == 3:
-        for post_tool_command in post_tool_commands:
-            delivered = subprocess.run(['/bin/sh', '-c', post_tool_command],
-                                       input=json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash', 'tool_response': 'continue'}),
-                                       capture_output=True, text=True)
-            if delivered.returncode:
-                raise RuntimeError(delivered.stderr)
-            context = json.loads(delivered.stdout)['hookSpecificOutput']['additionalContext']
-            if 'Message (completion-confirmed)' not in context:
-                raise RuntimeError('The PostToolUse hook did not deliver the conductor confirmation.')
-        with sqlite3.connect(database) as db:
-            confirmation = db.execute("SELECT id FROM messages WHERE recipient='worker' AND kind='completion-confirmed' ORDER BY seq DESC LIMIT 1").fetchone()[0]
-        read = subprocess.run([binary, 'read', database, confirmation], capture_output=True, text=True)
-        if read.returncode:
-            raise RuntimeError(read.stdout + read.stderr)
-        with sqlite3.connect(database) as db:
-            if not db.execute("SELECT 1 FROM message_reads WHERE recipient='worker' AND message=?", (confirmation,)).fetchone():
-                raise RuntimeError('The worker read action did not record the confirmation.')
-    hook = subprocess.run(['/bin/sh', '-c', command], input=json.dumps({'hook_event_name': 'Stop', 'stop_hook_active': active}),
-                          capture_output=True, text=True)
-    decision = json.loads(hook.stdout) if hook.stdout.strip() else {}
-    log.write(json.dumps({'active': active, 'decision': decision}) + '\n')
-    log.flush()
-    if active:
-        if index == 1:
-            requested = subprocess.run([binary, 'completion-request', database, 'Done.'], capture_output=True, text=True)
-            if requested.returncode:
-                raise RuntimeError(requested.stdout + requested.stderr)
-        elif index == 2:
-            with sqlite3.connect(database) as db:
-                request = db.execute("SELECT id FROM messages WHERE sender='worker' AND recipient='coordinator' AND kind='completion-request' ORDER BY seq DESC LIMIT 1").fetchone()[0]
-            confirmed = subprocess.run([binary, 'completion-confirmed', database, request], capture_output=True, text=True)
-            if confirmed.returncode:
-                raise RuntimeError(confirmed.stdout + confirmed.stderr)
+with open(sys.argv[0] + '.stops', 'a') as log:
+    for active in (False, True):
+        hook = subprocess.run(['/bin/sh', '-c', command],
+                              input=json.dumps({'hook_event_name': 'Stop', 'stop_hook_active': active}),
+                              capture_output=True, text=True)
+        if hook.returncode:
+            raise RuntimeError(hook.stderr)
+        decision = json.loads(hook.stdout) if hook.stdout.strip() else {}
+        log.write(json.dumps({'active': active, 'decision': decision}) + '\n')
+        log.flush()
+        if decision.get('decision') != 'block':
+            break
+        if active:
+            raise RuntimeError('The requested native turn is still blocked on conductor review.')
+        requested = subprocess.run([binary, 'completion-request', database, 'Done.'], capture_output=True, text=True)
+        if requested.returncode:
+            raise RuntimeError(requested.stdout + requested.stderr)
 print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': 'done'}))
 '''
 # One successful tool finishes, new input commits, and another tool finishes.
@@ -253,7 +233,7 @@ class StopHook(unittest.TestCase):
         self.assertIn("Review the work against coordinator's assignment and the supplied evidence.", text)
         self.assertEqual(self.db.execute('SELECT count(*) FROM message_reads').fetchone()[0], reads_before)
 
-    def test_agy_stop_continues_open_assignment_until_the_conductor_confirms(self):
+    def test_agy_requested_turn_can_end_before_conductor_confirmation(self):
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('assignment','coordinator','worker','task-assignment','Do the work.')")
         self.read('assignment')
         stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
@@ -264,8 +244,9 @@ class StopHook(unittest.TestCase):
         self.assertIn('completion-request --text SUMMARY', blocked['reason'])
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('request','worker','coordinator','completion-request','Finished.')")
         pending = self.agy_hook(stop)
-        self.assertEqual(pending['decision'], 'continue')
-        self.assertIn('Completion request request is awaiting the conductor decision', pending['reason'])
+        self.assertEqual(pending, {'decision': 'allow'})
+        self.assertEqual(self.db.execute("SELECT body FROM messages WHERE id='request'").fetchone(), ('Finished.',))
+        self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE kind='completion-confirmed'").fetchone()[0], 0)
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('confirm','coordinator','worker','completion-confirmed','request')")
         self.read('confirm')
         self.assertEqual(self.agy_hook(stop), {'decision': 'allow'})
@@ -409,14 +390,14 @@ class StopHook(unittest.TestCase):
         self.assertIn('Assignment dispatch:assignment is still open', decision['reason'])
         self.assertIn('completion-request --text SUMMARY', decision['reason'])
 
-    def test_completion_request_keeps_the_turn_open_until_conductor_confirmation(self):
+    def test_requested_turn_can_end_with_its_request_unconfirmed(self):
         self.request()
-        pending = self.hook()
-        self.assertEqual(pending['decision'], 'block')
-        self.assertIn('Completion request message:worker:request', pending['reason'])
-        self.assertIn('Continue the assignment', pending['reason'])
-        self.assertNotIn('acknowledge', pending['reason'].lower())
-
+        self.assertIsNone(self.hook())
+        self.assertIsNone(self.hook(active=True))
+        self.assertEqual(self.db.execute("SELECT recipient,body FROM messages WHERE id='message:worker:request'").fetchone(),
+                         ('coordinator', 'Done.'))
+        self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE kind='completion-confirmed'").fetchone()[0], 0)
+        self.assertEqual(self.db.execute("SELECT count(*) FROM session_stops WHERE session='worker'").fetchone()[0], 0)
         self.confirm_request_read()
         self.assertIsNone(self.hook(active=True))
 
@@ -453,16 +434,40 @@ class StopHook(unittest.TestCase):
         stops = (self.home / 'claude.py.stops')
         return result, [json.loads(line) for line in stops.read_text().splitlines()] if stops.exists() else []
 
-    def test_claude_ignoring_two_blocks_must_request_completion(self):
+    def test_claude_requested_turn_ends_before_conductor_confirmation(self):
         result, stops = self.fake(HONOURING)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual([s['decision'].get('decision') for s in stops], ['block', 'block', 'block', None])
+        self.assertEqual([s['decision'].get('decision') for s in stops], ['block', None])
 
     def tool_hook(self, env=None):
         result = subprocess.run([self.binary, '--stop-hook'], input=json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash'}),
                                 capture_output=True, text=True, env=env or self.env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout) if result.stdout.strip() else None
+
+    def test_requested_native_turn_reports_its_result_before_confirmation(self):
+        directory = self.home / 'requested-turn'
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        script = self.home / 'requested-turn.py'
+        script.write_text(HONOURING)
+        env = dict(self.env, BATON_STOP_HOOK=self.binary)
+        try:
+            result = subprocess.run([self.binary, 'lifecycle', self.path, str(directory), str(self.home),
+                'python3', '-I', str(script)] + self.arguments[1:], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.splitlines()[-1], 'exit 0', result.stdout + result.stderr)
+            self.assertEqual(self.db.execute("SELECT phase,status FROM executions WHERE id='attempt-1'").fetchone(),
+                             ('exited', 'exit 0'))
+            self.assertEqual(self.db.execute("SELECT body FROM messages WHERE sender='worker' AND recipient='coordinator' AND kind='completion-request'").fetchall(),
+                             [('Done.',)])
+            self.assertEqual(self.db.execute("SELECT recipient,kind,body FROM messages WHERE id='attempt-1'").fetchone(),
+                             ('coordinator', 'report', 'done'))
+            self.assertEqual(self.db.execute("SELECT count(*) FROM turns WHERE id='attempt-1'").fetchone()[0], 1)
+            self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE kind='completion-confirmed'").fetchone()[0], 0)
+            self.assertEqual(self.db.execute("SELECT count(*) FROM session_stops WHERE session='worker'").fetchone()[0], 0)
+        finally:
+            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
 
     def test_tool_loop_receives_complete_body_before_stop(self):
         result, _ = self.fake(TOOL_LOOP)
@@ -751,7 +756,7 @@ print(json.dumps(decisions), flush=True)
         self.assertIsNone(invoke('PostToolUse'))
         self.assertIn('is still open', invoke('Stop')['reason'])
         self.request()
-        self.assertIn('awaiting the conductor decision', invoke('Stop')['reason'])
+        self.assertIsNone(invoke('Stop'))
         self.confirm_request_read()
         self.assertIsNone(invoke('PostToolUse'))
         self.assertIsNone(invoke('Stop'))
@@ -918,8 +923,7 @@ request = invoke('completion-request', [config['binary'],'completion-request',co
 admitted = json.loads(request.stdout)[0]
 assert admitted['admission']['status'] == 'admitted', admitted
 stop = invoke('stop-after-request', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
-assert json.loads(stop.stdout)['decision'] == 'block'
-assert 'awaiting the conductor decision' in json.loads(stop.stdout)['reason']
+assert stop.stdout.strip() == ''
 confirmation = invoke('completion-confirmed', [config['binary'],'completion-confirmed',config['database'],admitted['id']])
 confirmation_id = json.loads(confirmation.stdout)[0]['id']
 held = invoke('stop-for-confirmation-input', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
@@ -1039,16 +1043,15 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         self.assertIsNone(self.codex_stop(env=env))
         self.assertIsNone(self.codex_tool(env=env))
 
-    def test_codex_stop_blocks_until_the_conductor_confirms_the_request(self):
+    def test_codex_requested_turn_can_end_before_conductor_confirmation(self):
         for active in (False, True, True):
             decision = self.codex_stop(active)
             self.assertEqual(decision['decision'], 'block')
             self.assertIn('Assignment dispatch:assignment is still open', decision['reason'])
             self.assertIn('completion-request --text SUMMARY', decision['reason'])
         self.request()
-        pending = self.codex_stop(True)
-        self.assertEqual(pending['decision'], 'block')
-        self.assertIn('awaiting the conductor decision', pending['reason'])
+        self.assertIsNone(self.codex_stop(True))
+        self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE kind='completion-confirmed'").fetchone()[0], 0)
 
         confirmed = subprocess.run([self.binary, 'completion-confirmed', self.path, 'message:worker:request'],
                                    env=dict(self.env, BATON_STOP_HOOK=self.binary), capture_output=True, text=True)
@@ -1164,8 +1167,7 @@ print(json.dumps(results), flush=True)
             self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
             self.assertIsNone(results['again'])
             if session == 'worker':
-                self.assertEqual(results['stop_after']['decision'], 'block')
-                self.assertIn('awaiting the conductor decision', results['stop_after']['reason'])
+                self.assertIsNone(results['stop_after'])
                 self.assertEqual(results['followup_stop']['decision'], 'block')
                 self.assertIn('Message (%s) from coordinator [id: %s]:' %
                               (results['followup_kind'], results['followup_id']),
