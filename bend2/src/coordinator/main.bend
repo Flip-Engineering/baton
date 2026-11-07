@@ -510,13 +510,13 @@ def instance_status_cli(+database: String, +flag: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-status"),
     Custody.Instance.print_status(database),instance_wait_cli(database,flag))
 
-def instance_shutdown_cli(+database: String, +flag: String) -> IO(Unit):
-  Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),
-    Custody.Instance.print_drain(database),instance_resume_cli(database,flag))
-
 def instance_resume_cli(+database: String, +flag: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-resume"),
     Custody.Instance.print_resume(database),instance_status_cli(database,flag))
+
+def instance_shutdown_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),
+    Custody.Instance.print_drain(database),instance_resume_cli(database,flag))
 
 def instance_owner_cli(+database: String, +flag: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),
