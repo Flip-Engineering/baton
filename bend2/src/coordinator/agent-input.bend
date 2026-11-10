@@ -616,7 +616,9 @@ def rr_observe_impl(+db: String, +player: String, +turn_id: String, +event: Stri
             rr_refuse_attempt(db,running,turn_id,description)))))
 
 def rr_observe(+db: String, +player: String, +turn_id: String, +event: String) -> IO(Unit):
-  rr_observe_impl(db,player,turn_id,event)
+  do IO<Unit>:
+    valid : String <- rr_scalar(db,"SELECT json_valid(" ++ C.q(event) ++ ")")
+    Bool.pick(IO(Unit),String.eq(valid,"1"),rr_observe_impl(db,player,turn_id,event),IO.pure(Unit,Unit{}))
 
 def rr_input_snapshot(+source: String) -> String:
   "(SELECT coalesce(json_group_array(json_object('id',id,'sender',sender,'kind',kind,'body',body,'receipt',receipt)),'[]') FROM (SELECT * FROM messages WHERE recipient=" ++ C.q(source) ++ " AND seq>=coalesce(" ++ C.task_assignment_sql(C.q(source)) ++ ",0) AND kind IN('task','task-assignment','guidance','recovery','task-continuation') ORDER BY seq))"
