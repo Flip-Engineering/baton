@@ -1,0 +1,5 @@
+{
+  "result": "fail",
+  "type": "CalledProcessError",
+  "error": "Command '['python3', 'bend2/test/observer-monitor.py', '-v']' returned non-zero exit status 1."
+}

@@ -1,0 +1,7 @@
+All terms check, but 6 defs rely on unsafe or foreign code:
+- recover_observer_command
+- recover_receive_command
+- dispatch_recover
+- dispatch_observer
+- dispatch
+- main

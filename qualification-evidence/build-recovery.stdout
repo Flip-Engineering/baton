@@ -1,0 +1,9 @@
+{
+  "binary": "/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/.scratch/bend2/baton-recovery",
+  "binary_sha256": "79ed005cb51917950d917763413f3becdea812d6b8637732ea35cb95ff98e59c",
+  "source_sha256": "effa42c720dfb718b44bd9da8073989c7c9dc7e750d874c1c3b6c2fd85655f1f",
+  "split_manifest": "/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/.scratch/bend2/baton-recovery.parallel/split-manifest.json",
+  "receipt": "/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/.scratch/bend2/baton-recovery.parallel/build-receipt.json",
+  "whole_route_wall_s": 56.77488879700002
+}
+/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/.scratch/bend2/baton-recovery

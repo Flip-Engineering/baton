@@ -1,0 +1,8 @@
+{
+  "full_exit": 0,
+  "helper_exit": 0,
+  "stdout_match": true,
+  "stderr_match": true,
+  "stdout_sha256": "29146bbe5522b603eb61a00039dc7c2f0c0742c54cdd7881b38089764854ffc8",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

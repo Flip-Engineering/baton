@@ -1,0 +1,12 @@
+{
+  "peak": "59449344",
+  "events": [
+    "low 0",
+    "high 0",
+    "max 0",
+    "oom 0",
+    "oom_kill 0",
+    "oom_group_kill 0"
+  ],
+  "swap_current": "0"
+}

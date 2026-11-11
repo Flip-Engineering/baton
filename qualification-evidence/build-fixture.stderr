@@ -1,0 +1,11 @@
+All terms check, but 10 defs rely on unsafe or foreign code:
+- init_cli
+- start_locked
+- start_cli
+- shutdown_cli
+- keeper_locked
+- keeper_cli
+- dispatch_number
+- dispatch_mode
+- dispatch
+- main

@@ -1,0 +1,7 @@
+{
+  "source": "2cf17ad94229f870d6ff33154793f582d65dcd93",
+  "full_source": "97916000d2742e1e4d29514001cca2b87f411f39",
+  "full_sha256": "f590c49798c2df63c4a007f25620599a570dafb2eec74d54768fc340aec889fa",
+  "recovery_sha256": "79ed005cb51917950d917763413f3becdea812d6b8637732ea35cb95ff98e59c",
+  "cgroup": "/sys/fs/cgroup/system.slice/root-focused-recovery-pair-2cf17ad-bootc3a32f79.service"
+}

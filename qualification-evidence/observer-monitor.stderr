@@ -1,0 +1,67 @@
+test_concurrent_observers_advance_the_cursor_once (__main__.ObserverMonitor.test_concurrent_observers_advance_the_cursor_once) ... /usr/lib/python3.12/unittest/case.py:669: ResourceWarning: unclosed file <_io.TextIOWrapper name=4 encoding='UTF-8'>
+  function, args, kwargs = self._cleanups.pop()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.12/unittest/case.py:669: ResourceWarning: unclosed file <_io.TextIOWrapper name=6 encoding='UTF-8'>
+  function, args, kwargs = self._cleanups.pop()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_fframes_absent_native_partial_output_preserves_unknown_custody (__main__.ObserverMonitor.test_fframes_absent_native_partial_output_preserves_unknown_custody) ... ERROR
+test_refused_resume_text_stays_an_incomplete_observation (__main__.ObserverMonitor.test_refused_resume_text_stays_an_incomplete_observation) ... ERROR
+test_unknown_status_monitor_advances_once_and_keeps_owed_input (__main__.ObserverMonitor.test_unknown_status_monitor_advances_once_and_keeps_owed_input) ... FAIL
+
+======================================================================
+ERROR: test_fframes_absent_native_partial_output_preserves_unknown_custody (__main__.ObserverMonitor.test_fframes_absent_native_partial_output_preserves_unknown_custody)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/bend2/test/observer-monitor.py", line 424, in test_fframes_absent_native_partial_output_preserves_unknown_custody
+    result = self.recover(observer)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/bend2/test/observer-monitor.py", line 219, in recover
+    result = subprocess.run(
+             ^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 550, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 1209, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 2116, in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+  File "/usr/lib/python3.12/subprocess.py", line 1253, in _check_timeout
+    raise TimeoutExpired(
+subprocess.TimeoutExpired: Command '['/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/.scratch/bend2/baton-recovery', '--recover-observer', '/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/.scratch/bend2/observer-monitor-wlao7mcm/state.db', 'parent', '73461']' timed out after 60 seconds
+
+======================================================================
+ERROR: test_refused_resume_text_stays_an_incomplete_observation (__main__.ObserverMonitor.test_refused_resume_text_stays_an_incomplete_observation)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/bend2/test/observer-monitor.py", line 399, in test_refused_resume_text_stays_an_incomplete_observation
+    result = self.recover(observer)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/bend2/test/observer-monitor.py", line 219, in recover
+    result = subprocess.run(
+             ^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 550, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 1209, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 2116, in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+  File "/usr/lib/python3.12/subprocess.py", line 1253, in _check_timeout
+    raise TimeoutExpired(
+subprocess.TimeoutExpired: Command '['/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/.scratch/bend2/baton-recovery', '--recover-observer', '/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/.scratch/bend2/observer-monitor-m4hyobn2/state.db', 'parent', '75319']' timed out after 60 seconds
+
+======================================================================
+FAIL: test_unknown_status_monitor_advances_once_and_keeps_owed_input (__main__.ObserverMonitor.test_unknown_status_monitor_advances_once_and_keeps_owed_input)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/root-focused-recovery-2cf17ad-bootc3a32f79/bend2/test/observer-monitor.py", line 283, in test_unknown_status_monitor_advances_once_and_keeps_owed_input
+    self.fail("cursor not persisted; exit=%r stdout=%r stderr=%r" % (first.returncode, out, err))
+AssertionError: cursor not persisted; exit=-9 stdout='' stderr=''
+
+----------------------------------------------------------------------
+Ran 4 tests in 182.370s
+
+FAILED (failures=1, errors=2)

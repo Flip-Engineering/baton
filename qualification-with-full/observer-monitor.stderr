@@ -1,0 +1,9 @@
+test_concurrent_observers_advance_the_cursor_once (__main__.ObserverMonitor.test_concurrent_observers_advance_the_cursor_once) ... ok
+test_fframes_absent_native_partial_output_preserves_unknown_custody (__main__.ObserverMonitor.test_fframes_absent_native_partial_output_preserves_unknown_custody) ... ok
+test_refused_resume_text_stays_an_incomplete_observation (__main__.ObserverMonitor.test_refused_resume_text_stays_an_incomplete_observation) ... ok
+test_unknown_status_monitor_advances_once_and_keeps_owed_input (__main__.ObserverMonitor.test_unknown_status_monitor_advances_once_and_keeps_owed_input) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 52.519s
+
+OK

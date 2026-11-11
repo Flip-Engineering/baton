@@ -1,0 +1,10 @@
+{
+  "source": "2cf17ad94229f870d6ff33154793f582d65dcd93",
+  "boot": "c3a32f79-97ab-478d-a356-bce584377dcd",
+  "cgroup": "/sys/fs/cgroup/system.slice/root-focused-recovery-2cf17ad-bootc3a32f79.service",
+  "compiler": "/run/baton2-native-homelab/home/.local/share/bend2/releases/2.0.25-27629713-20261018/bin/bend",
+  "compiler_sha256": "5bebff6c901ae0da3ac5a2f2c84c148405f94dc5663a95e67fcc5436df4c68b1",
+  "compiler_main_sha256": "53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d",
+  "memory_max": "17179869184",
+  "swap_max": "0"
+}
