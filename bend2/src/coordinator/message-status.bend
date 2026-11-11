@@ -58,9 +58,10 @@ def consume_delivered_sql(+session: String, +attempt: String, +native: String, +
   +eligible = "recipient=" ++ q(session) ++ " AND receipt IS NULL AND (seq<=CAST(" ++ q(initial_cursor) ++ " AS INTEGER) OR (kind='guidance' AND seq<=CAST(" ++ q(delivered_cursor) ++ " AS INTEGER)))"
   +current = "EXISTS(SELECT 1 FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=" ++ q(session) ++ " AND e.id=" ++ q(attempt) ++ " AND e.phase='exited' AND s.native=" ++ q(native) ++ ")"
   +unstopped = "NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ")"
+  +read = "EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=" ++ q(session) ++ " AND r.attempt=" ++ q(attempt) ++ " AND r.native=" ++ q(native) ++ " AND r.handled=" ++ q(receipt) ++ ")"
   "BEGIN IMMEDIATE;UPDATE message_reads SET handled=coalesce(handled," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND attempt=" ++ q(attempt) ++ " AND native=" ++ q(native)
   ++ " AND message IN(SELECT id FROM messages WHERE " ++ eligible ++ ") AND " ++ current ++ " AND " ++ unstopped ++ ";"
-  ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE " ++ eligible ++ " AND " ++ current ++ " AND " ++ unstopped ++ ";COMMIT;"
+  ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE " ++ eligible ++ " AND " ++ current ++ " AND " ++ unstopped ++ " AND " ++ read ++ ";COMMIT;"
 
 # The admitted complete prompt supplies the exact stored header and body.
 def prompt_record_sql(+session: String, +attempt: String, +native: String, identity: String, +input: String) -> String:
