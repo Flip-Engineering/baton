@@ -1,0 +1,48 @@
+I've built the whole fabric pass, but it changes the shading more than the read. The silhouettes are still the body's (nipples, belly rolls, legs like tights), because that's shape, and shape belongs to DRAPE. All judging stills are `cloth=1&drape=0`. The cloth-off regression holds: all 24 heroes are byte-identical in geometry, materials, uniforms and compiled shader source. All 86 garment meshes have a fabric.
+
+**Files** (under `videos/web/`)
+- New: `lib/fx/cloth/fabric_glsl.js`, `lib/fx/cloth/wardrobe.js`, `lib/fx/cloth/swatch.js`, plus dev tools `labs/clothing1/dev_fabric_lab.js` (load it with `lab_cloth.html?lab=dev_fabric_lab&fold=&wear=&dbg=`), `dev_fabric_build.mjs`, `dev_fabric_wind.mjs`.
+- `lib/fx/hero.js`, changed only when `o.cloth` is set. The cloth shader is split into pieces that join back byte-for-byte, so the fabric path keeps hero.js's hems, cuts and construction.
+- `lib/fx/garment.js`: a collar `fit` option (used only under `o.cloth`).
+- `lib/fx/workforce.js`: the `cloth` passthrough in `castHero` and `workerDesc`.
+- `lib/fx/cloth/fabrics.js`: LOOKS retuned, plus a `spec` field per fabric.
+- `labs/clothing1/fabric_test.mjs`: also checks fabric coverage, that outside faces face out, and prints per-fabric numbers.
+
+**API**
+- `fabricPack(name, hex)` returns the look as uniform values.
+- `fabricMaterial({fabric, color, color2, uniforms, glsl, defines})` builds the material; hero cloth and the swatch book both use it.
+- `fabricDepth(mat, glsl)` gives garment shells a shadow that follows their cuts.
+- `heroFabrics(o, map)`, `dress(spec)`, `dyes(spec)`, `crowdCloth(d, rng)` do the dressing.
+- `h.fabrics[key]` is a fabric name, or an array lined up with `h.cloth[key]` for boots and rims.
+- `swatchBook(scene, {side, back, light})` returns `{target, dist, fov, lift, report}`.
+
+**What improved** (stills in `videos/review/studio_clothing_c1/after/stills_fabric/`)
+- **Glowing cuffs: gone** at dawn and under overcast (`row_dawn`, `row_over`). The cause wasn't the sleeve's inside. The skin-hiding rule left a hole under every sleeve end, and looking up into it you saw the sky through the arm. Before, there was a 204–221 grey-level peak between sleeve and arm; now there's none. Under `o.cloth`, shells now cast shadows and the hidden skin stops 6 cm inside the hem.
+- **June's leather is brown now** (`bust_5`). The pink came from a low-saturation dye exposed bright, with a white specular haze on top; the display transform is not to blame. Measured: chroma 0.062 → 0.083, lightness 0.63 → 0.57. Leather now has a finish highlight and grain.
+- **Elbow zig-zag gone** (`bust_0`): the fold bump now uses an analytic gradient, so the steep-stripe stair-steps at the elbows are gone. Fold size follows each fabric's bending length.
+- **Collar** (`bust_0`): it's now lit instead of reading as dark flaps, and the fall rests on the garment.
+- **Coverall:** the waist hem step is gone.
+- **Hi-vis** is fluorescent in both colours; orange-red now falls inside the ANSI colour zone.
+- **Gloves** are no longer striped black.
+- **Fabric book** (`swatch_hard`, `swatch_over`): 16 fabric/dye pairs, each on a Cusick drape, a flat panel and a turned edge.
+
+**What didn't**
+- Denim reads washed out and blotchy under the hard key (`row_hard`).
+- The elbow and knee folds read as regular rings.
+- The coverall waist still pinches into a belly roll.
+- At 270 px wide almost nothing changes beyond the cuffs, hi-vis and denim tone (`board_fabric_270.jpg`).
+- Leather renders about 13° redder than its colour under the hard key. That's the light and exposure, so it's a LIGHTING question.
+- The swatch drape is a simple model, not a solve: every fabric softer than about 2 cm bending length gets the same drape coefficient (0.28).
+- The crowd (people.js) gets fabric-family colours only; I didn't add the optional 4096 flag.
+
+Boards are `after/board_fabric_{rows,bust,270,swatch}.jpg`; the notes are `after/NOTES_fabric.md`.
+
+**lab_cloth.js:** nothing needed. `cloth=1&drape=1` compiles and runs (June, 6.1 s drape).
+
+**For DRAPE:**
+- On June with `drape=1` the jacket shows an odd one-sided bulge, a ragged edge where it meets the skirt, and a `stretchMax` of 479 on the bottom.
+- Please keep the coverall's waist band welded: where both shells exist, the bottom follows the top.
+- The shadow material shares `mat.defines`, so `CLOTH_REST` needs to keep being set by changing that object in place, as `drape.js` does now.
+- A real drape solve of the Cusick specimen should replace the book's model.
+
+**For HUMAN:** the skin-hole and glove-stripe bugs affect every c6/c7 figure. I worked around both only under `o.cloth`.

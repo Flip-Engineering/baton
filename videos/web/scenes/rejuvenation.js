@@ -1,0 +1,20 @@
+// REJUVENATION (v4, final): all things have a master: the working class. The human race grows young by owning and expanding production. The fountain of youth: a steel mill. Master of all things.
+import { piece, FIELD as F, PAL as P } from '../lib/piece.js';
+await piece({ song: 'rejuvenation', seed: 150, label: 'MASTER', tempo: [36.6, 12], sigilAt: 64, endAt: 68, textY: 1150, hudUntil: 0,
+  drops: [[16, 48], [52, 64]], darks: [[0, 8]], flashes: [8, 16, 52],
+  words: [[0, 'ALL THINGS'], [2, 'HAVE A MASTER.'], [4, 'THE MASTER'], [6, 'WORKS.'], [7, null], [8, 'THE WORKING'], [9, 'CLASS.'],
+    [10, 'MASTER'], [12, 'OF STEEL.'], [13, 'OF AI.'], [14, 'OF TIME.'], [16, 'THE HUMAN RACE'], [18, 'GROWS YOUNG.'],
+    [20, 'BY OWNING'], [22, 'AND EXPANDING'], [24, 'PRODUCTION.'], [26, 'THE MILLS.'], [27, 'THE TOWNS.'], [28, 'THE CITIES.'], [29, 'GROW YOUNG.'],
+    [32, 'RISE.'], [33, 'RISE.'], [34, 'RISE.'], [35, 'RISE.'], [36, 'A HARD'], [37, "DAY'S WORK."], [38, 'CURE'], [39, 'DISEASES.'],
+    [40, 'REJUVENATION'], [42, 'OF THE'], [43, 'HUMAN RACE'], [44, 'THROUGH'], [46, 'AMERICA.'],
+    [48, 'THE FOUNTAIN'], [49, 'OF YOUTH:'], [50, 'A STEEL MILL.'], [52, 'UNRELENTING'], [54, 'HUMAN'], [55, 'FLOURISHING.'],
+    [56, 'MASTER'], [58, 'OF ALL THINGS.'], [63, null]],
+  hot: ['ALL THINGS', 'HAVE A MASTER.', 'WORKS.', 'CLASS.', 'MASTER', 'OF TIME.', 'GROWS YOUNG.', 'PRODUCTION.', 'GROW YOUNG.', 'RISE.',
+    "DAY'S WORK.", 'DISEASES.', 'AMERICA.', 'A STEEL MILL.', 'FLOURISHING.'], big: ['OF ALL THINGS.'],
+  shots: [[0, F.heat, P.ice], [8, F.sun, P.ironbow], [12, F.heat, P.ironbow], [13, F.lattice, P.ironbow], [14, F.tunnel, P.ironbow],
+    [16, F.sun, P.ironbow], [18, F.grid, P.ironbow], [20, F.heat, P.ironbow], [22, F.tunnel, P.ironbow], [24, F.heat, P.ironbow],
+    [26, F.skyline, P.ironbow, 0, 0, (a) => a * 0.3], [30, F.sun, P.ironbow],
+    [32, F.crowd, P.ironbow, 0, 0, (a) => a * 0.12], [34, F.crowd, P.ironbow, 0, 0, (a) => 0.25 + a * 0.12], [36, F.heat, P.ironbow], [38, F.sun, P.ironbow],
+    [40, F.grid, P.ironbow], [42, F.sun, P.ironbow], [44, F.tunnel, P.ironbow], [46, F.skyline, P.ironbow, 0, 0, 0.9],
+    [48, F.sun, P.ironbow], [50, F.heat, P.ironbow], [52, F.crowd, P.ironbow, 0, 0, (a) => a * 0.2], [54, F.tunnel, P.ironbow], [56, F.sun, P.ironbow], [58, F.grid, P.ironbow],
+    [60, F.sun, P.ironbow], [64, F.corridor, P.turrell]] });

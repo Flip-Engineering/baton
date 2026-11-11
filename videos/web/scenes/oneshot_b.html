@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ONE SHOT CURE</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas#out{display:block}</style>
+<script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
+</head>
+<body>
+<canvas id="out" width="1080" height="1920"></canvas>
+<script>window.ONESHOT = { n: 6, plan: "six", cam: "low", song: "oneshot_b", seed: 2015, who: ["L22_f27_black", "L05_m59_black", "L17_m28_hispanic", "L06_f53_white", "L21_m32_black", "L20_f29_asian"] };</script>
+<script type="module">import('./oneshot.js').catch(e => { console.error(e.stack || e); window.sceneError = String(e.stack || e); });</script>
+</body>
+</html>

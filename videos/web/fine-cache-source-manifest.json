@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "repository": "flip-engineer/automated-content-pipeline",
+  "baseline_commit": "494d0ae4b805c262d40722c33092d531283f4fa4",
+  "baseline_source": {
+    "lib/fx/anatomy/fine/index.js": "4920b4a76758c6b07e5e4b922555836c9c94ee061dd50297433d3f32b197a32a",
+    "render.mjs": "ba01e41f0d2713c8d02ed71a2e95e9e55a66fce4a2cae65fc67c55d132573033",
+    "cache_server.mjs": "148ae5045226398a23313f751464be2d0a5a082ff606438bd2672f69103dc22e"
+  },
+  "patched_source_sha256": {
+    "render.mjs": "8d2340112a4ea46656f41c15967102a560632f2441148a93d4fdf6eb1fa93427",
+    "cache_server.mjs": "8251ac930fd5e4ec1f6d2c102d9a0f45dbdb583cfeb07663c5e9f8c91244b35f",
+    "lib/fx/anatomy/fine/index.js": "3767b773fa4cb78c9f19986d823c0a41664549a6f318fa37ffed812575d9ce64",
+    "lib/fx/anatomy/fine/fine_cache_client.mjs": "8f1f2023c52058f9562fda5d525071b5cecf22a717f30060b8ba9c462522a64d",
+    "lib/fx/anatomy/fine/fine_codec.mjs": "9d9ba93380df85d3ffb38da81e6f56533dfd742e0a9752486a428ddbf8bff041"
+  },
+  "complete_production_closure": false,
+  "qualification": {
+    "policy_included": false,
+    "default_enabled": false,
+    "actual_bake_ran": false,
+    "numeric_equivalence_qualified": false,
+    "whole_job_speedup_measured": false
+  },
+  "notes": [
+    "This manifest does not attest the complete imported/dynamic asset or dependency closure.",
+    "A runtime policy must independently bind the complete source closure, runtime, dependencies, inputs, and measured memory/storage/lease budgets before setting qualified=true."
+  ]
+}

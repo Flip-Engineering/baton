@@ -1,0 +1,384 @@
+{
+  "captured_at": "2026-10-19T08:47:12Z",
+  "pipeline_base": "f2393e251aee796c381f0fae8672707bd59a0edb",
+  "pipeline_checkout": "flip-engineer/automated-content-pipeline",
+  "records": [
+    {
+      "path": ".gitignore",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "6feaded4e28ea86e001a6751b4e3d960e8b7c31b9616ff9936b79297086e809b"
+    },
+    {
+      "path": "acp-render-farm.service",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/acp-render-farm.service",
+      "source_sha256": "1279b4e348f921831637e7456490e760de527915f5c2b1e430be39f02ddd9f5c",
+      "status": "modified",
+      "tracked_sha256": "1507c79a6c3db478b47ac8d31b55b7ed78d42dadea5cb391012605a807113cf9"
+    },
+    {
+      "path": "admission_policy.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/admission_policy.py",
+      "source_sha256": "370301ccd5d989daefd61b48ee83f33d1282c14a2fad4ebbf81933348c453697",
+      "status": "modified",
+      "tracked_sha256": "00c7a653722561a57a69f7e29989020990f3b83ee8dec9d0b5455393e7d8bea1"
+    },
+    {
+      "path": "archive.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/archive.py",
+      "source_sha256": "6a1d3f08dcdb0da95068b54e96f71b6907e440acd083a1040afce3b1bdb1745d",
+      "status": "copied",
+      "tracked_sha256": "6a1d3f08dcdb0da95068b54e96f71b6907e440acd083a1040afce3b1bdb1745d"
+    },
+    {
+      "path": "batch_adapter.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/batch_adapter.py",
+      "source_sha256": "1d6ce3231008cbe95a2d763c7c7e4ee40f8c8ebca2f0c19c817db9f53da9574f",
+      "status": "modified",
+      "tracked_sha256": "aab09a66fc09924f9bf408507b5cf41dd5636348802fd6580da9c5d145948b73"
+    },
+    {
+      "path": "bench_parallel.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/bench_parallel.py",
+      "source_sha256": "3dd2efbe8f13038a51a9822abb348f738f04ade143446bb5d21a393ff5873b44",
+      "status": "copied",
+      "tracked_sha256": "3dd2efbe8f13038a51a9822abb348f738f04ade143446bb5d21a393ff5873b44"
+    },
+    {
+      "path": "claim_reconciliation.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "456ba9a43823f0d64fbfa276db0447baefdaecb283c2eaebbd181ac9dfcab415"
+    },
+    {
+      "path": "common_person.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/common_person.py",
+      "source_sha256": "32e21bbc3fc9926f790cf1ddf3b7d03d637106c9305e29030ea7827823aa79cd",
+      "status": "modified",
+      "tracked_sha256": "e9a5ad85b50dbfc6fc19eb3544bb12d2a25431a13b643d28519e7f957cca55a8"
+    },
+    {
+      "path": "config.json",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/config.json",
+      "source_sha256": "f62dfe328aaf5332a2290d1195174ebfd9d3e763cc10fa2f729b0fec936a82dd",
+      "status": "modified",
+      "tracked_sha256": "7f38fcc3b53c4f248e848aebf33d88f0cb2a2c608232551b499868243d9f9074"
+    },
+    {
+      "path": "failure_reporting.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/failure_reporting.py",
+      "source_sha256": "163a2161be0cf1874c4226936cdaeb262144723405d9b46134552cdf5835f008",
+      "status": "copied",
+      "tracked_sha256": "163a2161be0cf1874c4226936cdaeb262144723405d9b46134552cdf5835f008"
+    },
+    {
+      "path": "farm.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/farm.py",
+      "source_sha256": "f1ac1e06e968a1eec24ab20e401a0a8f0e5a89057a1a957d48e3421bbd12062a",
+      "status": "modified",
+      "tracked_sha256": "0cabb0de5698a9e957e9686f346f909455792b53c10350d08f0777f9dbfce83d"
+    },
+    {
+      "path": "farm_targeted_acquire.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/farm_targeted_acquire.py",
+      "source_sha256": "fe44b136b082a9265f82cee961ba06d7e252dceffde03053f992d6373cdf7837",
+      "status": "modified",
+      "tracked_sha256": "fe44b136b082a9265f82cee961ba06d7e252dceffde03053f992d6373cdf7837"
+    },
+    {
+      "path": "fframes_recipe.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "995a1f51978d97ae02ada9ac1d42add6b35ffa9cb0e56813c532220cb90de3c3"
+    },
+    {
+      "path": "gpu_allocation.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/gpu_allocation.py",
+      "source_sha256": "4d293da3edb86b7f9be278f1b59b771f2b975a1a78711d56c91f7fe16a77c496",
+      "status": "modified",
+      "tracked_sha256": "06ab58a39fcb080e7d33d5a6662b52791477a15e6f706c216500206f1b2f4d73"
+    },
+    {
+      "path": "gpu_jobs.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/gpu_jobs.py",
+      "source_sha256": "7e2aad8934f17f4c6da350490db4f7b34e03334cb9af73af8998239d62d5ee78",
+      "status": "modified",
+      "tracked_sha256": "93e8d54c2845acb62d516a477beba8c249fcda95db283813c1304608b50b33e1"
+    },
+    {
+      "path": "gpu_lane.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/gpu_lane.py",
+      "source_sha256": "903f1fe13937b879f864ea58728c38b133c0caea069a7448113cd7ce87b0c11e",
+      "status": "copied",
+      "tracked_sha256": "903f1fe13937b879f864ea58728c38b133c0caea069a7448113cd7ce87b0c11e"
+    },
+    {
+      "path": "gpu_policy.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/gpu_policy.py",
+      "source_sha256": "e233022e1342dfa573fd1c36d4eb1c8f3320920c5ef42aeacf90bb305eaa7cd9",
+      "status": "copied",
+      "tracked_sha256": "e233022e1342dfa573fd1c36d4eb1c8f3320920c5ef42aeacf90bb305eaa7cd9"
+    },
+    {
+      "path": "job_dependencies.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/job_dependencies.py",
+      "source_sha256": "1107cdef5e66ead8f672b5273eaaf09bd34b71ee60575d20a238a71c98f03286",
+      "status": "copied",
+      "tracked_sha256": "1107cdef5e66ead8f672b5273eaaf09bd34b71ee60575d20a238a71c98f03286"
+    },
+    {
+      "path": "maintenance/gpu-job-type-20261003/source/gpu_job.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/maintenance/gpu-job-type-20261003/source/gpu_job.py",
+      "source_sha256": "5e3e1173ec07dfe180baf2790ce27fdd51dea8a7834edb53e5b44d5a710031f7",
+      "status": "copied",
+      "tracked_sha256": "5e3e1173ec07dfe180baf2790ce27fdd51dea8a7834edb53e5b44d5a710031f7"
+    },
+    {
+      "path": "person_anatomy.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/person_anatomy.py",
+      "source_sha256": "ca65c52e38079005c1ed648194bcc1c74b48e0b4ff044f80f6d391fcc0f64a5c",
+      "status": "modified",
+      "tracked_sha256": "2b784326aafb38ce976878fe3292f0e185fb45a9460e34cd596763821663f434"
+    },
+    {
+      "path": "person_child_failures.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/person_child_failures.py",
+      "source_sha256": "ed567c743355cf5168782b2b61ed4a8a2187e58fe6bd340bba477e5d91762138",
+      "status": "modified",
+      "tracked_sha256": "d7a186ba9a5e511b4a19d68e62256e471dfd4d31d65e6cadfbe137cdd30e72a1"
+    },
+    {
+      "path": "person_cpu_policy.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/person_cpu_policy.py",
+      "source_sha256": "649b99aebf84e3849e027a7245b596419b61c2abc4d087a01f515c452d5edb6b",
+      "status": "copied",
+      "tracked_sha256": "649b99aebf84e3849e027a7245b596419b61c2abc4d087a01f515c452d5edb6b"
+    },
+    {
+      "path": "person_fine_context.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/person_fine_context.py",
+      "source_sha256": "5460ce2a7b529480ec0e2960fefbd681a4763c02d2c473bec471adf01601cf5d",
+      "status": "copied",
+      "tracked_sha256": "5460ce2a7b529480ec0e2960fefbd681a4763c02d2c473bec471adf01601cf5d"
+    },
+    {
+      "path": "person_pelvis.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/person_pelvis.py",
+      "source_sha256": "b20ee023e5bd8cb0fd6ed2d31fd06903040f00ecbd9ca900e454f713e5affedf",
+      "status": "modified",
+      "tracked_sha256": "b0ec90fcae63cba5167887e56ff2b6782c684881b99add77b5be7befbc0dc182"
+    },
+    {
+      "path": "person_pipeline.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/person_pipeline.py",
+      "source_sha256": "f8ac9013c8ff8b6f35401e8a52725cc5bb8e1c1851e35d3a693cb08a53cff32d",
+      "status": "modified",
+      "tracked_sha256": "f2f7417b7613b73ad17f17af34685e9b42b4b9a1322ca3e86fde8f3a2d65402d"
+    },
+    {
+      "path": "protocol/farm_dependencies.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/protocol/farm_dependencies.py",
+      "source_sha256": "9bf41f15ade037713211bfad6c6e0151ce76c0fe556e8cb14a88ea4048fc03dc",
+      "status": "copied",
+      "tracked_sha256": "9bf41f15ade037713211bfad6c6e0151ce76c0fe556e8cb14a88ea4048fc03dc"
+    },
+    {
+      "path": "protocol/lfs_archive.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "c1b46079f93e54110a436064ceca60f3c13749725385257bd48e042f5ad7ea6e"
+    },
+    {
+      "path": "protocol/pipeline-farm.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/protocol/pipeline-farm.py",
+      "source_sha256": "25f2e541f24d6953a544580d9ac3aadd7ddc5d229f8379e3c298b92f042ad11b",
+      "status": "copied",
+      "tracked_sha256": "7d9e054c9c10b041e255aeb6d28d5d0c92363cec2ea077b7774607b6511305d4"
+    },
+    {
+      "path": "protocol_bridge.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/protocol_bridge.py",
+      "source_sha256": "f32632d13a386b898225546f4947e86b4ca3b08c8aa97f8320e45430e9395291",
+      "status": "copied",
+      "tracked_sha256": "5bcc489b071aa25733468900ed5021c3b6c028e3524c880aa57fd4648720e651"
+    },
+    {
+      "path": "range_retry.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "3130464c3351ba7b11b9588c6e7958615d661236f4b85ad4ea7608c7823238fb"
+    },
+    {
+      "path": "recovery.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/recovery.py",
+      "source_sha256": "b3f50a56bb57c51df0489a497adba9dea88ed4b9c155c46a3c62922891b41003",
+      "status": "copied",
+      "tracked_sha256": "425ea3afa7cbd31f7bb8f1eeb41c27523a1d0b5c50ae13703c1db284f809c7a1"
+    },
+    {
+      "path": "render_policy.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/render_policy.py",
+      "source_sha256": "38d4ff3d5939a4c51a9df004443969ff641baf2d6987a52c2459a8e4c73c5309",
+      "status": "copied",
+      "tracked_sha256": "38d4ff3d5939a4c51a9df004443969ff641baf2d6987a52c2459a8e4c73c5309"
+    },
+    {
+      "path": "repair_queue.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/repair_queue.py",
+      "source_sha256": "1f15ab17d3217d21102c7d46aa4667c5e14f0b882dd8eda69ff8e19157c7d479",
+      "status": "copied",
+      "tracked_sha256": "1f15ab17d3217d21102c7d46aa4667c5e14f0b882dd8eda69ff8e19157c7d479"
+    },
+    {
+      "path": "runtime_launch.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "4ea7034a676bbd442333bcfb3b10e1e30cbf2ca7d4c318c7287328d253d8ebf0"
+    },
+    {
+      "path": "runtime_selection.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "9a237d9c693151df9d6f926fdf2ee3fba38cbf15d639469b624524e7c2ae9495"
+    },
+    {
+      "path": "scheduler.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/scheduler.py",
+      "source_sha256": "e5b84d04e3cd18995cc674c37be157c1add48f6250a321a31d1723b91f68db8d",
+      "status": "modified",
+      "tracked_sha256": "00a261cac2b321dbbd9612837d206ef59fcfa9093906f18a2a22902fef1d673a"
+    },
+    {
+      "path": "script_guard_upgrade.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/script_guard_upgrade.py",
+      "source_sha256": "77cb8a4623c84f1471f9a4914e30b8a5e505268ad02539844a487b635f404747",
+      "status": "copied",
+      "tracked_sha256": "77cb8a4623c84f1471f9a4914e30b8a5e505268ad02539844a487b635f404747"
+    },
+    {
+      "path": "selected_lane_launch.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "90fda95f035b16476c9704c31515b23ad12eea3dceb25355c9a28346f90cb8f2"
+    },
+    {
+      "path": "tests/test_admission_policy.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/test_admission_policy.py",
+      "source_sha256": "73997effbe7bf472d0928d6b7b90725cbe4d7bee71cf1496a9887b8912d84ca3",
+      "status": "modified",
+      "tracked_sha256": "6dc4e1815dd2e02a6e8994f935fe4bc7384ea36fa3f00832b301876482e40ee1"
+    },
+    {
+      "path": "tests/test_claim_reconciliation.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "68cdf818347164ae8cbbdc7ed62c0511d4458376fb36102ffb121446e907eeee"
+    },
+    {
+      "path": "tests/test_fframes_canary.py",
+      "source_path": "/mnt/nvme4tb/ci-runners/acp-homelab/runner/_work/automated-content-pipeline/automated-content-pipeline/homelab/runtime/tests/test_fframes_canary.py",
+      "source_sha256": "237d6f39c2dea0c2ae65b14f1db2c1c55c217c34d3c53e3bac779621e22eaea7",
+      "status": "added",
+      "tracked_sha256": "237d6f39c2dea0c2ae65b14f1db2c1c55c217c34d3c53e3bac779621e22eaea7"
+    },
+    {
+      "path": "tests/test_fframes_recipe.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "111bf5136a49a960a90bc6fe2582f9ae08713e6265a48cb82d8cc7236142e406"
+    },
+    {
+      "path": "tests/test_gpu_allocation.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/test_gpu_allocation.py",
+      "source_sha256": "61d9431179dec4da5c360917810ed4266c4ab7b1296973c28d19e5d6d6cd0ba4",
+      "status": "modified",
+      "tracked_sha256": "70968a6b42da1cc10b925c73fc7ba4559fb2bacb02b5a8dc6b18c13d0f6feb12"
+    },
+    {
+      "path": "tests/test_gpu_jobs.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/test_gpu_jobs.py",
+      "source_sha256": "8a903928cdbc3a255f97209c86f719f38bb4419abb6895f06a698952b0a4f58b",
+      "status": "modified",
+      "tracked_sha256": "30be2c85b02c42b5abb6566a50518c1dba4bc739e6885ff3cd61963cd6587cfb"
+    },
+    {
+      "path": "tests/test_gpu_lane.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/test_gpu_lane.py",
+      "source_sha256": "f40ad516fe71535d39238f7dfbb965a3aae38c6a8a647771abb4e1095627c63a",
+      "status": "copied",
+      "tracked_sha256": "f40ad516fe71535d39238f7dfbb965a3aae38c6a8a647771abb4e1095627c63a"
+    },
+    {
+      "path": "tests/test_job_dependencies.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/test_job_dependencies.py",
+      "source_sha256": "36790de2c382105e688f1bc54b4d9d91fa05532369be034132697a1b99c43ba3",
+      "status": "copied",
+      "tracked_sha256": "36790de2c382105e688f1bc54b4d9d91fa05532369be034132697a1b99c43ba3"
+    },
+    {
+      "path": "tests/test_memory_admission.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "d8275340e1e6665766c522a1a216ff7439a584b05b2c53934403bf6a7bb0c7fb"
+    },
+    {
+      "path": "tests/test_protocol_lfs.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "ed29aec0c0d0938db72056a5fefa2eac9d0be8ee191f3f6c931f5c7d1db6754a"
+    },
+    {
+      "path": "tests/test_range_retry.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "9a4b65ab685f2fda04886f26f66b2c7484e32e721a1e6614d2f2f8057e5a0916"
+    },
+    {
+      "path": "tests/test_recovery.py",
+      "source_path": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/test_recovery.py",
+      "source_sha256": "88362d9bcff1578e65c3d667b350835ff3956e33eba2e6afeb34a9f1001d42d7",
+      "status": "copied",
+      "tracked_sha256": "88362d9bcff1578e65c3d667b350835ff3956e33eba2e6afeb34a9f1001d42d7"
+    },
+    {
+      "path": "tests/test_runtime_launch.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "c358797304b6ef18c5f0b926c102290065f194a1c1c70ad183d55faeab6ce692"
+    },
+    {
+      "path": "tests/test_runtime_selection.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "12cc68a94b868d0f9ccce37a97aeaab5ee6e138cfd6fa43ce66337c964a24413"
+    },
+    {
+      "path": "tests/test_selected_lane_launch.py",
+      "source_path": null,
+      "source_sha256": null,
+      "status": "added",
+      "tracked_sha256": "58197ca845aca94b901e3222f5d6a1badb86a547e78825abb909657283802ca4"
+    }
+  ],
+  "schema": "acp.homelab-runtime-provenance/v1",
+  "scope": "GPU lane launcher import closure, configuration, service template, queue helper, and focused tests",
+  "source_checkout": "unversioned live homelab deployment",
+  "source_root": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002",
+  "update_scope": "FFrames full-scene recipe, content-addressed inputs, sequential render path, and focused tests; protocol farm Git LFS delivery and fetch hardening, canonical pointers, collision checks, and focused tests; full-scene binary host/lane path resolution and staged artifact digest correction; preserving configured scene-memory declarations without changing prepared ranges",
+  "updated_at": "2026-10-19T08:51:39.333725+00:00"
+}

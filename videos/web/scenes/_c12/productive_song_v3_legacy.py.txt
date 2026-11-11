@@ -1,0 +1,707 @@
+"""PRODUCTIVE FORCES (music v2): industrial drift phonk, 130 BPM, G Phrygian, no lift (the heat never resolves).
+
+Written to research/MUSIC_BIBLE.md §5.9 (sound) and research/scripts_final/productive.json (words and beats).
+Scene: web/scenes/productive.js (drops b8-40 and b44-60, flashes b8 b24 b44 b52, sigil b60, closer b64).
+1 beat = 0.4615 s, 1 bar = 1.846 s, a 16th = 115 ms. 17 bars = 68 beats = 31.38 s, loop=True.
+
+Grammar (drift phonk, and the drums are the machines: "the piston is the kick"):
+  - a 4/4 phonk kick (clipped sine 180 -> 45 Hz in 40 ms, saturated 350 ms tail, a 2nd-harmonic shaper and a
+    beater click for phones) under a distorted 808 in G that slides (G1, the A-flat1 flat-2 slide, E-flat1),
+    pumped 0.85 by the kick on the bass and music buses;
+  - the PRESS STAMP on straight 8ths (70 Hz thump + inharmonic clang + air hiss): the motorik piston, doubling to
+    16ths at the re-engagement (b24) and in drop B;
+  - a CLANK snare on 2 and 4 (noise snare + struck-steel partials) and STEAM-HISS hats (6-12 kHz with a faint
+    whistle partial), 8ths -> 16ths;
+  - the PHONK COWBELL riff is the melody: G5 Ab5 G5 D5 | Eb5 D5 Bb4 Ab4 on straight 8ths, driven, wet; it jumps an
+    octave at b24 and doubles in octaves in drop B;
+  - the FURNACE ROAR under everything (noise 60-900 Hz, slow breath, 3-7 Hz flicker, crackle), the FURNACE-DOOR
+    BLAST on frame 0, the sigil and the closer; 60 Hz GRID HUM (60/180/300/420 Hz) + arc zap on POWER and the break;
+    the SHIFT WHISTLE (3-pipe steam chord G5-Bb5-D6) on FEWER HOURS; a bit-crushed cowbell stutter on CHIPS; a
+    steel-girder clang on STEEL; steam chuffs on TRAINS; a distorted cowbell-chord stab on WORKER RULE;
+  - the one pre-drop stutter MO-MO-MO-MORE (the crowd's own MORE take, 1/16 gated, +2 st per repeat), b6.75-7.75,
+    then a quarter-beat gap where only the roar rings, then the drop;
+  - the turn is STOP-TIME: at b28 the plant cuts (kick, 808, hats, press, cowbell), AI. is heard alone over the
+    roar and a sub, BRINGS on a single clank with the 808 gliding up an octave, the roar ducks for b30-30.5, and
+    the whole plant slams back in on COM-MU-NISM (three 8ths from b30.5): AI joins the forces;
+  - G Phrygian throughout; no major chord, no lift, no key change.
+Voices (§4.3): one dry lead (a shop-floor foreman: close, driven, +4 dB at 2-4 kHz, D3-C4) calls; a crowd of ~20
+male-heavy throats (varied formant scale, large hall) answers; the call and response is inverted in the litany so
+the chant word MORE owns each slam. Deadpan (flat lead, no drive) on MERITOCRACY / OF LABOR. and FINALLY.
+Every frame line of the final script is voiced on its beat with its exact words (stressed vowel on the grid,
+consonants pre-rolling; COMMUNISTS on frame 0 and HUMANITY after the silence start on their hit with a clipped
+consonant, the vowel ~25 ms in) and placed with '_stem' so the text list carries the frame words; every frame beat
+also carries a percussive hit (kick, press stamp, clank or slam).
+Silence: exactly one true _silence, b43-44 (one beat, 0.46 s, bar 10 steps 12-16), the end of the break, before
+drop B on HUMANITY (b44). The b7.75-8 gap and the b30-30.5 stop-time gap keep the roar ringing: not silence.
+Closer: the lockup SLAM on b64 (kick + furnace-door + stamp + girder clang + impact + crash + sub + 808 G1 + one
+crowd HOT!), then one bar of tail only (the 808 decays, the roar dies and swells back across the seam), folded
+onto t=0 so the replay lands on the frame-0 door blast.
+Owned devices only (§3): phonk cowbell, furnace roar, steam hiss, shift whistle, press stamp, 60 Hz hum, clank
+snare, arc zap; the piece's own FX instead of the shared kit (drop-forge hammer = impact, thunder sheet = crash/choke,
+steam-vent riser = reverse cymbal and riser, furnace sub = sub drop); one montagem-style stutter (the allowance). No tamborzao, no chop melody, no anvils, no throat,
+no gabber, no brass, no major lift, no shared lock card.
+Sting (§4.4): bars 7-13 (b28-56, 12.9 s): stop-time AI / BRINGS / COMMUNISM., MORE EVERYTHING. / FEWER HOURS. /
+WORKER RULE., the break and its silence, HUMANITY / AT FULL HEAT. / AI! BRINGS! COMMUNISM! / FINALLY.
+"""
+import numpy as np
+
+from engine.audio import Song
+from engine import audio
+from engine.audio import SR, _t, note_hz, bp, lp, hp, eq, _fade, _mono, pan2, say, reverb, bitcrush, sfilt, _warp
+
+BPM = 130
+SPB = 60 / BPM            # 0.4615 s per beat
+STEP = SPB / 4            # a 16th
+NB = 17                   # bars: 68 beats; the lockup is b64, one closing bar after it
+
+# G Phrygian (G Ab Bb C D Eb F), MIDI
+D1, Eb1, F1, G1, Ab1, Bb1 = 26, 27, 29, 31, 32, 34
+C2, D2, Eb2, F2, G2 = 36, 38, 39, 41, 43
+C3, D3, Eb3, F3, G3, Ab3, Bb3 = 48, 50, 51, 53, 55, 56, 58
+C4, D4, Eb4, F4, G4, Ab4, Bb4 = 60, 62, 63, 65, 67, 68, 70
+C5, D5, Eb5, F5, G5, Ab5, Bb5, D6 = 72, 74, 75, 77, 79, 80, 82, 86
+
+RIFF_A = [G5, Ab5, G5, D5, Eb5, D5, Bb4, Ab4]     # the bible's riff: a noisy doomsday bell, straight 8ths
+RIFF_B = [G5, Ab5, G5, D5, Eb5, F5, Eb5, D5]      # the answer bar ends on the 5th: no resolution, the heat stays
+
+_R = np.random.default_rng(1538)
+
+
+# ================================================================ piece-owned voices (§4.5: built here)
+def _sq(f, t, ph=0.0, top=12000.0):
+    """Band-limited square (odd harmonics below `top`): no aliasing on the high cowbell."""
+    y = np.zeros_like(t)
+    k = 1
+    while k * f < top:
+        y += np.sin(2 * np.pi * k * f * t + k * ph) / k
+        k += 2
+    return y * (4 / np.pi)
+
+
+def pf_kick():
+    """Phonk kick: a clipped sine swept 180 -> 45 Hz in ~40 ms, a saturated 350 ms tail, a rectified 2nd-harmonic
+    layer (80-320 Hz) and a 1.8-5.5 kHz beater click, so the downbeat reads on a phone."""
+    t = _t(0.42)
+    f = 45 + 135 * np.exp(-t / 0.011)
+    x = np.sin(2 * np.pi * np.cumsum(f) / SR)
+    env = np.where(t < 0.2, 1.0, np.exp(-(t - 0.2) * 14)) * np.clip((0.42 - t) / 0.03, 0, 1)
+    body = np.tanh(x * 5.0) * env
+    r = np.abs(body)
+    h2 = bp(r - r.mean(), 80, 320, 2) * 1.1
+    click = bp(_R.standard_normal(len(t)), 1800, 5500) * np.exp(-t * 380) * 0.9
+    y = np.tanh((body * 0.9 + h2 + click) * 1.3) * 0.92
+    return _fade(y, 0.0, 0.01)
+
+
+def pf_808(n, dur, glide_to=None, glide_ms=80, glide_at=None, drive=5.0):
+    """Distorted phonk 808: a sine with a short pitch punch, smoothstep glides (the flat-2 slide), clipped hard
+    (odd harmonics) plus a rectified 2nd-harmonic layer (90-480 Hz) so the line reads on phones."""
+    dur = max(dur, 0.12)
+    t = _t(dur + 0.03)
+    f = note_hz(n) * (1 + 0.8 * np.exp(-t * 45))
+    if glide_to is not None:
+        g = glide_ms / 1000
+        t0 = max(0.0, dur - g) if glide_at is None else glide_at
+        u = np.clip((t - t0) / max(g, 1e-3), 0, 1)
+        f = f * 2 ** ((glide_to - n) * (u * u * (3 - 2 * u)) / 12)
+    x = np.sin(2 * np.pi * np.cumsum(f) / SR)
+    env = np.exp(-t * 0.9) * np.minimum(1, t / 0.003) * np.clip((dur + 0.03 - t) / 0.03, 0, 1)
+    body = np.tanh(x * drive) * env
+    r = np.abs(body)
+    h2 = bp(r - r.mean(), 90, 480, 2) * 0.9
+    return np.tanh((body + h2) * 1.2) * 0.8
+
+
+def pf_cow(n, dur=0.3, drive=2.4):
+    """Tuned phonk cowbell: the 808 cowbell's two squares (f and 1.48 f, band-limited), band-passed 380-6500 Hz,
+    a two-stage envelope (the clack, then the ring) and drive: the doomsday bell."""
+    L = max(dur, 0.24) + 0.06
+    t = _t(L)
+    f = note_hz(n)
+    x = _sq(f, t) + 0.8 * _sq(f * 1.48, t, 0.7)
+    x = bp(x, 380, 6500, 2)
+    env = (0.62 * np.exp(-t * 30) + 0.38 * np.exp(-t * 6.5)) * np.minimum(1, t / 0.0015)
+    y = np.tanh(x * env * drive) / np.tanh(drive)
+    return _fade(y * 0.5, 0.0, 0.03)
+
+
+def pf_stab(chord, dur=0.9):
+    """The distorted cowbell-chord stab (WORKER RULE, the drop-B callbacks): the chord's cowbells summed BEFORE the
+    drive, so they intermodulate into one furnace-bell; a long ring."""
+    t = _t(dur + 0.2)
+    x = np.zeros_like(t)
+    for n in chord:
+        f = note_hz(n)
+        x += _sq(f, t, _R.random()) + 0.8 * _sq(f * 1.48, t, _R.random())
+    x = bp(x / len(chord), 300, 7000, 2)
+    env = (0.5 * np.exp(-t * 18) + 0.5 * np.exp(-t * 3.2)) * np.minimum(1, t / 0.002)
+    y = lp(np.tanh(x * env * 3.0) * 0.5, 5500)       # band-limited after the drive: a clipped square chord overshoots AAC by 4 dB
+    return _fade(y, 0.0, 0.08)
+
+
+def pf_press(heavy=False):
+    """Press stamp for the piston 8ths: a 70 Hz thump (60 ms), an inharmonic clang (487-3097 Hz, 90 ms) and an air
+    hiss (3-9 kHz, 25 ms late). 110 ms, so it fits a 16th. heavy: the slam (45 Hz, longer clang, air release)."""
+    d = 0.55 if heavy else 0.11
+    t = _t(d)
+    f0 = 45 if heavy else 70
+    thump = np.sin(2 * np.pi * np.cumsum(f0 * (1 + 0.9 * np.exp(-t * 60))) / SR) * np.exp(-t * (9 if heavy else 45))
+    parts = ((487, 1.0), (1123, 0.8), (1789, 0.6), (2411, 0.45), (3097, 0.3))
+    clang = sum(a * np.sin(2 * np.pi * f * t + i) for i, (f, a) in enumerate(parts)) / 3.0 * np.exp(-t * (14 if heavy else 38))
+    air = bp(_R.standard_normal(len(t)), 3000, 9000) * np.where(t > 0.025, np.exp(-(t - 0.025) * (7 if heavy else 50)), 0)
+    y = np.tanh((thump * (1.4 if heavy else 0.9) + clang * 0.8 + air * 0.5) * 1.4) * (0.9 if heavy else 0.7)
+    return _fade(y, 0.0, 0.02 if heavy else 0.01)
+
+
+def pf_clank():
+    """Clank snare: a noise snare (1.2-9 kHz, 170 ms), a 190 Hz body, a struck-steel layer (873-3571 Hz, 260 ms)
+    and a crack: the shop floor's backbeat."""
+    t = _t(0.36)
+    nz = bp(_R.standard_normal(len(t)), 1200, 9000, 2) * np.exp(-t * 18)
+    body = np.sin(2 * np.pi * np.cumsum(190 * (1 + 0.5 * np.exp(-t * 80))) / SR) * np.exp(-t * 30)
+    metal = sum(a * np.sin(2 * np.pi * f * t + a) for f, a in ((873, 1.0), (1391, 0.8), (2207, 0.6), (2903, 0.45), (3571, 0.3)))
+    metal = metal / 3 * np.exp(-t * 11)
+    crack = lp(_R.standard_normal(len(t)), 7500) * np.exp(-t * 600) * 0.9      # band-limited: a raw 1 ms crack overshoots AAC
+    y = np.tanh((nz * 0.9 + body * 0.7 + metal * 0.55 + crack) * 1.5) * 0.85
+    return _fade(y, 0.0, 0.02)
+
+
+def pf_hat(open_=False):
+    """Steam-hiss hat: 6-12 kHz hiss with a faint whistle partial (8.4 kHz); closed 45 ms, open 230 ms."""
+    d = 0.23 if open_ else 0.045
+    t = _t(d)
+    n = bp(_R.standard_normal(len(t)), 6000, 12000, 2)
+    wh = np.sin(2 * np.pi * 8400 * t + _R.random() * 6) * 0.12
+    env = np.minimum(1, t / 0.003) * np.exp(-t / (d / 3.2))
+    return (n + wh) * env * 0.55
+
+
+def pf_furnace(dur, lpf=None, shape=None, seed=0):
+    """Furnace roar bed (stereo, decorrelated): noise band-passed 60-900 Hz, a 0.25 Hz breath, a 3-7 Hz flicker and
+    sparse crackle. lpf=(a, b): a low-pass opening a -> b Hz across the event (the break).
+    shape 'tail': after the closer the roar dies away, then swells back over the last 2 beats across the seam."""
+    t = _t(dur)
+    rng = np.random.default_rng(1538 + seed)
+    out = np.zeros((len(t), 2))
+    for c in range(2):
+        base = bp(rng.standard_normal(len(t)), 60, 900, 2)
+        base /= np.std(base) + 1e-9
+        fl = lp(rng.standard_normal(len(t)), 6)
+        fl /= np.std(fl) + 1e-9
+        g = np.clip(1 + 0.25 * np.sin(2 * np.pi * 0.25 * t + 1.3 + c) + 0.22 * fl, 0.25, 2.0)
+        cr = np.zeros(len(t))
+        k = int(35 * dur)
+        cr[rng.integers(0, len(t), k)] = rng.uniform(-1, 1, k)
+        cr = hp(cr, 2000) * 6
+        out[:, c] = np.tanh(base * g * 0.45 + cr) * 0.6
+    if lpf is not None:
+        cut = np.exp(np.linspace(np.log(lpf[0]), np.log(lpf[1]), len(t)))
+        out = audio.tv_filter(out, cut, "low", 0.9)
+    if shape == "tail":
+        rise = np.clip((t - (dur - 2 * SPB - 0.3)) / (2 * SPB), 0, 1)       # the last 2 beats before the seam
+        env = np.exp(-t * 2.2) * 0.6 + 1.3 * rise ** 2
+        env *= np.clip((dur - t) / 0.08, 0, 1)
+        out = (out.T * env).T
+    return _fade(out, 0.02, 0.06)
+
+
+def pf_door():
+    """Furnace-door blast (frame 0, the sigil, the closer): the iron door's clunk (low inharmonic modes + latch),
+    a fire whoosh (200-4000 Hz, 8 ms attack, flicker) and a 55 -> 32 Hz boom."""
+    t = _t(1.6)
+    rng = np.random.default_rng(60)
+    clunk = sum(a * np.sin(2 * np.pi * f * t + p) * np.exp(-t * d)
+                for f, a, d, p in ((96, 1.0, 9, 0), (231, 0.7, 12, 1), (407, 0.5, 16, 2), (683, 0.35, 20, 3), (1130, 0.25, 28, 4)))
+    latch = bp(rng.standard_normal(len(t)), 2000, 8000) * np.exp(-t * 300)
+    fl = 1 + 0.35 * lp(rng.standard_normal(len(t)), 9) / 0.02
+    fire = np.stack([bp(rng.standard_normal(len(t)), 200, 4000) for _ in range(2)], 1)
+    fire = (fire.T * (np.minimum(1, t / 0.008) * np.exp(-t * 2.6) * np.clip(fl, 0.3, 2.0))).T
+    boom = np.sin(2 * np.pi * np.cumsum(32 + 23 * np.exp(-t * 6)) / SR) * np.exp(-t * 2.5)
+    mono = clunk * 0.6 + latch * 0.8 + boom * 1.2
+    y = np.tanh(fire * 1.1 + mono[:, None]) * 0.85
+    return _fade(y, 0.0, 0.1)
+
+
+def pf_hum(dur, surge=False):
+    """Grid hum: 60 Hz with 180, 300 and 420 Hz (the transformer's odd series) and a rectified 120 Hz buzz in the
+    400-4000 Hz band (what a phone hears). surge: a fast swell that sags back (POWER)."""
+    t = _t(dur)
+    y = sum(a * np.sin(2 * np.pi * f * t) for f, a in ((60, 1.0), (180, 0.55), (300, 0.35), (420, 0.25)))
+    buzz = bp(np.abs(np.sin(2 * np.pi * 60 * t)) ** 8, 400, 4000, 2) * 2.0
+    y = (y * 0.3 + buzz * 0.45)
+    if surge:
+        env = np.minimum(1, t / 0.05) * (0.45 + 0.55 * np.exp(-t * 1.6))
+    else:
+        env = np.minimum(1, t / 0.15)
+    return _fade(np.tanh(y * env * 1.6) * 0.6, 0.01, 0.12)
+
+
+def pf_zap():
+    """Transformer arc zap: a crackling burst, the hum's harmonics and an 8 kHz -> 500 Hz chirp."""
+    return _fade(audio.arc_zap(0.6)[: int(0.3 * SR)], 0.0, 0.08)
+
+
+def pf_whistle(dur):
+    """Factory shift whistle: a 3-pipe steam chord G5-Bb5-D6 (sine + a little 2nd harmonic, slow vibrato), breath
+    noise at each pipe, 30 ms attack, a -30 cent sag at the end."""
+    t = _t(dur)
+    sag = 2 ** (-30 / 1200 * np.clip((t - (dur - 0.35)) / 0.35, 0, 1))
+    rng = np.random.default_rng(33)
+    y = np.zeros_like(t)
+    for m in (G5, Bb5, D6):
+        f = note_hz(m) * sag * (1 + 0.003 * np.sin(2 * np.pi * rng.uniform(4.5, 6) * t))
+        ph = 2 * np.pi * np.cumsum(f) / SR
+        y += np.sin(ph) + 0.18 * np.sin(2 * ph)
+        y += bp(rng.standard_normal(len(t)), note_hz(m) * 0.9, note_hz(m) * 1.12, 2) * 1.2
+    br = bp(rng.standard_normal(len(t)), 1500, 7000) * 0.12
+    env = np.minimum(1, t / 0.03) * np.clip((dur - t) / 0.12, 0, 1)
+    return np.tanh((y / 3 + br) * env * 1.8) * 0.5
+
+
+def pf_crush():
+    """CHIPS: the cowbell stuttered on 32nds (G5 G5 Ab5 G5 D6 G6), bit-crushed to 4 bits at 5.5 kHz."""
+    s32 = STEP / 2
+    notes = (G5, G5, Ab5, G5, D6, G5 + 12)
+    out = np.zeros(int((len(notes) * s32 + 0.25) * SR))
+    for k, n in enumerate(notes):
+        c = pf_cow(n, 0.12, 3.0)[: int(s32 * SR * 0.9)]
+        c = _fade(c, 0.0, 0.004)
+        i = int(k * s32 * SR)
+        out[i:i + len(c)] += c
+    return bitcrush(out * 0.9, 4, 5500)
+
+
+def pf_girder():
+    """Steel-girder clang (STEEL): a struck I-beam's free-free bending modes (1 : 2.76 : 5.40 : 8.93 : 13.3 on
+    118 Hz, plus two torsional modes), a hard strike transient, 1.1 s ring."""
+    t = _t(1.3)
+    f0 = 118.0
+    modes = [(1.0, 1.0, 4.5), (2.76, 0.9, 5.5), (5.40, 0.7, 7), (8.93, 0.5, 9), (13.34, 0.35, 12), (4.1, 0.4, 6), (7.3, 0.3, 8)]
+    y = sum(a * np.sin(2 * np.pi * f0 * r * t + r) * np.exp(-t * d) for r, a, d in modes)
+    strike = bp(_R.standard_normal(len(t)), 1500, 9000) * np.exp(-t * 160)
+    return _fade(np.tanh((y * 0.5 + strike) * 1.6) * 0.8, 0.0, 0.1)
+
+
+def pf_chuff():
+    """TRAINS: four steam chuffs on 32nds, accelerating out of the piston (steam hiss, 400-5000 Hz)."""
+    offs = (0.0, 0.055, 0.1, 0.14)
+    out = np.zeros(int(0.45 * SR))
+    for k, o in enumerate(offs):
+        t = _t(0.12)
+        c = bp(_R.standard_normal(len(t)), 400, 5000) * np.exp(-t * 30) * (0.7 + 0.1 * k)
+        i = int(o * SR)
+        out[i:i + len(c)] += c
+    return np.tanh(out * 1.3) * 0.7
+
+
+def pf_revriff(dur):
+    """The break's reversed cowbell riff: RIFF_A rendered wet (hall), reversed, so it swells toward the silence."""
+    L = int((dur + 1.0) * SR)
+    x = np.zeros(L)
+    for k, n in enumerate(RIFF_A + RIFF_A):
+        c = pf_cow(n, 0.3, 2.0)
+        i = int(k * 2 * STEP * SR)
+        if i < L:
+            x[i:i + len(c)] += c[: L - i]
+    wet = reverb(x, "hall", hp_hz=300)
+    y = (np.stack([x, x], 1) * 0.5 + wet * 1.4)[::-1]
+    y = y[-int(dur * SR):]
+    return _fade(y / (np.abs(y).max() + 1e-9) * 0.6, 0.2, 0.01)
+
+
+def pf_hammer():
+    """Drop-forge hammer (the piece's own impact, never the shared one): a 98 -> 28 Hz boom, the steel slab's
+    low inharmonic thud modes (143/331/577/911 Hz), a strike crack and a steam-release hiss 80 ms after."""
+    t = _t(2.0)
+    rng = np.random.default_rng(7)
+    boom = np.sin(2 * np.pi * np.cumsum(28 + 70 * np.exp(-t * 9)) / SR) * np.exp(-t * 2.4)
+    slab = sum(a * np.sin(2 * np.pi * f * t + i) * np.exp(-t * d)
+               for i, (f, a, d) in enumerate(((143, 1.0, 14), (331, 0.7, 18), (577, 0.5, 22), (911, 0.35, 30))))
+    crack = bp(rng.standard_normal(len(t)), 1000, 6000) * np.exp(-t * 120)
+    steam = bp(rng.standard_normal(len(t)), 2000, 8000) * np.where(t > 0.08, np.exp(-(t - 0.08) * 3.0), 0) * 0.35
+    y = np.tanh((boom * 1.3 + slab * 0.55 + crack * 0.7 + steam) * 1.8) * 0.9
+    return _fade(y, 0.0, 0.1)
+
+
+def pf_sheet(dur=2.0):
+    """Thunder sheet (the piece's own crash): a struck steel sheet, a wobbling 400-6000 Hz noise band (the
+    sheet flexing at 7 -> 3 Hz), 20 inharmonic plate partials (700-5500 Hz) and a thin 5 kHz sheen."""
+    t = _t(dur)
+    rng = np.random.default_rng(int(dur * 1000) + 11)
+    wob = 1 + 0.55 * np.sin(2 * np.pi * np.cumsum(7 - 4 * np.clip(t / dur, 0, 1)) / SR)
+    band = bp(rng.standard_normal(len(t)), 400, 6000) * wob * np.exp(-t * 2.4)
+    parts = sum(np.sin(2 * np.pi * f * t * (1 + 0.004 * np.sin(2 * np.pi * 5 * t)) + rng.random() * 6)
+                * np.exp(-t * rng.uniform(1.8, 3.5)) for f in rng.uniform(700, 5500, 20)) / 20
+    sheen = hp(rng.standard_normal(len(t)), 5000) * np.exp(-t * 4) * 0.4
+    y = np.tanh((band * 0.9 + parts * 2.2 + sheen) * 1.4) * np.minimum(1, t / 0.002) * 0.5
+    return _fade(y, 0.0, 0.05)
+
+
+def pf_vent(dur=1.5):
+    """Steam-vent riser (the piece's own reverse cymbal): pressurised hiss sweeping 1.5 -> 8 kHz, rising to a
+    hard stop on its step, a faint valve whistle climbing with it."""
+    t = _t(dur)
+    u = t / dur
+    rng = np.random.default_rng(88)
+    y = audio.tv_filter(rng.standard_normal(len(t)), 1500 * (8000 / 1500) ** u, "band", q=1.4)
+    wh = np.sin(2 * np.pi * np.cumsum(900 * (1 + 1.2 * u)) / SR) * 0.08
+    return _fade((y + wh) * u ** 1.8 * 0.55, 0.01, 0.002)
+
+
+def pf_boom(dur=1.2):
+    """Furnace sub (the piece's own sub drop): a 55 -> 26 Hz sweep with a 40-140 Hz fire rumble under it."""
+    t = _t(dur)
+    rng = np.random.default_rng(26)
+    f = 55 * (26 / 55) ** (t / dur)
+    s = np.sin(2 * np.pi * np.cumsum(f) / SR)
+    rum = bp(rng.standard_normal(len(t)), 40, 140) * 1.5
+    return _fade(np.tanh((s + rum * 0.4) * np.exp(-t * 1.5 / dur) * 1.5) * 0.9, 0.002, 0.05)
+
+
+def _register():
+    V = audio.Voice
+    for name, fn in (("pf_kick", pf_kick), ("pf_808", pf_808), ("pf_cow", pf_cow), ("pf_stab", pf_stab),
+                     ("pf_press", pf_press), ("pf_clank", pf_clank), ("pf_hat", pf_hat), ("pf_furnace", pf_furnace),
+                     ("pf_door", pf_door), ("pf_hum", pf_hum), ("pf_zap", pf_zap), ("pf_whistle", pf_whistle),
+                     ("pf_crush", pf_crush), ("pf_girder", pf_girder), ("pf_chuff", pf_chuff), ("pf_revriff", pf_revriff)):
+        audio.VOICES[name] = fn
+    D = audio.DRUMS
+    D["pf_kick"] = V(lambda s: pf_kick(), "kick", 1.0, kick=True)
+    D["pf_press"] = V(lambda s: pf_press(), "drums", 0.5, pan=0.12, alias=("press",))
+    D["pf_stamp"] = V(lambda s: pf_press(True), "drums", 0.95, alias=("press", "stamp"))
+    D["pf_clank"] = V(lambda s: pf_clank(), "drums", 0.85, send=("room", 0.2), alias=("snare", "clank"))
+    D["pf_hat"] = V(lambda s: pf_hat(), "drums", 0.5, pan=0.22, alias=("hat",))
+    D["pf_ohat"] = V(lambda s: pf_hat(True), "drums", 0.4, pan=-0.25, alias=("ohat", "hat"))
+    D["pf_door"] = V(lambda s: pf_door(), "fx", 1.0, vel=True, alias=("impact", "door"))
+    D["pf_zap"] = V(lambda s: pf_zap(), "fx", 0.7, pan=0.3, alias=("zap",))
+    D["pf_crush"] = V(lambda s: pf_crush(), "lead", 0.7, pan=-0.2, send=("room", 0.2), alias=("crush",))
+    D["pf_girder"] = V(lambda s: pf_girder(), "music", 0.75, pan=0.2, send=("hall", 0.2), alias=("clang",))
+    D["pf_chuff"] = V(lambda s: pf_chuff(), "fx", 0.7, pan=0.35, alias=("chuff",))
+    D["pf_hammer"] = V(lambda s: pf_hammer(), "music", 0.7, vel=False, alias=("impact",))
+    D["pf_sheet"] = V(lambda s: pf_sheet(), "drums", 0.7, pan=-0.3, alias=("crash",))
+    D["pf_choke"] = V(lambda s: _fade(pf_sheet(0.18), 0.0, 0.05), "drums", 0.7, pan=-0.3, alias=("crash",))
+    D["pf_vent"] = V(lambda s: pf_vent(1.5), "fx", 0.7, end=True, alias=("revcym",))
+    D["pf_boom"] = V(lambda s: pf_boom(), "kick", 0.8, alias=("subdrop",))
+    M = audio.MEL
+    M["pf_808"] = V(lambda s, n, d, o: pf_808(n, d, o.get("glide_to"), o.get("glide_ms", 80), o.get("glide_at")),
+                    "bass", 0.85, alias=("bass",))
+    M["pf_cow"] = V(lambda s, n, d, o: pf_cow(n, d), "lead", 0.7, pan=-0.12, send=("hall", 0.22), alias=("cowbell",))
+    M["pf_stab"] = V(lambda s, n, d, o: pf_stab(o.get("chord", [n]), d), "lead", 0.6, send=("hall", 0.3), alias=("stab",))
+    M["pf_furnace"] = V(lambda s, n, d, o: pf_furnace(d, o.get("lpf"), o.get("shape"), o.get("seed", 0)), "bed", 0.55,
+                        pitched=False, alias=("furnace",))
+    M["pf_hum"] = V(lambda s, n, d, o: pf_hum(d, o.get("surge", False)), "bed", 0.5, pitched=False, alias=("hum",))
+    M["pf_whistle"] = V(lambda s, n, d, o: pf_whistle(d), "music", 0.75, send=("large_hall", 0.18), pitched=False,
+                        alias=("whistle",))
+    M["pf_ventl"] = V(lambda s, n, d, o: pf_vent(d), "fx", 0.6, pitched=False, alias=("_riser",))
+    M["pf_revriff"] = V(lambda s, n, d, o: pf_revriff(d), "music", 0.6, pitched=False, alias=("revriff",))
+
+
+_register()
+
+
+# ================================================================ wordless gang hits and the camera's shutter
+def pf_gang(big=False):
+    """The crowd without words (client, 27 Sep: no synthesized word vocals): a stomp stack (a 62 Hz floor thud and
+    boot-scuff noise from ~24 bodies, spread over 18 ms) and a clap stack (24 hands, 900-5200 Hz bursts, spread over
+    22 ms), both in a big room. big: 40 bodies, a longer room tail and a low 'hey'-less chest thump."""
+    rng = np.random.default_rng(404 if big else 403)
+    n = 40 if big else 24
+    L = 0.9 if big else 0.6
+    t = _t(L)
+    out = np.zeros((len(t), 2))
+    for k in range(n):
+        d = int(abs(rng.normal(0, 0.009 if big else 0.007)) * SR)
+        c = k % 2
+        tt = t[: len(t) - d]
+        thud = np.sin(2 * np.pi * np.cumsum(62 * (1 + 0.6 * np.exp(-tt * 70))) / SR) * np.exp(-tt * 22)
+        scuff = bp(rng.standard_normal(len(tt)), 300, 2500) * np.exp(-tt * 60) * 0.35
+        clap = bp(rng.standard_normal(len(tt)), 900 * rng.uniform(0.85, 1.15), 5200, 2) * np.exp(-tt * rng.uniform(55, 80))
+        dc = int(abs(rng.normal(0.0, 0.011)) * SR)
+        cl = np.zeros(len(tt))
+        cl[dc:] = clap[: len(tt) - dc]
+        out[d:, c] += thud * 0.9 + scuff + cl * 0.8
+    out /= n ** 0.75
+    wet = reverb(out.mean(1), "large_hall", hp_hz=250)
+    y = np.tanh((out + wet[: len(out)] * (0.6 if big else 0.45)) * 1.6) * 0.8
+    return _fade(y, 0.0, 0.08)
+
+
+def pf_nuc():
+    """The thermal camera's NUC shutter: a solenoid snap (a 1 ms click), the flag hitting its stop (3.1/4.7/6.3 kHz
+    ringing, 25 ms) and the return tick 60 ms later. The piece's signature sound, on every wall freeze."""
+    t = _t(0.12)
+    rng = np.random.default_rng(55)
+    click = lp(rng.standard_normal(len(t)), 7000) * np.exp(-t / 0.0015) * 1.6    # band-limited: a raw 1 ms impulse overshoots the AAC encode
+    ring = sum(a * np.sin(2 * np.pi * f * t) for f, a in ((3100, 1.0), (4700, 0.6), (6300, 0.4))) * np.exp(-t * 160)
+    back = lp(np.where(t > 0.06, rng.standard_normal(len(t)) * np.exp(-(t - 0.06) / 0.0012), 0), 7000) * 0.8
+    body = np.sin(2 * np.pi * 180 * t) * np.exp(-t * 90) * 0.5
+    return _fade(np.tanh((click + ring * 0.5 + back + body) * 1.4) * 0.7, 0.0, 0.01)
+
+
+def _register2():
+    V = audio.Voice
+    audio.VOICES["pf_gang"] = pf_gang
+    audio.VOICES["pf_nuc"] = pf_nuc
+    D = audio.DRUMS
+    D["pf_gang"] = V(lambda s: pf_gang(), "fx", 0.9, alias=("gang", "chant"))
+    D["pf_gangB"] = V(lambda s: pf_gang(True), "fx", 1.0, alias=("gang", "chant"))
+    D["pf_nuc"] = V(lambda s: pf_nuc(), "fx", 0.6, pan=-0.15, alias=("nuc",))
+
+
+_register2()
+
+
+# ================================================================ the frame lines (text hits only; no sung words)
+# (beat, frame text) from research/scripts_final/productive.json. Logged with '_line' so hits.json carries the words
+# and the scene keeps its timing; nothing is sung (client, 27 Sep). Chant beats get the wordless gang hit instead.
+WORDS = [(0, "COMMUNISTS WANT MORE."), (3, "MORE."), (4, "UNLEASH PRODUCTION."), (8, "RUN HOT."),
+         (10.5, "MORE CHIPS."), (12, "MORE STEEL."), (17, "MORE TRAINS."), (18.5, "MORE HUMANS."),
+         (24, "WE RUN THIS."), (25, "AI RUNS HOT."), (28, "AI BRINGS COMMUNISM."), (32, "MORE EVERYTHING."),
+         (33.5, "SHORTER HOURS."), (44, "HUMANITY RUNS HOT."), (48, "MORE."), (49, "MORE."), (50, "MORE."),
+         (52, "WORKERS RULE."), (58, "MORE.")]
+GANG = [3, 10.5, 12, 17, 18.5, 24, 48, 49, 50, 58]          # the crowd's MORE and WE RUN THIS: stomp + clap stacks
+GANG_BIG = [24]
+# the wall's NUC freezes (scene productive2.js WALL cut beats that carry a shutter): one clack each
+NUC = [0, 3, 10.5, 18.5, 25, 28, 30.5, 33.5, 37, 48, 49, 50, 52, 58]
+
+
+
+# ================================================================ the score (32nd-note grid)
+class Score:
+    def __init__(self):
+        self.bars = [{} for _ in range(NB)]
+
+    @staticmethod
+    def at(beat):
+        b = int(beat // 4 + 1e-9)
+        return b, int(round((beat - 4 * b) * 8))
+
+    def hit(self, track, beat, ch="x"):
+        b, i = self.at(beat)
+        s = self.bars[b].get(track, "." * 32)
+        self.bars[b][track] = s[:i] + ch + s[i + 1:]
+
+    def note(self, track, beat, n, beats, **o):
+        b, i = self.at(beat)
+        lst = self.bars[b].setdefault(track, [None] * 32)
+        lst[i] = (n, beats * 8, o) if o else (n, beats * 8)
+
+    def clear(self, tracks, b0, b1):
+        """Remove every hit / note of `tracks` with b0 <= beat < b1."""
+        for tr in tracks:
+            for b in range(NB):
+                v = self.bars[b].get(tr)
+                if v is None:
+                    continue
+                for i in range(32):
+                    beat = 4 * b + i / 8
+                    if b0 - 1e-9 <= beat < b1 - 1e-9:
+                        if isinstance(v, str):
+                            v = v[:i] + "." + v[i + 1:]
+                        else:
+                            v[i] = None
+                self.bars[b][tr] = v
+
+    def stem(self, beat, arr, onset, text=None, gain=1.0):
+        b = int(beat // 4 + 1e-9)
+        self.bars[b].setdefault("_stem", []).append((arr, (beat - 4 * b) * 4, gain, text, onset))
+
+    def mark(self, beat):
+        """A textless shout hit for a word inside a line (so hits.json carries every shouted word)."""
+        self.stem(beat, np.zeros((64, 2)), 0.0, None, 1.0)
+
+    def set(self, bar, key, val):
+        self.bars[bar][key] = val
+
+
+def song():
+    S = Score()
+
+    # ---- 1. the kit per bar
+    def kit(bar, press16=False, hats16=False, kick=True, cl=True):
+        B0 = bar * 4
+        for k in range(4):
+            if kick:
+                S.hit("pf_kick", B0 + k, "X" if k == 0 else "x")
+        if cl:
+            S.hit("pf_clank", B0 + 1, "X")
+            S.hit("pf_clank", B0 + 3, "X")
+        st = 0.25 if press16 else 0.5
+        for j in range(int(round(4 / st))):
+            bt = B0 + j * st
+            ph = bt % 1
+            S.hit("pf_press", bt, "5" if ph < 1e-9 else ("8" if abs(ph - 0.5) < 1e-9 else "6"))
+        hs = 0.25 if hats16 else 0.5
+        for j in range(int(round(4 / hs))):
+            bt = B0 + j * hs
+            ph = bt % 1
+            S.hit("pf_hat", bt, "x" if abs(ph - 0.5) < 1e-9 else ("6" if ph < 1e-9 else "5"))
+        S.hit("pf_ohat", B0 + 1.5, "6")
+        S.hit("pf_ohat", B0 + 3.5, "7")
+
+    def riff(bar, notes, octs=(0,), vel=1.0, first=0):
+        for k, n in enumerate(notes):
+            if k < first:
+                continue
+            nn = [n + 12 * o for o in octs] if len(octs) > 1 else n + 12 * octs[0]
+            S.note("pf_cow", bar * 4 + 0.5 * k, nn, 0.5, vel=vel * (1.0 if k % 2 == 0 else 0.85))
+
+    def bass(bar, kind):
+        B0 = bar * 4
+        if kind == "A":                                   # G, and the flat-2 slide into the next bar
+            S.note("pf_808", B0, G1, 1.5)
+            S.note("pf_808", B0 + 1.5, G1, 0.5)
+            S.note("pf_808", B0 + 2, G1, 1.5)
+            S.note("pf_808", B0 + 3.5, G1, 0.5, glide_to=Ab1, glide_ms=90, glide_at=0.02)
+        else:                                             # E-flat, F, the A-flat falling back to G
+            S.note("pf_808", B0, Eb1, 1.5)
+            S.note("pf_808", B0 + 1.5, Eb1, 0.5)
+            S.note("pf_808", B0 + 2, F1, 1.0)
+            S.note("pf_808", B0 + 3, Ab1, 1.0, glide_to=G1, glide_ms=120, glide_at=0.18)
+
+    # ---- 2. COLD OPEN (bars 0-1, b0-8): the door blast on frame 0, then the plant starts up machine by machine
+    #         (each machine a panel of the wall: the drums are the machines)
+    S.hit("pf_door", 0, "X"); S.hit("pf_kick", 0, "X"); S.hit("pf_stamp", 0, "X"); S.hit("pf_sheet", 0, "7")
+    S.hit("pf_gangB", 0, "7")
+    S.note("pf_808", 0, G1, 1.4)
+    for k, n in enumerate(RIFF_A):                        # the cowbell riff over the roar from b1
+        if k >= 2:
+            S.note("pf_cow", 0.5 * k, n, 0.5, vel=1.0 if k % 2 == 0 else 0.85)
+    for j in range(2, 8):                                 # steam-hiss 8ths b1-4
+        S.hit("pf_hat", 0.5 * j, "x" if j % 2 else "6")
+    S.hit("pf_zap", 1.0, "7"); S.hit("pf_chuff", 1.5, "8"); S.hit("pf_girder", 2.0, "6"); S.hit("pf_stamp", 2.5, "7")
+    S.hit("pf_kick", 3, "X"); S.note("pf_808", 3, G1, 0.9); S.hit("pf_clank", 3, "X")      # MORE.
+    # b4-8 UNLEASH PRODUCTION.: no hole. The line starts: kick on every beat, press 8ths, the riff runs on.
+    for b in (4, 5, 6, 7):
+        S.hit("pf_kick", b, "X" if b == 4 else "x")
+    S.hit("pf_stamp", 4, "X"); S.hit("pf_door", 4, "6"); S.note("pf_808", 4, G1, 1.5); S.note("pf_808", 5.5, G1, 0.5)
+    for j in range(8):
+        S.hit("pf_press", 4 + 0.5 * j, "7" if j % 2 == 0 else "6")
+    for j in range(8):
+        S.hit("pf_hat", 4 + 0.5 * j, "x" if j % 2 else "6")
+    riff(1, RIFF_B)
+    S.hit("pf_clank", 5, "X")
+    S.hit("pf_zap", 5.5, "7"); S.hit("pf_chuff", 4.5, "7"); S.hit("pf_girder", 5.0, "6")
+    for k, bt in enumerate((6.0, 6.5, 7.0, 7.25, 7.5, 7.625)):
+        S.hit("pf_clank", bt, "7" if k < 2 else ("8" if k < 4 else "X"))
+    S.note("pf_808", 6.5, G1, 1.25, glide_to=G2, glide_ms=520, glide_at=0.03)   # the 808 up-glide, cut at 7.75
+    S.hit("pf_vent", 7.75, "x")
+    S.clear(["pf_press", "pf_hat", "pf_cow"], 7.75, 8)   # b7.75-8: a quarter-beat gap; only the roar rings
+
+    # ---- 3. DROP A (bars 2-9, b8-40): the lighter drop (single cowbell, press 8ths until b24)
+    for bar in range(2, 10):
+        kit(bar, press16=bar >= 6, hats16=bar >= 6)
+        riff(bar, RIFF_A if bar % 2 == 0 else RIFF_B, (1,) if bar >= 6 else (0,), vel=0.9)
+        bass(bar, "A" if bar % 2 == 0 else "B")
+    S.hit("pf_hammer", 8); S.hit("pf_sheet", 8, "X"); S.hit("pf_door", 8, "7"); S.hit("pf_stamp", 8, "X")
+    S.hit("pf_stamp", 10.5, "8"); S.hit("pf_crush", 11, "X")                  # MORE CHIPS.
+    S.hit("pf_stamp", 12, "7"); S.hit("pf_girder", 12.5, "X")                 # MORE STEEL.
+    # b13-16: no words; the wall plays: each machine panel on its own hit
+    S.hit("pf_zap", 13.5, "7"); S.hit("pf_chuff", 14.25, "7"); S.hit("pf_girder", 15.0, "6"); S.hit("pf_zap", 15.5, "8")
+    S.hit("pf_stamp", 16, "7"); S.hit("pf_zap", 16.5, "X")
+    S.note("pf_hum", 16.5, 0, 0.5, surge=True)
+    S.hit("pf_stamp", 17, "7"); S.hit("pf_chuff", 17.5, "X")                  # MORE TRAINS.
+    S.hit("pf_stamp", 18.5, "8"); S.hit("roar", 19, "6")                      # MORE HUMANS.
+    S.hit("pf_stamp", 21, "7")
+    for k, bt in enumerate((22.0, 22.5, 23.0, 23.25, 23.5, 23.625, 23.75, 23.875)):
+        S.hit("pf_clank", bt, "6" if k < 2 else ("8" if k < 5 else "X"))
+    S.note("pf_ventl", 20, 0, 4.0)                      # the long steam-vent riser into WE RUN THIS.
+    S.hit("pf_hammer", 24); S.hit("pf_sheet", 24, "X"); S.hit("pf_door", 24, "7")
+    S.hit("roar", 24, "8"); S.hit("pf_stamp", 24, "X")
+    S.hit("pf_stamp", 25, "7"); S.hit("pf_stamp", 26.5, "8")                  # AI RUNS HOT.: the weld rhythm
+    # THE TURN, a true stop (b28-30.5): the plant cuts, the roar ducks 12 dB, one clank on 29, the slam on 30.5
+    S.clear(["pf_kick", "pf_press", "pf_hat", "pf_ohat", "pf_cow", "pf_808", "pf_clank", "pf_stamp"], 28, 30.5)
+    S.hit("pf_stamp", 28, "X")                            # the last stamp: the line stops under AI BRINGS
+    S.hit("pf_clank", 29, "X")
+    S.hit("pf_kick", 30.5, "X"); S.hit("pf_stamp", 30.5, "X"); S.hit("pf_hammer", 30.5); S.hit("pf_sheet", 30.5, "X")
+    S.hit("pf_door", 30.5, "8")
+    S.note("pf_808", 30.5, G1, 1.5, glide_to=Ab1, glide_ms=80, glide_at=0.55)
+    for bt in (30.5, 31.0, 31.5):
+        S.hit("pf_stamp", bt, "8")
+    # b32 MORE EVERYTHING. (the stack: a stamp per bezel crossing) / b33.5 SHORTER HOURS. on the shift whistle
+    for bt in (32, 32.5, 33):
+        S.hit("pf_stamp", bt, "7")
+    S.hit("pf_stamp", 33.5, "8")
+    S.note("pf_whistle", 33.5, 0, 2.5)
+    S.clear(["pf_cow"], 34, 37)                           # the crew goes home: the bell drops out, the line runs on
+    S.hit("pf_stamp", 37, "X"); S.note("pf_stab", 37, G5, 2.0, chord=[G4, D5, G5, Bb5, D6])   # the plant runs itself
+    for bt in (39.5, 39.75):
+        S.hit("pf_clank", bt, "8")
+
+    # ---- 4. BREAK (bar 10, b40-44): the arctic aisle, roar low-passed opening, hum, reversed riff, the one silence
+    S.hit("pf_sheet", 40, "7"); S.hit("pf_kick", 40, "x"); S.hit("pf_zap", 40, "7")
+    S.note("pf_808", 40, G1, 2.5)
+    S.note("pf_hum", 40, 0, 3.0)
+    S.note("pf_revriff", 41, 0, 2.0)
+    S.set(10, "_silence", (12, 16))                       # THE silence: b43-44, one beat, exact zero
+
+    # ---- 5. DROP B (bars 11-14, b44-60): the heavy drop (press 16ths, octave bells); the payoff b52 is the peak
+    for bar in range(11, 15):
+        kit(bar, press16=True, hats16=True)
+        riff(bar, RIFF_A if bar % 2 == 1 else RIFF_B, (0, 1))
+        bass(bar, "A" if bar % 2 == 1 else "B")
+    S.hit("pf_hammer", 44); S.hit("pf_sheet", 44, "X"); S.hit("pf_door", 44, "8"); S.hit("pf_stamp", 44, "X")
+    S.hit("pf_zap", 44, "6")
+    S.hit("pf_stamp", 47, "8")
+    for b in (48, 49, 50):                                # MORE. MORE. MORE.: 1 -> 4 -> 16 panels
+        S.hit("pf_stamp", b, "X")
+    S.note("pf_stab", 48, G5, 1.0, chord=[G4, D5, G5, Bb5])
+    S.note("pf_stab", 50, G5, 1.5, chord=[Ab4, Eb5, G5, 84])
+    S.clear(["pf_press", "pf_hat", "pf_ohat", "pf_cow"], 51.75, 52)           # a 16th of air before the payoff
+    # b52 WORKERS RULE.: the loudest hit in the piece
+    S.hit("pf_sheet", 52, "8"); S.hit("pf_door", 52, "8"); S.hit("pf_stamp", 52, "X")
+    S.hit("pf_girder", 52, "X"); S.hit("roar", 52, "X")
+    S.note("pf_stab", 52, G5, 3.0, chord=[G4, D5, G5, Bb5, D6])
+    S.hit("roar", 56, "6")
+    S.hit("pf_stamp", 56, "8")
+    for bt in (57.0, 57.25, 57.5, 57.625, 57.75, 57.875):
+        S.hit("pf_clank", bt, "8")
+    S.hit("pf_stamp", 58, "X"); S.hit("pf_door", 58, "6")
+    S.hit("pf_vent", 60, "x")
+
+    # ---- 6. LOCK (bars 15-16): half-time under the frame-0 wall; the closer b64 sits under the payoff
+    S.hit("pf_stamp", 60, "8"); S.hit("pf_girder", 60, "6"); S.hit("pf_kick", 60, "X"); S.hit("pf_sheet", 60, "6")
+    S.note("pf_808", 60, G1, 2.0)
+    S.hit("pf_kick", 62, "x"); S.hit("pf_clank", 62, "X")
+    S.note("pf_808", 62.5, G1, 1.0, glide_to=Ab1, glide_ms=90, glide_at=0.3)
+    riff(15, RIFF_A, vel=0.8)
+    for j in range(8):
+        S.hit("pf_hat", 60 + 0.5 * j, "x" if j % 2 else "6")
+    S.hit("pf_press", 61.5, "7"); S.hit("pf_press", 63.5, "7")
+    S.hit("pf_kick", 64, "X"); S.hit("pf_door", 64, "8"); S.hit("pf_stamp", 64, "X"); S.hit("pf_girder", 64, "7")
+    S.note("pf_808", 64, G1, 3.6)
+
+    # ---- 6b. breath gaps before the off-grid frames
+    for gb in (17, 18.5):
+        S.clear(["pf_press", "pf_hat", "pf_ohat", "pf_cow"], gb - 0.25, gb)
+        S.hit("pf_stamp", gb, "X")
+
+    # ---- 7. the furnace roar (ducked 12 dB through the stop; low-passed in the break; quiet under the traces)
+    S.note("pf_furnace", 0, 0, 28.0, vel=1.4, seed=1)
+    S.note("pf_furnace", 28, 0, 2.5, vel=0.35, seed=6)
+    S.note("pf_furnace", 30.5, 0, 9.5, vel=1.4, seed=2)
+    S.note("pf_furnace", 40, 0, 3.0, vel=1.1, lpf=(250.0, 3000.0), seed=3)
+    S.note("pf_furnace", 44, 0, 20.0, vel=1.5, seed=4)
+    S.note("pf_furnace", 64, 0, 4.0 + 0.35 / SPB, vel=1.0, shape="tail", seed=5)
+
+    # ---- 8. words (text hits only), the wordless crowd, the camera's shutter
+    by_bar = {}
+    for beat, text in WORDS:
+        b = int(beat // 4 + 1e-9)
+        by_bar.setdefault(b, []).append(((beat - 4 * b) * 4, text))
+    for b, lst in by_bar.items():
+        S.set(b, "_line", lst)
+    for b in GANG:
+        if b not in GANG_BIG:
+            S.hit("pf_gang", b, "X")
+    for b in GANG_BIG:
+        S.hit("pf_gangB", b, "X")
+    for b in NUC:
+        S.hit("pf_nuc", b, "X")
+
+    sections = [("hook", 0, 1, -2), ("intro", 1, 2, -5), ("dropA", 2, 10, -5.25), ("break", 10, 11, -9.5),
+                ("dropB", 11, 13, -2.5), ("payoff", 13, 14, 0), ("dropB2", 14, 15, -2.5), ("lock", 15, 17, -5)]
+    return Song(BPM, S.bars, space=0.0, kick_root=G1, loop=True, key_root=7, sections=sections, sting=(7, 14),
+                duck=0.5, duck_bus={"bass": 0.85, "music": 0.85, "lead": 0.5, "fx": 0.3}, duck_release=0.13,
+                sends={"stem": None}, seed=1538, master={"lufs": -10.0, "tp": -2.0, "tilt": {"low_db": -3.0, "pres_db": 3.0, "air_db": -5.0}})
+

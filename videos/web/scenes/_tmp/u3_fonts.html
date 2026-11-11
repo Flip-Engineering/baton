@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body><canvas id="out" width="1400" height="2200"></canvas>
+<script type="module">
+const FD = '../../node_modules/@fontsource';
+const F = [['Playfair Display','playfair-display/files/playfair-display-latin-900-normal.woff2',{weight:'900'}],['Anton','anton/files/anton-latin-400-normal.woff2',{}],
+['Oswald','oswald/files/oswald-latin-700-normal.woff2',{weight:'700'}],['Big Shoulders Display','big-shoulders-display/files/big-shoulders-display-latin-900-normal.woff2',{weight:'900'}],
+['Pinyon Script','pinyon-script/files/pinyon-script-latin-400-normal.woff2',{}],['Tangerine','tangerine/files/tangerine-latin-700-normal.woff2',{weight:'700'}],['Ms Madi','ms-madi/files/ms-madi-latin-400-normal.woff2',{}],
+['Meddon','meddon/files/meddon-latin-400-normal.woff2',{}],['Mr De Haviland','mr-de-haviland/files/mr-de-haviland-latin-400-normal.woff2',{}],['Italianno','italianno/files/italianno-latin-400-normal.woff2',{}],
+['Imperial Script','imperial-script/files/imperial-script-latin-400-normal.woff2',{}],['Alex Brush','alex-brush/files/alex-brush-latin-400-normal.woff2',{}],['Petit Formal Script','petit-formal-script/files/petit-formal-script-latin-400-normal.woff2',{}],
+['Rouge Script','rouge-script/files/rouge-script-latin-400-normal.woff2',{}],['Great Vibes','great-vibes/files/great-vibes-latin-400-normal.woff2',{}],['Herr Von Muellerhoff','herr-von-muellerhoff/files/herr-von-muellerhoff-latin-400-normal.woff2',{}],
+['Mrs Saint Delafield','mrs-saint-delafield/files/mrs-saint-delafield-latin-400-normal.woff2',{}],['IM Fell English','im-fell-english/files/im-fell-english-latin-400-italic.woff2',{style:'italic'}]];
+await Promise.all(F.map(async ([n,f,d])=>document.fonts.add(await new FontFace(n,`url(${FD}/${f})`,d).load())));
+const g=document.getElementById('out').getContext('2d'); g.fillStyle='#f4ead6'; g.fillRect(0,0,1400,2200); g.fillStyle='#200';
+const out={};
+for (const [n,,d] of F.slice(0,4)) { g.font=`${d.weight||''} 200px "${n}"`; out[n]=['WORKING CLASS DECLARES.',"A PEOPLE'S REVOLUTION.",'SECOND INDEPENDENCE.','SMALL TOWNS TOO.','SAILORS.'].map(t=>Math.round(g.measureText(t).width)); }
+let y=60; for (const [n,,d] of F.slice(4)) { g.font=`${d.style||''} ${d.weight||''} 62px "${n}"`; g.fillText(`V. I. Lenin  J. Stalin  Du Bois  ${n}`, 20, y); y+=92; }
+g.font='900 120px "Playfair Display"'; g.save(); g.translate(20,y+100); g.scale(0.66,1); g.fillText('WORKING CLASS DECLARES.',0,0); g.restore();
+g.font='900 120px "Big Shoulders Display"'; g.fillText('WORKING CLASS DECLARES.',20,y+240);
+g.font='400 120px "Anton"'; g.fillText('WORKING CLASS DECLARES.',20,y+380);
+window.out=out; window.sceneReady=true;
+</script></body></html>

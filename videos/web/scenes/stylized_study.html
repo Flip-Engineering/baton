@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Stylized human matched study (issue #87 S6)</title>
+<style>html,body{margin:0;background:#111;overflow:hidden}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"/web/node_modules/three/build/three.module.js","three/addons/":"/web/node_modules/three/examples/jsm/"}}</script>
+</head><body><canvas id="out" width="1600" height="900"></canvas>
+<script type="module">
+// The study scene is the existing lab, not a copy: the lab imports stylized_sim.js, builds the photoreal
+// control and the lane-E styled arm from one base and matchedPair, bakes both, and renders both StyleStage
+// captures sequentially under one camera/light/rig. Query: w,h,who,recipe,clip,nf,fps,seed,t,measure=0.
+import('../labs/human8/lab_stylized_sim.js').catch(e => { console.error(e.stack || e); window.sceneError = String(e.stack || e); });
+</script>
+</body></html>

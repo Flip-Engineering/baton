@@ -1,0 +1,173 @@
+"""Ingest free-licensed recordings into the sample library (videos/sources/audio/).
+
+Each entry is decoded with ffmpeg, resampled to 48 kHz, cut (optional start/end), silence-trimmed at the head and
+tail, peak-normalised to -1 dBFS with short fades, and written as 16-bit WAV (mono unless stereo=True). It is then
+recorded in catalog.json, and CATALOG.md is regenerated from the catalog.
+
+    python3 tools/sample_ingest.py manifest.json      # [{src, name, category, source_url, author, licence,
+                                                      #   attribution, good_for, stereo?, start?, end?, note?,
+                                                      #   gain_to?, keep_silence?}]
+    python3 tools/sample_ingest.py --md               # regenerate CATALOG.md only
+
+Library rules (MUSIC library, 2026-09-27): CC0, public domain, or attribution licences (CC-BY, MIT, Apache) with the
+attribution text recorded here; no NC/ND, no unclear licences, no intelligible speech, no copyrighted music. Nothing
+from the library is used verbatim in a piece: engine/samples.py alters every placement by default.
+"""
+import json
+import os
+import subprocess
+import sys
+
+import numpy as np
+from scipy.io import wavfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+LIB = os.path.normpath(os.path.join(HERE, "..", "sources", "audio"))
+FFMPEG = "/usr/local/lib/python3.11/dist-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2"
+SR = 48000
+CATS = {
+    "crowd": "Recorded crowds: roars, cheers, reactions, terrace swells, applause beds",
+    "vocal": "Single and small-group throats without words: battle cries, shouts, grunts, screams, breaths",
+    "body": "Hands and feet: claps, applause, stomps, footsteps, marching",
+    "choir": "Sung vowels and choirs (sampled instruments)",
+    "brass": "Brass and horns: war/hunting horns, trumpets, trombones, tubas, low brass swells",
+    "bells": "Bells, chimes, gongs, anvils and struck metal with pitch",
+    "industry": "Industrial and railroad foley: hammers, steel, presses, machinery, clangs, sirens, trucks, air horns",
+    "radio": "Radio, CB, static, squelch and signal noise",
+    "drums": "Drum and percussion one-shots and rolls",
+    "fx": "Impacts, explosions, thunder, whooshes and other one-shots",
+}
+
+
+def decode(src, start=None, end=None, stereo=False):
+    cmd = [FFMPEG, "-v", "error"]
+    if start is not None:
+        cmd += ["-ss", str(start)]
+    if end is not None:
+        cmd += ["-to", str(end)]
+    cmd += ["-i", src, "-ac", "2" if stereo else "1", "-ar", str(SR), "-f", "f32le", "-"]
+    raw = subprocess.run(cmd, check=True, capture_output=True).stdout
+    x = np.frombuffer(raw, np.float32).astype(np.float64)
+    return x.reshape(-1, 2) if stereo else x
+
+
+def trim(x, thr_db=-50.0, pad_s=0.01):
+    m = np.abs(x).max(axis=1) if x.ndim == 2 else np.abs(x)
+    if m.max() <= 0:
+        return x
+    win = int(0.005 * SR)
+    env = np.convolve(m, np.ones(win) / win, mode="same")
+    thr = m.max() * 10 ** (thr_db / 20)
+    idx = np.nonzero(env > thr)[0]
+    a = max(0, idx[0] - int(pad_s * SR))
+    b = min(len(x), idx[-1] + int(pad_s * SR * 5))
+    return x[a:b]
+
+
+def fade(x, fin=0.003, fout=0.02):
+    n = len(x)
+    a, b = min(int(fin * SR), n // 4), min(int(fout * SR), n // 4)
+    g = np.ones(n)
+    if a:
+        g[:a] = np.linspace(0, 1, a) ** 2
+    if b:
+        g[n - b:] = np.linspace(1, 0, b) ** 2
+    return x * (g[:, None] if x.ndim == 2 else g)
+
+
+def process(e):
+    x = decode(e["src"], e.get("start"), e.get("end"), e.get("stereo", False))
+    if x.ndim == 2:
+        x = x - x.mean(axis=0)
+    else:
+        x = x - x.mean()
+    if not e.get("keep_silence"):
+        x = trim(x, e.get("trim_db", -50.0))
+    x = fade(x, e.get("fade_in", 0.003), e.get("fade_out", 0.02))
+    pk = np.abs(x).max()
+    if pk > 0:
+        x = x / pk * 10 ** (e.get("gain_to", -1.0) / 20)
+    return x
+
+
+def load_cat():
+    p = os.path.join(LIB, "catalog.json")
+    if os.path.exists(p):
+        return json.load(open(p))
+    return {"about": "", "entries": []}
+
+
+def save_cat(cat):
+    cat["about"] = ("ACP agitprop sample library (MUSIC library, 2026-09-27). 48 kHz 16-bit WAV. Loader and transforms: "
+                    "videos/engine/samples.py. Ingest: videos/tools/sample_ingest.py. Every file is CC0, public domain "
+                    "or an attribution licence with its credit below; none carries intelligible speech or music.")
+    cat["categories"] = CATS
+    cat["entries"].sort(key=lambda r: (r["category"], r["name"]))
+    json.dump(cat, open(os.path.join(LIB, "catalog.json"), "w"), indent=1, ensure_ascii=False)
+    write_md(cat)
+
+
+def write_md(cat):
+    ent = cat["entries"]
+    tot_s = sum(r["duration_s"] for r in ent)
+    size = sum(os.path.getsize(os.path.join(LIB, r["file"])) for r in ent if os.path.exists(os.path.join(LIB, r["file"])))
+    L = ["# Sample library catalog", "",
+         "Generated by `videos/tools/sample_ingest.py` from `catalog.json`; do not edit by hand.",
+         "Load with `engine/samples.py` (`samples.get(name)`, `samples.pick(category, tags)`); it alters every placement",
+         "by default, so no sample is used verbatim.", "",
+         f"**{len(ent)} files, {tot_s / 60:.1f} min, {size / 1e6:.1f} MB.** 48 kHz, 16-bit, peak -1 dBFS, head and tail "
+         "silence trimmed.", "",
+         "## Licences and attribution", "",
+         "Attribution-licence files must be credited in a piece's description when used. The credit text is the",
+         "`Attribution` column. CC0 and public-domain files need no credit; it is recorded anyway.", "",
+         "| Licence | Files |", "|---|---:|"]
+    lic = {}
+    for r in ent:
+        lic[r["licence"]] = lic.get(r["licence"], 0) + 1
+    for k, v in sorted(lic.items(), key=lambda kv: -kv[1]):
+        L.append(f"| {k} | {v} |")
+    L.append("")
+    for c, desc in CATS.items():
+        rows = [r for r in ent if r["category"] == c]
+        if not rows:
+            continue
+        L += [f"## {c}", "", desc, "", "| Name | s | Ch | Good for | Author | Licence | Source | Attribution |",
+              "|---|---:|---:|---|---|---|---|---|"]
+        for r in rows:
+            L.append(f"| `{r['name']}` | {r['duration_s']:.2f} | {r['channels']} | {r['good_for']} | {r['author']} | "
+                     f"{r['licence']} | {r['source_url']} | {r['attribution']} |")
+        L.append("")
+    open(os.path.join(LIB, "CATALOG.md"), "w").write("\n".join(L))
+
+
+def ingest(entries):
+    cat = load_cat()
+    byname = {r["name"]: r for r in cat["entries"]}
+    for e in entries:
+        assert e["category"] in CATS, e["category"]
+        try:
+            x = process(e)
+        except subprocess.CalledProcessError as err:
+            print("FAIL", e["name"], err.stderr.decode()[:200])
+            continue
+        if len(x) < int(0.03 * SR):
+            print("SKIP (empty)", e["name"])
+            continue
+        rel = f"{e['category']}/{e['name']}.wav"
+        os.makedirs(os.path.join(LIB, e["category"]), exist_ok=True)
+        wavfile.write(os.path.join(LIB, rel), SR, np.clip(x * 32767, -32768, 32767).astype(np.int16))
+        rec = {k: e.get(k, "") for k in ("name", "category", "source_url", "author", "licence", "attribution",
+                                          "good_for", "note", "tags", "origin_file", "repo")}
+        rec["tags"] = e.get("tags", [])
+        rec.update(file=rel, duration_s=round(len(x) / SR, 3), channels=2 if x.ndim == 2 else 1, sr=SR)
+        byname[e["name"]] = rec
+        print(f"ok {rel} {rec['duration_s']:.2f}s")
+    cat["entries"] = list(byname.values())
+    save_cat(cat)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--md"]:
+        write_md(load_cat())
+    else:
+        ingest(json.load(open(sys.argv[1])))

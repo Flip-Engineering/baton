@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body><canvas id="out" width="1400" height="2200"></canvas>
+<script type="module">
+const FD = '../../node_modules/@fontsource';
+const F = [['Playfair Display','playfair-display/files/playfair-display-latin-900-normal.woff2',{weight:'900'}],['Anton','anton/files/anton-latin-400-normal.woff2',{}],
+['Oswald','oswald/files/oswald-latin-700-normal.woff2',{weight:'700'}],['Big Shoulders Display','big-shoulders-display/files/big-shoulders-display-latin-900-normal.woff2',{weight:'900'}],
+['Pinyon Script','pinyon-script/files/pinyon-script-latin-400-normal.woff2',{}],['Tangerine','tangerine/files/tangerine-latin-700-normal.woff2',{weight:'700'}],['Ms Madi','ms-madi/files/ms-madi-latin-400-normal.woff2',{}],
+['Meddon','meddon/files/meddon-latin-400-normal.woff2',{}],['Mr De Haviland','mr-de-haviland/files/mr-de-haviland-latin-400-normal.woff2',{}],['Italianno','italianno/files/italianno-latin-400-normal.woff2',{}],
+['Imperial Script','imperial-script/files/imperial-script-latin-400-normal.woff2',{}],['Alex Brush','alex-brush/files/alex-brush-latin-400-normal.woff2',{}],['Petit Formal Script','petit-formal-script/files/petit-formal-script-latin-400-normal.woff2',{}],
+['Rouge Script','rouge-script/files/rouge-script-latin-400-normal.woff2',{}],['Great Vibes','great-vibes/files/great-vibes-latin-400-normal.woff2',{}],['Herr Von Muellerhoff','herr-von-muellerhoff/files/herr-von-muellerhoff-latin-400-normal.woff2',{}],
+['Mrs Saint Delafield','mrs-saint-delafield/files/mrs-saint-delafield-latin-400-normal.woff2',{}],['IM Fell English','im-fell-english/files/im-fell-english-latin-400-italic.woff2',{style:'italic'}]];
+await Promise.all(F.map(async ([n,f,d])=>document.fonts.add(await new FontFace(n,`url(${FD}/${f})`,d).load())));
+const g0=0;const g=document.getElementById('out').getContext('2d'); g.fillStyle='#f4ead6'; g.fillRect(0,0,1400,2200); g.fillStyle='#8e0d19';
+const N=['Karl Marx','Frederick Engels','V. I. Lenin','J. Stalin','John Reed','C. E. Ruthenberg','Wm. Z. Foster','Ella Reeve Bloor','Elizabeth Gurley Flynn','Harry Haywood','Benj. J. Davis, Jr.','W. E. B. Du Bois'];
+const C=[['Pinyon Script','',64],['Tangerine','700',88],['Petit Formal Script','',52],['Italianno','',80]];
+const out={};
+C.forEach(([n,w,sz],ci)=>{ g.font=`${w} ${sz}px "${n}"`; N.forEach((t,i)=>{ g.fillText(t, 20+ci*345, 60+i*120 - (i%2)*0); }); });
+C.forEach(([n,w,sz],ci)=>{ g.font='20px sans-serif'; g.fillStyle='#000'; g.fillText(n,20+ci*345,1500); g.fillStyle='#8e0d19'; });
+window.out=out; window.sceneReady=true;
+</script></body></html>

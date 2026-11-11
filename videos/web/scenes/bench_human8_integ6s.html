@@ -1,0 +1,8 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>farm bench</title>
+<!-- FARM BENCH scene (scripts/farm_bench.py, lib/bench_scene.js): plays the plate list web/assets/bench/<name>.json -->
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas#out{display:block;position:relative;z-index:1}</style>
+</head><body><canvas id="out" width="1080" height="1920"></canvas>
+<script type="module">import { bench } from '../lib/bench_scene.js';
+bench(location.pathname.replace(/^.*\/bench_([a-z0-9_]+)\.html$/, '$1')).catch(e => { console.error(e.stack || e); window.sceneError = String(e.stack || e); });</script>
+</body></html>

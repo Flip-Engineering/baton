@@ -1,0 +1,30 @@
+videos/web/node_modules/
+videos/out/.*
+__pycache__/
+videos/sources/footage/*.mp4
+# Published videos and review material moved to flip-engineer/music-video-studies-archive (history stays in both repos).
+# The pipeline repo stops tracking them going forward; the files stay on disk. Small inputs code reads are kept.
+videos/out/*
+!videos/out/.*.hits.json
+videos/review/
+videos/logs/
+
+# agents' scratch files in labs
+videos/web/labs/**/_scratch*
+videos/web/labs/clothing1/scratch/
+videos/web/labs/clothing2/scratch/
+videos/web/labs/clothing2/scratch_bakes/
+videos/review/studio_human_c8/after/cycles/export/
+videos/review/studio_human_c8/after/cycles/dev/
+videos/web/labs/**/_*scratch*/
+videos/web/assets/**/*_scratch*/
+videos/web/labs/**/*_scratch*/
+videos/review/**/*_scratch*/
+videos/web/lib/**/*_scratch*/
+
+# downloads never belong in the repo root (builders: put them under ~/.cache)
+/*.whl
+/*.tar.gz
+/*.zip
+/tmp*/
+/scratch*/

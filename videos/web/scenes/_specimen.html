@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#efe3c6;color:#2a1608;font-size:44px}div{padding:4px 12px;white-space:nowrap}small{font:14px monospace;color:#744}</style></head><body>
+<script type="module">
+const FD='../node_modules/@fontsource';
+const F=[['Meddon','meddon'],['Petit Formal Script','petit-formal-script'],['Mr De Haviland','mr-de-haviland'],['Italianno','italianno'],['Rouge Script','rouge-script'],['Tangerine','tangerine'],['Alex Brush','alex-brush'],['Ms Madi','ms-madi'],['Imperial Script','imperial-script'],['Pinyon Script','pinyon-script'],['Great Vibes','great-vibes'],['Mrs Saint Delafield','mrs-saint-delafield'],['Herr Von Muellerhoff','herr-von-muellerhoff'],['La Belle Aurore','la-belle-aurore'],['Homemade Apple','homemade-apple'],['UnifrakturCook','unifrakturcook',700],['IM Fell Double Pica','im-fell-double-pica'],['IM Fell Great Primer','im-fell-great-primer'],['Pirata One','pirata-one']];
+for(const [n,f,w=400] of F){ const ff=new FontFace(n,`url(${FD}/${f}/files/${f}-latin-${w}-normal.woff2)`,{weight:String(w)}); document.fonts.add(await ff.load());
+ const d=document.createElement('div'); d.innerHTML=`<small>${n}</small><br><span style="font-family:'${n}';font-weight:${w}">V. I. Lenin · J. Stalin · Elizabeth Gurley Flynn · Benj. J. Davis, Jr. · The unanimous Declaration</span>`; document.body.appendChild(d);}
+window.sceneReady=true;
+</script></body></html>

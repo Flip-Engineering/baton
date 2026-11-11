@@ -1,0 +1,120 @@
+{
+  "storage": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002",
+  "repository": "https://github.com/flip-engineer/automated-content-pipeline.git",
+  "image": "sha256:5e3e0fa06f75c4699f9d6d15e149c8053e48563debae01e98b7b4dd851f0d9ed",
+  "archive_repository": "https://github.com/flip-engineer/automated-content-pipeline-video-studies-archive.git",
+  "archive_outputs": false,
+  "protocol_enabled": true,
+  "protocol_worker": "homelab-v100-farm",
+  "protocol_lease_hours": 4,
+  "protocol_poll_seconds": 60,
+  "share_target_mib": 27,
+  "share_max_mib": 30,
+  "gpus": [
+    {
+      "label": "gpu0",
+      "uuid": "GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60"
+    },
+    {
+      "label": "gpu1",
+      "uuid": "GPU-b7aaa373-d194-a71f-539d-e0a10dbfc4ce"
+    },
+    {
+      "label": "gpu3",
+      "uuid": "GPU-b983e9da-46fc-ecd8-1449-53e039430591"
+    }
+  ],
+  "sparse": [
+    "videos/web",
+    "videos/engine",
+    "videos/scripts",
+    "videos/fonts",
+    "videos/tools",
+    "research/scripts_final",
+    "research/scripts_wip",
+    "research/capabilities",
+    "videos/sources",
+    "homelab/runtime"
+  ],
+  "poll_seconds": 10,
+  "telemetry_seconds": 5,
+  "gpu_health_timeout_seconds": 15,
+  "workers_per_gpu": 6,
+  "stage_poll_seconds": 1,
+  "scene_prime_passes": {
+    "majority_a": 2
+  },
+  "scene_stabilize_three": {
+    "majority_a": true
+  },
+  "runtime_home_caches": {
+    "surge-xt": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/maintenance/surge-xt-20261005/cache"
+  },
+  "gpu_job_gpus": [
+    {
+      "label": "gpu0",
+      "uuid": "GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60"
+    },
+    {
+      "label": "gpu1",
+      "uuid": "GPU-b7aaa373-d194-a71f-539d-e0a10dbfc4ce"
+    },
+    {
+      "label": "gpu3",
+      "uuid": "GPU-b983e9da-46fc-ecd8-1449-53e039430591"
+    }
+  ],
+  "gpu_activity_directory": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/maintenance/gpu-activity",
+  "gpu_admission_holds": {
+    "GPU-b983e9da-46fc-ecd8-1449-53e039430591": "User disabled GPU3 rendering after thermal throttling"
+  },
+  "scene_workers_per_gpu": {
+    "night25_room": 1,
+    "atrest_a": 1,
+    "atrest_b": 1,
+    "atrest4": 1
+  },
+  "scene_exclusive_gpu": [
+    "atrest_a",
+    "atrest_b",
+    "night25_room",
+    "atrest4"
+  ],
+  "scene_policy_qualification": {
+    "night25_room": {
+      "reason": "Context loss with concurrent GL-EGL browsers; serialize the scene on an exclusive UUID while retaining film quality and pinned inputs.",
+      "evidence": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/maintenance/webgl-context-loss-20261015",
+      "selected_workers": 1,
+      "qualification_status": "isolated_frame_passed"
+    },
+    "atrest_a": {
+      "reason": "Context loss with concurrent GL-EGL browsers; serialize the scene on an exclusive UUID while retaining film quality and pinned inputs.",
+      "evidence": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/maintenance/webgl-context-loss-20261015",
+      "selected_workers": 1,
+      "qualification_status": "replacement_pending"
+    },
+    "atrest_b": {
+      "reason": "Context loss with concurrent GL-EGL browsers; serialize the scene on an exclusive UUID while retaining film quality and pinned inputs.",
+      "evidence": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/maintenance/webgl-context-loss-20261015",
+      "selected_workers": 1,
+      "qualification_status": "replacement_pending"
+    },
+    "atrest4": {
+      "reason": "The six-worker AT REST attempt lost two WebGL contexts; the prior incident reproduced the same failure pattern under concurrent GL-EGL browsers.",
+      "evidence": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/maintenance/webgl-context-loss-20261015 and ACP issue #114",
+      "selected_workers": 1,
+      "qualification_status": "observed_context_loss"
+    }
+  },
+  "gpu_cpu_stage_workers": 2,
+  "gpu_cpu_stage_policy": {
+    "derivation": "Two independent wear variants; host has 64 CPUs; existing per-job RAM budget remains enforced",
+    "qualification": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/maintenance/throughput-20261015/cpu-benchmark/comparison.json",
+    "post_qualification": "/mnt/nvme4tb/automated-content-pipeline-homelab-20261002/maintenance/throughput-20261015/post-benchmark/post-comparison.json",
+    "source_scope": "person_cpu_policy.QUALIFIED_SOURCE_SHA256",
+    "unqualified_source": "original sequential recipe"
+  },
+  "retire_duplicate_prepared": true,
+  "duplicate_prepared_min_age_seconds": 300,
+  "gpu_job_cpu_limit": 14
+}

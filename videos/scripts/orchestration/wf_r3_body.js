@@ -1,0 +1,23 @@
+export const meta = {
+  name: 'round3-cloth-and-pose',
+  description: 'Round 3 from JUDGE c8 (steps 1, 2, 5, 7, 8): CLOTH3 (stop the old cloth shader cutting/painting sewn panels; trousers hem and rise; sew in A-pose then carry into the stance; boots; bra cups and straps; sleeves on prior bodies) and POSE (seeded weight shift, head turn, relaxed hands)',
+  phases: [ { title: 'Build', detail: 'CLOTH3 and POSE in parallel' } ],
+}
+const H = args.house
+const J = `READ FIRST: the independent judge's verdict, review/studio_human_c8/judge_c8/NOTES.md (scores and the ranked list), and integration v2's notes, review/studio_human_c8/after/integration2/NOTES.md (makePerson v2 in lib/fx/person/v2.js; bakes via labs/human8/person_bake.mjs; lab_person who=v2:...). The judge: v2 fixed the heavy and lumpy bodies, but 'the lumps have moved from the bodies onto the cloth'; at 270 px the row reads as a CG crowd (same rigid stance, claw-open hands); at 1:1 cloth and faces fail. The client (3 Oct): realism 'still not approaching photorealism as a capability'.`
+const CLOTH3 = `${H}
+
+${J}
+
+You are CLOTH3, owning the judge's steps 1, 2, 7 and 8 (CLOTHING c2 K1-K3 are done; their files under lib/fx/cloth/ are yours now; read their notes: review/studio_clothing_c2/after/{stack,patterns,foundations}/NOTES.md). (1) THE OLD CLOTH SHADER ON SEWN PANELS: hero.js CF_HEAD still runs on K2/K3 parts (PT 0 cuts neck, tuck and cuff by a bind-space discard; the c6 coat path paints pockets and plackets): add a minimal opt-in define or part id (e.g. cSewn) that skips CF_HEAD's cuts and painted detail for sewn parts (finish.js builds construction as geometry), with the HOOKS lane's byte-identity proof for every existing figure (review/studio_human_c8/after/hooks/NOTES.md shows how); you are the only hero.js editor this round. Confirm whether the plane cut makes the torn tuck line. (2) TROUSERS AND THE STANDING SEW: a hem-length control that does not move the waist (place.js anchors the hem), a lower rise option, boot-shaft collision for hems; sew and settle in the A-pose, then CARRY the cloth from bind to the standing pose in ~10 steps with the collider refitted (the POSE builder beside you is adding seeded stances: carry into whatever pose a person gets). (3) Bra cups shaped from the body's own breast surface (a projected spacer, not a sphere), the strap root blended into the cup edge. (4) Why K2's sleeves hang beside the arms on SOMA/MHR prior bodies (integration2's person_sleeves.mjs is the test): fix it so one body serves a person dressed and undressed. Re-bake the 12 v2 people (person_bake.mjs) and their Cycles garment textures; boards: the 12 dressed, front and three-quarter, full + 270; 1:1 crops of shirt front, tuck, cuffs, hems over boots; before (v2) | after. NOTES.md in review/studio_clothing_c2/after/cloth3/. Final message under 500 words.`
+const POSE = `${H}
+
+${J}
+
+You are POSE, owning the judge's step 5 (lane F is done: rig/person_kin.js, motion/hero_poser.js, workforce.js idleStance with kin; notes review/studio_human_c8/after/kin/NOTES.md; those files are yours to extend now, opt-in, with lane F's invariance proof kept: labs/human8/kin_invariance.mjs, 0 of 41,588 legacy values may change). Every v2 person stands in the same symmetric pose with claw-open fingers; real people (the modern typical references, local only: ~/.cache/acp_human/figure_photos/, manifest use='typical') stand with weight on one leg, a tilted pelvis, a counter-tilted shoulder line, a turned or tilted head, relaxed curled hands (fingers flexed 20-40 deg increasing toward the little finger, thumb resting by the index). Build: seeded per-person stance variants (relaxed both feet, contrapposto left/right, hip drop, a hand in a pocket or on the hip for dressed people, arms folded, hands loosely clasped) that respect each person's kin (balance over the support foot, ranges, carrying angle) and look natural from front and three-quarter; a relaxed default hand pose; small head turns and tilts. Expose it through makePerson v2 (a stance field in the person record, seeded) and coordinate with CLOTH3 beside you, which carries cloth into the pose. Measure balance (COM over support), check against reference poses by eye, deliver a 12-person board (figure-study register and dressed once CLOTH3's carry exists), full + 270, before | after, and a 1:1 hands sheet. NOTES.md in review/studio_human_c8/after/pose/. Final message under 400 words.`
+const GP = { agentType: 'general-purpose' }
+const [c, p] = await parallel([
+  () => agent(CLOTH3, { ...GP, label: 'CLOTH3: sewn panels, trousers, carry', phase: 'Build' }),
+  () => agent(POSE, { ...GP, label: 'POSE: stances and hands', phase: 'Build' }),
+])
+return { CLOTH3: c, POSE: p }

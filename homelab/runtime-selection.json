@@ -1,0 +1,26 @@
+{
+  "generation": 1,
+  "history": [
+    {
+      "generation": 1,
+      "provenance_sha256": "d4113bf69ef05dec59bc35f39f551ba12ce431f9fd2afc7df8695d6a9a1d0928",
+      "revision": "468a60790b41abd75098d0ec8d941d31d72b1926",
+      "seal_sha256": "4de2cba656747b9930d99e0a6f6ed201a6bcb3bc5752499014b745cf601d1b46",
+      "selected_at": "2026-10-18T02:06:28.470998+00:00"
+    }
+  ],
+  "previous_pins": [
+    {
+      "activated": false,
+      "note": "Preserved earlier staged release; not relabelled or activated",
+      "provenance_sha256": null,
+      "revision": "2637fcc3663e9f1468a140a56da37ae965313cfd",
+      "status": "staged_prior_pin"
+    }
+  ],
+  "provenance_sha256": "d4113bf69ef05dec59bc35f39f551ba12ce431f9fd2afc7df8695d6a9a1d0928",
+  "release_seal_sha256": "4de2cba656747b9930d99e0a6f6ed201a6bcb3bc5752499014b745cf601d1b46",
+  "schema": "acp.homelab-runtime-selection/v1",
+  "selected_revision": "468a60790b41abd75098d0ec8d941d31d72b1926",
+  "source_commit": "468a60790b41abd75098d0ec8d941d31d72b1926"
+}

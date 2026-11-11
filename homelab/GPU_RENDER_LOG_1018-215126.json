@@ -1,0 +1,149 @@
+[
+ {
+  "cmd": [
+   "npm",
+   "ci",
+   "--ignore-scripts",
+   "--no-audit"
+  ],
+  "s": 4.5,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "node",
+   "web/labs/human8/export_person.mjs",
+   "L22_f27_black",
+   "--wear"
+  ],
+  "tag": null,
+  "s": 93.7,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "/opt/blender/blender-5.2.2-linux-x64/blender",
+   "-b",
+   "--factory-startup",
+   "-noaudio"
+  ],
+  "tag": null,
+  "s": 107.2,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "node",
+   "web/labs/eyes/eye7_maps.mjs",
+   "/work/videos/out/gpu/1018-215126-issue87_s6_stylized_production_p/tmp/L22_f27_black_bare"
+  ],
+  "tag": null,
+  "s": 14.5,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "node",
+   "web/labs/human8/export_person.mjs",
+   "L22_f27_black",
+   "--wear"
+  ],
+  "tag": null,
+  "s": 208.7,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "/opt/blender/blender-5.2.2-linux-x64/blender",
+   "-b",
+   "--factory-startup",
+   "-noaudio"
+  ],
+  "tag": null,
+  "s": 83.8,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "node",
+   "web/labs/eyes/eye7_maps.mjs",
+   "/work/videos/out/gpu/1018-215126-issue87_s6_stylized_production_p/tmp/L22_f27_black_work"
+  ],
+  "tag": null,
+  "s": 14.8,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "node",
+   "web/labs/human8/bake_skin.mjs",
+   "out/gpu/1018-215126-issue87_s6_stylized_production_p/tmp/L22_f27_black_bare"
+  ],
+  "tag": null,
+  "s": 88.6,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "node",
+   "web/labs/human8/bake_skin.mjs",
+   "out/gpu/1018-215126-issue87_s6_stylized_production_p/tmp/L22_f27_black_work"
+  ],
+  "tag": null,
+  "s": 159.6,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "node",
+   "web/labs/clothing2/fabric7_texbake.mjs",
+   "out/gpu/1018-215126-issue87_s6_stylized_production_p/tmp/L22_f27_black_work",
+   "--mode"
+  ],
+  "tag": null,
+  "s": 166.5,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "python3",
+   "/work/videos/blender/bake_post.py",
+   "/work/videos/out/gpu/1018-215126-issue87_s6_stylized_production_p/tmp/L22_f27_black_bare"
+  ],
+  "tag": null,
+  "s": 81.8,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "python3",
+   "/work/videos/blender/bake_post.py",
+   "/work/videos/out/gpu/1018-215126-issue87_s6_stylized_production_p/tmp/L22_f27_black_work"
+  ],
+  "tag": null,
+  "s": 101.5,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "/opt/blender/blender-5.2.2-linux-x64/blender",
+   "-b",
+   "--factory-startup",
+   "-noaudio"
+  ],
+  "tag": "cyc_L22_f27_black_face_over_work_studior5",
+  "s": 920.7,
+  "code": 0
+ },
+ {
+  "cmd": [
+   "/opt/blender/blender-5.2.2-linux-x64/blender",
+   "-b",
+   "--factory-startup",
+   "-noaudio"
+  ],
+  "tag": "cyc_L22_f27_black_bust_over_work_studior5",
+  "s": 499.4,
+  "code": 0
+ }
+]

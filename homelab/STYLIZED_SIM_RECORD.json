@@ -1,0 +1,301 @@
+{
+  "schema": "acp.issue87.stylized-sim-record/v1",
+  "created_at": "2026-10-19T05:11:35.448Z",
+  "pinned_head": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+  "person": {
+    "who": "Rosa",
+    "sex": "f",
+    "height": 1.61
+  },
+  "recipe": "sculpted",
+  "clip": "walk7",
+  "fps": 15,
+  "nf": 45,
+  "seed": 2026,
+  "pair": {
+    "simulation": "{\"assets\":[{\"git_blob\":\"a9328533be900ee3d882b98c2df5f5040f8cc3db\",\"path\":\"videos/web/lib/fx/style/recipes.js\",\"sha256\":\"57e207905dd3a6fc908033ed8ff7fec2eabb91c52ee43f266b062263686fc2a1\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"88734e34ed2f2a1606d2b630e21bcf1de0646df6\",\"path\":\"videos/web/lib/fx/style/shape.js\",\"sha256\":\"a50ee7cdce096425bd144823b5f835aff1368bebe63b81227ed07dc31b153c96\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"654d898dacc1a2148a6281ab7aeb020b2e6a6b08\",\"path\":\"videos/web/lib/fx/style/surface.js\",\"sha256\":\"8ba4bd2b67eed643a8240c32ef26df92543ffff88bc06683f13021ecd910a909\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"dc28934cec5d935163ce11124ff28d546d65da7c\",\"path\":\"videos/web/lib/fx/style/line.js\",\"sha256\":\"1074500caed1ec6294ef65e64c23d9027b1c6b228d7ae622768a8308096c6e3f\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"4ddb3d1669cdd609dc684fbe842058577668008f\",\"path\":\"videos/web/lib/fx/style/person.js\",\"sha256\":\"c473edc0a777e278e458717c5babcc15a59ebf22d1dc48dc2e49e907c8f008ef\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"efb9ded20b1c6edb63692a7eb8efea0c6beb55ac\",\"path\":\"videos/web/lib/fx/motion/bake7.js\",\"sha256\":\"af3c61ec9b445181a30b1d7af7a623922183d57e3e5bc1a1ac0258fc45d61170\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"794b81e7bbc1dc8474fb22726e9de03986d81329\",\"path\":\"videos/web/lib/fx/motion/cloth_motion.js\",\"sha256\":\"9c0d6717c0a8efcd2c828be54e98185ae22b09f8b9d2e6f06114540f18b639c4\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"9f8bf6c80fe6f4728355e0f172389590cae2a1e7\",\"path\":\"videos/web/lib/fx/cloth/wardrobe4/fabrics4.js\",\"sha256\":\"24a83874b940b03285d03062ebda5961a5b9d550f7534897a2174e89b30c0180\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"d943ccb398878d83db348fcfaef222db45e0096d\",\"path\":\"videos/web/lib/fx/cloth/fabrics.js\",\"sha256\":\"864b894d837387ed4c6343e43d309b9f33a5d07864a7a882748243bccf47c540\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"510fbda8b8212879b94fae6af38e2d34dbb49bbc\",\"path\":\"videos/web/lib/fx/hero.js\",\"sha256\":\"c7e915889aa62cb1afd3e5600d1f00832353bac0056d552bd5b0217bbf572683\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"4b7b4817edab4f3a3e4bc3913d1fa4a78e35a215\",\"path\":\"videos/web/scenes/oneshot2.js\",\"sha256\":\"b121349610bb3a0bf04badb87416bdd97e0cfa5f5d30e04e82656dfd021d86eb\",\"source_commit\":\"ea83bca2b4ebcbc42d14a488d3e5f9d70de70e95\"},{\"git_blob\":\"f220cd834d8c1d1a555614d9a4995083b6d9b4d0\",\"path\":\"videos/sources/body/landmarks.json\",\"sha256\":\"8ba105a0f23ad9a11b1923281f11baf26794d451405bf8d35b94c2cd7e1e308a\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"d26635e9326e3cca30778fd7b9c00062b03cce09\",\"path\":\"videos/sources/makehuman/3dobjs/base.obj\",\"sha256\":\"8e761e6624b8f54536409135d1636da63b32486a90d4897f84e121d144f6fb4c\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"b02cbecae00143856410d7561adf006d83bf9b3e\",\"path\":\"videos/sources/makehuman/rigs/default.mhskel\",\"sha256\":\"99f179bce0aa850b45d4191a1d0d234c5851f881c057439470ded3bddf729a24\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"66185806afacf87749be8e5cf6dbf66496b2a6b0\",\"path\":\"videos/sources/makehuman/rigs/default_weights.mhw\",\"sha256\":\"0f3641d651ae3d00ad6b4ccee43142edb109d3bd909d27d9e4139ef1beed8625\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"2c6d308bf7fdeddef71af31b1b4c3ca87df40167\",\"path\":\"videos/web/assets/body/basis.json\",\"sha256\":\"1be38158dfb7f829d77a7e5168bdbce66436bb7576f2d9b7d5cd97d4efdf8983\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"13365ba34849308d4a98ee7769ad80f008d8843d\",\"path\":\"videos/web/assets/body/basis.bin\",\"sha256\":\"3b9dceee938fe90b1573bf86b02d92b9f62a48030d58a7d39e8060c2ff7455bd\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"10b11add857a86d9ab54e34027a1d574f65f5ed6\",\"path\":\"videos/web/assets/hero/hero.json\",\"sha256\":\"5fc94731cec45c4e60de2e947b927a4d92f11d78975b06d9272c3de821709928\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"e846ce3b39a1ff36c189b747f4ac20257ff39a60\",\"path\":\"videos/web/assets/hero/hero.bin\",\"sha256\":\"4b26231e35c1013939da8fd1f0585f7ee8ab1662e65ab3fc5f835428223da453\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"25251ab055fa9156db305a04f4b6930343929fb4\",\"path\":\"videos/web/assets/rig/ansur_subjects.json\",\"sha256\":\"245cb8c3938f55ca8f675933453d90f5910a0f06ca4be4622ae6965c59d55180\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"}],\"clip\":\"walk7\",\"cloth\":true,\"clothOpts\":{\"relax\":64,\"sub\":8},\"every\":2,\"extra\":null,\"fps\":15,\"hair\":false,\"key\":1,\"nf\":45,\"seed\":2026,\"who\":\"Rosa\"}",
+    "style_distance": {
+      "photoreal": 0,
+      "stylized": 3.525
+    }
+  },
+  "source_pins": [
+    {
+      "path": "videos/web/lib/fx/style/recipes.js",
+      "sha256": "57e207905dd3a6fc908033ed8ff7fec2eabb91c52ee43f266b062263686fc2a1",
+      "git_blob": "a9328533be900ee3d882b98c2df5f5040f8cc3db",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/lib/fx/style/shape.js",
+      "sha256": "a50ee7cdce096425bd144823b5f835aff1368bebe63b81227ed07dc31b153c96",
+      "git_blob": "88734e34ed2f2a1606d2b630e21bcf1de0646df6",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/lib/fx/style/surface.js",
+      "sha256": "8ba4bd2b67eed643a8240c32ef26df92543ffff88bc06683f13021ecd910a909",
+      "git_blob": "654d898dacc1a2148a6281ab7aeb020b2e6a6b08",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/lib/fx/style/line.js",
+      "sha256": "1074500caed1ec6294ef65e64c23d9027b1c6b228d7ae622768a8308096c6e3f",
+      "git_blob": "dc28934cec5d935163ce11124ff28d546d65da7c",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/lib/fx/style/person.js",
+      "sha256": "c473edc0a777e278e458717c5babcc15a59ebf22d1dc48dc2e49e907c8f008ef",
+      "git_blob": "4ddb3d1669cdd609dc684fbe842058577668008f",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/lib/fx/motion/bake7.js",
+      "sha256": "af3c61ec9b445181a30b1d7af7a623922183d57e3e5bc1a1ac0258fc45d61170",
+      "git_blob": "efb9ded20b1c6edb63692a7eb8efea0c6beb55ac",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/lib/fx/motion/cloth_motion.js",
+      "sha256": "9c0d6717c0a8efcd2c828be54e98185ae22b09f8b9d2e6f06114540f18b639c4",
+      "git_blob": "794b81e7bbc1dc8474fb22726e9de03986d81329",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/lib/fx/cloth/wardrobe4/fabrics4.js",
+      "sha256": "24a83874b940b03285d03062ebda5961a5b9d550f7534897a2174e89b30c0180",
+      "git_blob": "9f8bf6c80fe6f4728355e0f172389590cae2a1e7",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/lib/fx/cloth/fabrics.js",
+      "sha256": "864b894d837387ed4c6343e43d309b9f33a5d07864a7a882748243bccf47c540",
+      "git_blob": "d943ccb398878d83db348fcfaef222db45e0096d",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/lib/fx/hero.js",
+      "sha256": "c7e915889aa62cb1afd3e5600d1f00832353bac0056d552bd5b0217bbf572683",
+      "git_blob": "510fbda8b8212879b94fae6af38e2d34dbb49bbc",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/scenes/oneshot2.js",
+      "sha256": "b121349610bb3a0bf04badb87416bdd97e0cfa5f5d30e04e82656dfd021d86eb",
+      "git_blob": "4b7b4817edab4f3a3e4bc3913d1fa4a78e35a215",
+      "source_commit": "ea83bca2b4ebcbc42d14a488d3e5f9d70de70e95"
+    },
+    {
+      "path": "videos/sources/body/landmarks.json",
+      "sha256": "8ba105a0f23ad9a11b1923281f11baf26794d451405bf8d35b94c2cd7e1e308a",
+      "git_blob": "f220cd834d8c1d1a555614d9a4995083b6d9b4d0",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/sources/makehuman/3dobjs/base.obj",
+      "sha256": "8e761e6624b8f54536409135d1636da63b32486a90d4897f84e121d144f6fb4c",
+      "git_blob": "d26635e9326e3cca30778fd7b9c00062b03cce09",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/sources/makehuman/rigs/default.mhskel",
+      "sha256": "99f179bce0aa850b45d4191a1d0d234c5851f881c057439470ded3bddf729a24",
+      "git_blob": "b02cbecae00143856410d7561adf006d83bf9b3e",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/sources/makehuman/rigs/default_weights.mhw",
+      "sha256": "0f3641d651ae3d00ad6b4ccee43142edb109d3bd909d27d9e4139ef1beed8625",
+      "git_blob": "66185806afacf87749be8e5cf6dbf66496b2a6b0",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/assets/body/basis.json",
+      "sha256": "1be38158dfb7f829d77a7e5168bdbce66436bb7576f2d9b7d5cd97d4efdf8983",
+      "git_blob": "2c6d308bf7fdeddef71af31b1b4c3ca87df40167",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/assets/body/basis.bin",
+      "sha256": "3b9dceee938fe90b1573bf86b02d92b9f62a48030d58a7d39e8060c2ff7455bd",
+      "git_blob": "13365ba34849308d4a98ee7769ad80f008d8843d",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/assets/hero/hero.json",
+      "sha256": "5fc94731cec45c4e60de2e947b927a4d92f11d78975b06d9272c3de821709928",
+      "git_blob": "10b11add857a86d9ab54e34027a1d574f65f5ed6",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/assets/hero/hero.bin",
+      "sha256": "4b26231e35c1013939da8fd1f0585f7ee8ab1662e65ab3fc5f835428223da453",
+      "git_blob": "e846ce3b39a1ff36c189b747f4ac20257ff39a60",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    },
+    {
+      "path": "videos/web/assets/rig/ansur_subjects.json",
+      "sha256": "245cb8c3938f55ca8f675933453d90f5910a0f06ca4be4622ae6965c59d55180",
+      "git_blob": "25251ab055fa9156db305a04f4b6930343929fb4",
+      "source_commit": "db037ddc1019cd53890c029174a351dfde5f1011"
+    }
+  ],
+  "runs": {
+    "photorealistic": {
+      "track_bytes": 612634,
+      "cloth": "live",
+      "metrics": {
+        "frames": 45,
+        "sampled": 45,
+        "parts": 3,
+        "skin": 1375,
+        "sunk": 177,
+        "inside": 136,
+        "insideDrawn": 13687,
+        "covered": 40990,
+        "stretchMax": 4.0009,
+        "stretchUtil": 3.479081,
+        "stretchPart": "shirt",
+        "stretchSum": 780187.1343859838,
+        "stretchSamples": 771390,
+        "stretchLimit": 1.15,
+        "relaxMaxMm": 64.2,
+        "maxSecMm": 7.500000298023224,
+        "maxPushMm": 18.558742542125362,
+        "penetrationMm": 20.058,
+        "clearanceMm": 0,
+        "error": null,
+        "stretchMean": 1.0114042629357185
+      },
+      "cloth_parts": 3
+    },
+    "stylized": {
+      "track_bytes": 611554,
+      "cloth": "live",
+      "metrics": {
+        "frames": 45,
+        "sampled": 45,
+        "parts": 3,
+        "skin": 1110,
+        "sunk": 248,
+        "inside": 153,
+        "insideDrawn": 13042,
+        "covered": 42517,
+        "stretchMax": 3.1138,
+        "stretchUtil": 2.70768,
+        "stretchPart": "shirt",
+        "stretchSum": 779242.8400777843,
+        "stretchSamples": 770670,
+        "stretchLimit": 1.15,
+        "relaxMaxMm": 59.7,
+        "maxSecMm": 7.500000298023224,
+        "maxPushMm": 20.268207848570142,
+        "penetrationMm": 20.0818,
+        "clearanceMm": 0,
+        "error": null,
+        "stretchMean": 1.0111238793229065
+      },
+      "cloth_parts": 3
+    }
+  },
+  "comparison": {
+    "version": "stylized-sim-v1",
+    "pinned_head": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+    "passed": true,
+    "checks": {
+      "matched_spec": true,
+      "photoreal_distance_zero": true,
+      "stylized_look": true,
+      "photoreal_cloth_live": true,
+      "stylized_cloth_live": true,
+      "control_valid": true,
+      "candidate_valid": true,
+      "stylized_contact_within_control": true,
+      "stylized_strain_within_control": true,
+      "photoreal_reps_present": true,
+      "stylized_reps_present": true,
+      "photoreal_contact_zero": false,
+      "stylized_contact_zero": false
+    },
+    "limits": {
+      "matched_contact": "stylized skin/sunk/inside-drawn <= 1.75x the photoreal control + 5 vertices each; penetration <= control + 5 mm",
+      "matched_strain": "stylized stretch utilisation <= 1.10x the photoreal control",
+      "absolute_contact": "informational only: Hero garments are shader-cut shells, not the current person's sewn cloth stack",
+      "fabric_stretch": "each part against its own fabric smax (4% woven, 15% knit)"
+    },
+    "style_distance": {
+      "photorealistic": 0,
+      "stylized": 3.525
+    },
+    "metrics": {
+      "photorealistic": {
+        "frames": 45,
+        "sampled": 45,
+        "parts": 3,
+        "skin": 1375,
+        "sunk": 177,
+        "inside": 136,
+        "insideDrawn": 13687,
+        "covered": 40990,
+        "stretchMax": 4.0009,
+        "stretchUtil": 3.479081,
+        "stretchPart": "shirt",
+        "stretchSum": 780187.1343859838,
+        "stretchSamples": 771390,
+        "stretchLimit": 1.15,
+        "relaxMaxMm": 64.2,
+        "maxSecMm": 7.500000298023224,
+        "maxPushMm": 18.558742542125362,
+        "penetrationMm": 20.058,
+        "clearanceMm": 0,
+        "error": null,
+        "stretchMean": 1.0114042629357185
+      },
+      "stylized": {
+        "frames": 45,
+        "sampled": 45,
+        "parts": 3,
+        "skin": 1110,
+        "sunk": 248,
+        "inside": 153,
+        "insideDrawn": 13042,
+        "covered": 42517,
+        "stretchMax": 3.1138,
+        "stretchUtil": 2.70768,
+        "stretchPart": "shirt",
+        "stretchSum": 779242.8400777843,
+        "stretchSamples": 770670,
+        "stretchLimit": 1.15,
+        "relaxMaxMm": 59.7,
+        "maxSecMm": 7.500000298023224,
+        "maxPushMm": 20.268207848570142,
+        "penetrationMm": 20.0818,
+        "clearanceMm": 0,
+        "error": null,
+        "stretchMean": 1.0111238793229065
+      }
+    },
+    "deltas": {
+      "skin": -265,
+      "sunk": 71,
+      "inside": 17,
+      "insideDrawn": -645,
+      "stretchMax": -0.8871,
+      "stretchUtil": -0.7714,
+      "stretchMean": -0.0003,
+      "penetrationMm": 0.0238,
+      "clearanceMm": 0,
+      "relaxMaxMm": -4.5
+    },
+    "simulation": "{\"assets\":[{\"git_blob\":\"a9328533be900ee3d882b98c2df5f5040f8cc3db\",\"path\":\"videos/web/lib/fx/style/recipes.js\",\"sha256\":\"57e207905dd3a6fc908033ed8ff7fec2eabb91c52ee43f266b062263686fc2a1\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"88734e34ed2f2a1606d2b630e21bcf1de0646df6\",\"path\":\"videos/web/lib/fx/style/shape.js\",\"sha256\":\"a50ee7cdce096425bd144823b5f835aff1368bebe63b81227ed07dc31b153c96\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"654d898dacc1a2148a6281ab7aeb020b2e6a6b08\",\"path\":\"videos/web/lib/fx/style/surface.js\",\"sha256\":\"8ba4bd2b67eed643a8240c32ef26df92543ffff88bc06683f13021ecd910a909\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"dc28934cec5d935163ce11124ff28d546d65da7c\",\"path\":\"videos/web/lib/fx/style/line.js\",\"sha256\":\"1074500caed1ec6294ef65e64c23d9027b1c6b228d7ae622768a8308096c6e3f\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"4ddb3d1669cdd609dc684fbe842058577668008f\",\"path\":\"videos/web/lib/fx/style/person.js\",\"sha256\":\"c473edc0a777e278e458717c5babcc15a59ebf22d1dc48dc2e49e907c8f008ef\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"efb9ded20b1c6edb63692a7eb8efea0c6beb55ac\",\"path\":\"videos/web/lib/fx/motion/bake7.js\",\"sha256\":\"af3c61ec9b445181a30b1d7af7a623922183d57e3e5bc1a1ac0258fc45d61170\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"794b81e7bbc1dc8474fb22726e9de03986d81329\",\"path\":\"videos/web/lib/fx/motion/cloth_motion.js\",\"sha256\":\"9c0d6717c0a8efcd2c828be54e98185ae22b09f8b9d2e6f06114540f18b639c4\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"9f8bf6c80fe6f4728355e0f172389590cae2a1e7\",\"path\":\"videos/web/lib/fx/cloth/wardrobe4/fabrics4.js\",\"sha256\":\"24a83874b940b03285d03062ebda5961a5b9d550f7534897a2174e89b30c0180\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"d943ccb398878d83db348fcfaef222db45e0096d\",\"path\":\"videos/web/lib/fx/cloth/fabrics.js\",\"sha256\":\"864b894d837387ed4c6343e43d309b9f33a5d07864a7a882748243bccf47c540\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"510fbda8b8212879b94fae6af38e2d34dbb49bbc\",\"path\":\"videos/web/lib/fx/hero.js\",\"sha256\":\"c7e915889aa62cb1afd3e5600d1f00832353bac0056d552bd5b0217bbf572683\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"4b7b4817edab4f3a3e4bc3913d1fa4a78e35a215\",\"path\":\"videos/web/scenes/oneshot2.js\",\"sha256\":\"b121349610bb3a0bf04badb87416bdd97e0cfa5f5d30e04e82656dfd021d86eb\",\"source_commit\":\"ea83bca2b4ebcbc42d14a488d3e5f9d70de70e95\"},{\"git_blob\":\"f220cd834d8c1d1a555614d9a4995083b6d9b4d0\",\"path\":\"videos/sources/body/landmarks.json\",\"sha256\":\"8ba105a0f23ad9a11b1923281f11baf26794d451405bf8d35b94c2cd7e1e308a\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"d26635e9326e3cca30778fd7b9c00062b03cce09\",\"path\":\"videos/sources/makehuman/3dobjs/base.obj\",\"sha256\":\"8e761e6624b8f54536409135d1636da63b32486a90d4897f84e121d144f6fb4c\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"b02cbecae00143856410d7561adf006d83bf9b3e\",\"path\":\"videos/sources/makehuman/rigs/default.mhskel\",\"sha256\":\"99f179bce0aa850b45d4191a1d0d234c5851f881c057439470ded3bddf729a24\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"66185806afacf87749be8e5cf6dbf66496b2a6b0\",\"path\":\"videos/sources/makehuman/rigs/default_weights.mhw\",\"sha256\":\"0f3641d651ae3d00ad6b4ccee43142edb109d3bd909d27d9e4139ef1beed8625\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"2c6d308bf7fdeddef71af31b1b4c3ca87df40167\",\"path\":\"videos/web/assets/body/basis.json\",\"sha256\":\"1be38158dfb7f829d77a7e5168bdbce66436bb7576f2d9b7d5cd97d4efdf8983\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"13365ba34849308d4a98ee7769ad80f008d8843d\",\"path\":\"videos/web/assets/body/basis.bin\",\"sha256\":\"3b9dceee938fe90b1573bf86b02d92b9f62a48030d58a7d39e8060c2ff7455bd\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"10b11add857a86d9ab54e34027a1d574f65f5ed6\",\"path\":\"videos/web/assets/hero/hero.json\",\"sha256\":\"5fc94731cec45c4e60de2e947b927a4d92f11d78975b06d9272c3de821709928\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"e846ce3b39a1ff36c189b747f4ac20257ff39a60\",\"path\":\"videos/web/assets/hero/hero.bin\",\"sha256\":\"4b26231e35c1013939da8fd1f0585f7ee8ab1662e65ab3fc5f835428223da453\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"},{\"git_blob\":\"25251ab055fa9156db305a04f4b6930343929fb4\",\"path\":\"videos/web/assets/rig/ansur_subjects.json\",\"sha256\":\"245cb8c3938f55ca8f675933453d90f5910a0f06ca4be4622ae6965c59d55180\",\"source_commit\":\"db037ddc1019cd53890c029174a351dfde5f1011\"}],\"clip\":\"walk7\",\"cloth\":true,\"clothOpts\":{\"relax\":64,\"sub\":8},\"every\":2,\"extra\":null,\"fps\":15,\"hair\":false,\"key\":1,\"nf\":45,\"seed\":2026,\"who\":\"Rosa\"}",
+    "track_bytes": {
+      "photorealistic": 612634,
+      "stylized": 611554
+    },
+    "cloth": {
+      "photorealistic": "live",
+      "stylized": "live"
+    }
+  }
+}

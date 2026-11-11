@@ -1,0 +1,42 @@
+[
+  {
+    "old": "const W = 1080, H = 1920, FPS = 30;\n",
+    "new": "const W = 1080, H = 1920, FPS = 30;\nconst PICTURE_ONLY = process.env.ACP_PICTURE_ONLY === '1';\n"
+  },
+  {
+    "old": "const browser = await chromium.launch({\n  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'],\n",
+    "new": "const visibleGpus = execFileSync('nvidia-smi', ['--query-gpu=uuid', '--format=csv,noheader']).toString().trim().split(/\\s+/);\nif (visibleGpus.length !== 1 || visibleGpus[0] !== process.env.ACP_EXPECTED_GPU_UUID) throw new Error('Container GPU isolation failed: ' + visibleGpus.join(','));\nconsole.log('[GPU UUID]', visibleGpus[0]);\nconst browser = await chromium.launch({\n  channel: 'chromium',\n  ignoreDefaultArgs: ['--enable-unsafe-swiftshader'],\n  args: ['--no-sandbox', '--enable-gpu', '--use-angle=gl-egl', '--disable-software-rasterizer', '--ignore-gpu-blocklist', '--enable-webgl'],\n"
+  },
+  {
+    "old": "R.browser = browser;\n",
+    "new": "const gpuCdp = await browser.newBrowserCDPSession();\nconst gpuReport = await gpuCdp.send('SystemInfo.getInfo');\ngpuReport.gpu.visibleUuid = visibleGpus[0];\nconst rendererSummary = g => JSON.stringify({renderer:g.auxAttributes?.glRenderer,features:g.featureStatus});\nconsole.log('[GPU proof]', rendererSummary(gpuReport.gpu));\nfs.writeFileSync(path.join(OUT, `homelab-${process.env.ACP_GPU_LABEL || 'gpu0'}-renderer.json`), JSON.stringify(gpuReport.gpu, null, 2));\nconst rendererName = gpuReport.gpu.auxAttributes?.glRenderer || '';\nif (!/NVIDIA.*V100|V100.*NVIDIA/i.test(rendererName) || /SwiftShader|llvmpipe|lavapipe/i.test(rendererName)) {\n  await browser.close(); server.close();\n  if (R.slot) await R.slot.release();\n  throw new Error('Hardware V100 rendering required, got: ' + rendererName);\n}\nR.browser = browser;\n"
+  },
+  {
+    "old": "page.on('console', m => console.log('[page]', m.text()));\n",
+    "new": "page.on('console', m => console.log('[page]', m.text()));\npage.on('response', r => { if(r.status() >= 400) console.log('[HTTP]',r.status(),r.url()); });\n"
+  },
+  {
+    "old": "    '-ss', String(from), '-t', String(to - from), '-i', path.join(OUT, `.${scene}.wav`),\n    '-map', '0:v', '-map', '1:a',\n",
+    "new": "    ...(PICTURE_ONLY ? [] : ['-ss', String(from), '-t', String(to - from), '-i', path.join(OUT, `.${scene}.wav`)]),\n    '-map', '0:v', ...(PICTURE_ONLY ? [] : ['-map', '1:a']),\n"
+  },
+  {
+    "old": "    '-r', String(FPS), '-af', 'alimiter=limit=0.891:level=false', '-ar', '48000', '-c:a', 'aac', '-b:a', '256k', '-shortest', '-movflags', '+faststart', file],\n",
+    "new": "    '-r', String(FPS), ...(PICTURE_ONLY ? [] : ['-af', 'alimiter=limit=0.891:level=false', '-ar', '48000', '-c:a', 'aac', '-b:a', '256k', '-shortest']), '-movflags', '+faststart', file],\n"
+  },
+  {
+    "old": "  if (process.env.ACP_CODEC !== '0') {\n",
+    "new": "  if (!PICTURE_ONLY && process.env.ACP_CODEC !== '0') {\n"
+  },
+  {
+    "old": "await page.goto(`",
+    "new": "if(opt('stabilize-three','0')==='1') {\nawait page.addInitScript({path:path.join(OUT,'capture-bridge.js')});\nawait page.addInitScript({path:path.join(OUT,'gpu-sync.js')});\nawait page.route('**/web/lib/importmap.js', async route => {\n  const response=await route.fetch({timeout:0});\n  const source=await response.text();\n  const anchor=\"three: nm + 'three/build/three.module.js'\";\n  if(!source.includes(anchor)) throw new Error('Three import map changed: farm adapter needs review');\n  await route.fulfill({response,body:source.replace(anchor,\"three: '/out/three-renderer-wrapper.mjs'\")});\n});\n}\nawait page.goto(`"
+  },
+  {
+    "old": "  const t0 = Date.now();",
+    "new": "  const t0 = Date.now();\n  const preroll=Number(opt('preroll',n0));\n  if(!Number.isInteger(preroll) || preroll<0 || preroll>n0) throw new Error('Invalid parent-history range');\n  for(let j=preroll;j<n0;j++) {\n    await page.evaluate(async t=>{await window.renderFrame(t);window.__farmSync?.();},j/FPS);\n    await audit(j/FPS);\n  }\n  for(let j=0;j<Number(opt('prime-passes',0));j++) {\n    await page.evaluate(async t=>{await window.renderFrame(t);window.__farmSync?.();},n0/FPS);\n    await audit(n0/FPS);\n    await grabFrame();\n  }\n"
+  },
+  {
+    "old": "await page.evaluate(t => window.renderFrame(t), i / FPS); await audit(i / FPS);",
+    "new": "await page.evaluate(async t => {await window.renderFrame(t);window.__farmSync?.();}, i / FPS); await audit(i / FPS);"
+  }
+]

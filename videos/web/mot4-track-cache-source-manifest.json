@@ -1,0 +1,50 @@
+{
+  "candidate": "default-off MOT4 exact-track reuse at attachMotion7",
+  "base": {
+    "main_commit": "a6633db4d3c5768ff4346cb34234a69369a417b7",
+    "main_build_js_git_blob_before_patch": "2a2c68d5a5b0055b0d81703b017915d7ca29dfb8",
+    "includes_pr9_person_stage_timings": true,
+    "includes_pr10_fine7_cache_server_and_codec": true
+  },
+  "shared_cache_dependencies": {
+    "cache_server_path": "videos/web/cache_server.mjs",
+    "cache_server_git_blob": "e81ccbc7825cfde4b7573f887112eca3ad70334d",
+    "cache_server_sha256": "8251ac930fd5e4ec1f6d2c102d9a0f45dbdb583cfeb07663c5e9f8c91244b35f",
+    "codec_path": "videos/web/lib/fx/anatomy/fine/fine_codec.mjs",
+    "codec_git_blob": "a74fc86fb6171359125672ec08a26cfa4d0cb119"
+  },
+  "actor_source_review": {
+    "review_snapshot": "main at a6633db4d3c5768ff4346cb34234a69369a417b7",
+    "checked_paths": [
+      {"path":"videos/web/lib/fx/motion/act7.js","git_blob":"d5b5fb8f72908642f78b83d7c174ebfee67672d6"},
+      {"path":"videos/web/lib/fx/motion/act6.js","git_blob":"a697157417b5c8ed881bda09375c1cbe9a01146c"},
+      {"path":"videos/web/lib/fx/motion/bake7.js","git_blob":"efb9ded20b1c6edb63692a7eb8efea0c6beb55ac"},
+      {"path":"videos/web/lib/fx/motion/cloth_motion.js","git_blob":"794b81e7bbc1dc8474fb22726e9de03986d81329"},
+      {"path":"videos/web/lib/fx/motion/life.js","git_blob":"92590e2619c9463baf62d0420f7f558a350f9ef6"},
+      {"path":"videos/web/lib/fx/motion/hero_poser.js","git_blob":"b7e054bd72f8b761a63d420b0c51f72f8187c3ee"},
+      {"path":"videos/web/lib/fx/hero.js","git_blob":"510fbda8b8212879b94fae6af38e2d34dbb49bbc"}
+    ],
+    "source_closure_note": "The listed actor files match the reviewed pinned source snapshot. This is a focused side-effect review, not an exhaustive or production-qualified transitive closure. The caller-supplied closure hash remains mandatory and must cover all transitive code and person inputs."
+  },
+  "candidate_files": {
+    "videos/web/lib/fx/person/build.js": {"sha256":"dadadafeee8255df3fcae6dc48f4a7321c074318bd8c0f94b3b04d8d045a03ec","scope":"only attachMotion7 signature and optional-cache callsite changed; PR9 timing code remains in the file"},
+    "videos/web/lib/fx/motion/mot4_track_cache.mjs": {"sha256":"d118099be197ca0eef40b82fe662dd54dfff94f6fcd8fb69265f14d7ed889fb1"},
+    "videos/web/test/mot4_track_cache.test.mjs": {"sha256":"31e9774929c2fcb13c18e69a5bf65ce4050a471cb974d9e62a86b5085c919a13"},
+    "videos/web/mot4-track-cache.md": {"sha256":"8a5e3035fb995d671250d18db63ad8b3f36547ba35c126375e00038390755e14"}
+  },
+  "validation": {
+    "remote_host": "atari-homelab",
+    "remote_os": "Linux",
+    "node": "v24.13.0",
+    "scratch": "/var/tmp/acp-mot4-cache-r7-20261016",
+    "command": "node --test videos/web/test/mot4_track_cache.test.mjs; node --check videos/web/lib/fx/person/build.integrated.mjs; node --check videos/web/lib/fx/motion/mot4_track_cache.mjs",
+    "result": "6 tests passed; syntax checks passed",
+    "scope": "CPU mocks only; no person build, bake, solve, browser, rendering, or farm mutation"
+  },
+  "activation": {
+    "runtime_policy": "absent by default",
+    "qualified": false,
+    "caller_recipe_generator": false,
+    "speedup_measured": false
+  }
+}

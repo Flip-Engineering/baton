@@ -1,0 +1,219 @@
+{
+  "job": "1018-215126-issue87_s6_stylized_production_p",
+  "kind": "gpu",
+  "script": "videos/blender/person_job.py",
+  "args": [
+    "--who",
+    "L22_f27_black",
+    "--shots",
+    "face:over:work:studio@5,bust:over:work:studio@5",
+    "--samples",
+    "256",
+    "--scale",
+    "1",
+    "--quality",
+    "farm"
+  ],
+  "command": "sh videos/scripts/gpu_job.sh blender videos/blender/person_job.py --id 1018-215126-issue87_s6_stylized_production_p --time 230 --mem 48 -- --who L22_f27_black --shots face:over:work:studio@5,bust:over:work:studio@5 --samples 256 --scale 1 --quality farm",
+  "options": {
+    "gpus": 1,
+    "per_gpu": false,
+    "time": 230.0,
+    "mem": 48.0,
+    "device": "cuda",
+    "blend": null
+  },
+  "started": "2026-10-19T04:52:24Z",
+  "repo": {
+    "commit": null,
+    "dirty": null
+  },
+  "host": {
+    "os": "Linux-6.14.0-37-generic-x86_64-with-glibc2.36",
+    "cpus": 64,
+    "ram_gb": 220.2,
+    "python": "3.11.2"
+  },
+  "status": "ok",
+  "warnings": [],
+  "worker_policy": {
+    "elapsed_time_gates": false,
+    "force_kill": false
+  },
+  "gpus": [
+    {
+      "index": "0",
+      "uuid": "GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60",
+      "name": "Tesla V100-SXM2-32GB",
+      "driver": "580.126.16",
+      "memory_mib": "32768",
+      "compute_cap": "7.0",
+      "bus": "00000000:24:00.0"
+    }
+  ],
+  "egl": {
+    "libs": [
+      "libEGL.so.1",
+      "libEGL_mesa.so.0",
+      "libEGL_nvidia.so.0"
+    ],
+    "vendors": [
+      "10_nvidia.json",
+      "50_mesa.json"
+    ],
+    "nvidia_driver_capabilities": "all"
+  },
+  "blender": {
+    "path": "/opt/blender/blender",
+    "version": "5.2.2 LTS",
+    "hash": "d13f752e3b9c",
+    "pinned_line": "5.2",
+    "matches_pin": true
+  },
+  "run": [
+    "/opt/blender/blender -b --factory-startup -noaudio --python-exit-code 1 --python /work/videos/blender/gpujob/boot.py --python /work/videos/blender/person_job.py -- --who L22_f27_black --shots face:over:work:studio@5,bust:over:work:studio@5 --samples 256 --scale 1 --quality farm"
+  ],
+  "gpu_usage": {
+    "GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60": {
+      "peak_memory_mib": 8113,
+      "mean_util_pct": 3.9,
+      "max_temp_c": 82,
+      "samples": 507
+    }
+  },
+  "peak_rss_gb": 20.43,
+  "exit_codes": [
+    0
+  ],
+  "log_tail": [
+    "fabric7_cycles: fab_k3_scrub.pocket.st5: metallic from cloth_metal.png",
+    "eye7_cycles iris: {\"R\": {\"layered\": true, \"d_mm\": [0.742, 0.521, 0.2817], \"thick_mm\": 0.405, \"coatIOR\": 1.0279, \"pig\": {\"eu\": 0.8769, \"pheo\": 0.2692, \"abl\": 0.732, \"fRay\": 0.9, \"cls\": \"brown\", \"draw\": \"person\"}}}",
+    "/work/videos/blender/eye7_cycles.py:795: DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0",
+    "  if mat is None or not mat.use_nodes or not bm or matv is None or not len(matv):",
+    "/work/videos/blender/eye7_cycles.py:804: DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0",
+    "  if bmat is not None and bmat.use_nodes:",
+    "eye7_cycles iris: {\"L\": {\"layered\": true, \"d_mm\": [0.742, 0.521, 0.2817], \"thick_mm\": 0.405, \"coatIOR\": 1.0279, \"pig\": {\"eu\": 0.8769, \"pheo\": 0.2692, \"abl\": 0.732, \"fRay\": 0.9, \"cls\": \"brown\", \"draw\": \"person\"}}}",
+    "eye7_cycles: {\"stage\": \"studio\", \"pupil_mm\": 2.888, \"eyes\": [{\"side\": 1, \"apex_mm\": 12.618, \"zg_mm\": -0.5, \"set_back_mm\": 0.05, \"rim\": {\"W_mm\": {\"up\": 2, \"low\": 1.8}, \"skin_h_0p5mm_up\": [1.31, 1.0, 1.01, 1.16, 1.65], \"skin_h_0p5mm_low\": [1.2, 1.08, 0.95, 0.99, 1.09], \"W_used_up\": [1.49, 1.42, 1.43, 1.53, 1.76], \"W_used_low\": [1.29, 1.27, 1.33, 1.27, 1.37], \"lid_own_share\": {\"up\": 0.96, \"low\": 0.94}}, \"margin_mm\": {\"up\": 4.07, \"down\": 5.25, \"nasal\": 10.75, \"temporal\": 11.79}, \"canthi_deg\": [4, 196], \"samples\": 234366, \"caruncle\": [-9.58, -2.24, 1.8, 2.23], \"plica_x\": -8.28, \"room\": 1.98, \"rim_proj\": {\"low\": {\"polys_near\": 2917, \"missed\": 0, \"layers\": [\"atlas\", \"fine\"]}, \"up\": {\"polys_near\": 2917, \"missed\": 0, \"layers\": [\"atlas\", \"fine\"]}}, \"strip_skin\": {\"low\": \"skin_a0_fine7: skin_albedo_clean_a0.png (atlas)\", \"up\": \"skin_a0_fine7: skin_albedo_clean_a0.png (atlas)\"}}, {\"side\": -1, \"apex_mm\": 12.618, \"zg_mm\": -0.5, \"set_back_mm\": 0.05, \"rim\": {\"W_mm\": {\"up\": 2, \"low\": 1.8}, \"skin_h_0p5mm_up\": [1.25, 0.99, 0.91, 1.12, 1.48], \"skin_h_0p5mm_low\": [1.2, 1.15, 0.95, 1.0, 1.11], \"W_used_up\": [1.71, 1.4, 1.61, 1.41, 1.77], \"W_used_low\": [1.28, 1.29, 1.35, 1.28, 1.27], \"lid_own_share\": {\"up\": 0.9, \"low\": 0.93}}, \"margin_mm\": {\"up\": 4.31, \"down\": 5.27, \"nasal\": 10.75, \"temporal\": 11.79}, \"canthi_deg\": [6, 194], \"samples\": 235026, \"caruncle\": [-9.67, -2.23, 1.8, 2.23], \"plica_x\": -8.37, \"room\": 2.08, \"rim_proj\": {\"low\": {\"polys_near\": 2930, \"missed\": 0, \"layers\": [\"atlas\", \"fine\"]}, \"up\": {\"polys_near\": 2930, \"missed\": 0, \"layers\": [\"atlas\", \"fine\"]}}, \"strip_skin\": {\"low\": \"skin_a0_fine7: skin_albedo_clean_a0.png (atlas)\", \"up\": \"skin_a0_fine7: skin_albedo_clean_a0.png (atlas)\"}}]}",
+    "hair scalp: 7752 cards -> 134555 strands, 16223265 points, form coily, melanin {'eu': 3.2, 'ph': 0.02}, grey 0.00, follicles: 3005 rooted cards (3195 off the skin, 24644 fibres rising to them), 78744 / 104487 fibres from their own follicle, 1199 intermediate, 30068 more hairs of their follicular units, cut 1 (35191 terminal units, 139 on a card under half the cut, 1552 cards gathered none)",
+    "hairmat7 {\"part\": \"scalp\", \"mode\": \"full\", \"parents\": 134555, \"parent_points\": 16223265, \"density\": {\"R_cm\": 8.53, \"bins\": 900, \"occupied\": 625, \"filled\": 628, \"area_cm2\": 637.5, \"target\": 102640, \"base\": 134555, \"k\": 1.0}, \"children\": {\"law\": \"rigid\", \"k_eff\": 1.0, \"singles\": 0, \"intermediates\": 1199}, \"attrs\": {\"mel_p50\": 0.9502, \"red_p50\": 0.0062, \"rough_p50\": 0.1409, \"w_max\": 0.7843}, \"fibres\": 134555, \"points\": 16223265, \"radius_um_p50\": 37.3, \"s\": 17.5}",
+    "hair7 history {\"occluder_points\": 168022, \"grid\": [77, 87, 78], \"cells\": 58346, \"occluder_cells\": 12702, \"e_pct\": [0.0001, 0.0155, 0.2904, 0.7063], \"e_mean\": 0.0883, \"fol_pct\": [0.796, 0.964, 1.249], \"k_pct\": [0.747, 0.855, 0.967, 1.097, 1.353], \"q_ratio_pct\": [0.747, 0.967, 1.353], \"points\": 16223265, \"fibres\": 134555, \"mel_p50\": [0.9502, 0.946], \"s\": 109.1}",
+    "brow7 fibre {\"mel_p50\": 0.9605, \"red_p50\": 0.0062, \"rough_p50\": 0.1271, \"w_max\": 0.0453}",
+    "brow7 calibre: 588 hairs, root diameter um p10 64 p50 73 p90 83",
+    "hair brows: 147 cards -> 588 strands, 2526 points, form coily, melanin {'eu': 3.06, 'ph': 0.02}, grey 0.00",
+    "lash7 fibre lashes {\"mel_p50\": 0.9905, \"red_p50\": 0.0021, \"rough_p50\": 0.1271, \"w_max\": 0.0593}",
+    "lash7 calibre lashes: 68 cards -> 272 lashes, root diameter um p10 83 p50 98 p90 110",
+    "hair lashes: 68 cards -> 272 strands, 1422 points, form coily, melanin {'eu': 4.800000000000001, 'ph': 0.01}, grey 0.00",
+    "lash7 fibre lashesLow {\"mel_p50\": 0.937, \"red_p50\": 0.0038, \"rough_p50\": 0.1284, \"w_max\": 0.0356}",
+    "lash7 calibre lashesLow: 133 cards -> 133 lashes, root diameter um p10 66 p50 74 p90 83",
+    "hair lashesLow: 133 cards -> 133 strands, 539 points, form coily, melanin {'eu': 2.6400000000000006, 'ph': 0.01}, grey 0.00",
+    "eye7_cycles lashes: {\"lashes\": 405, \"moved\": 20, \"objects\": 2}",
+    "person_guard: {\"materials\": [\"skin_a0_fine7\", \"skin_a1_fine7\"], \"images\": {\"fine7_maps\": {\"size\": [4096, 3529], \"float\": true, \"nonfinite\": 0}, \"fine7_navel\": {\"size\": [512, 512], \"float\": true, \"nonfinite\": 0}}, \"meshes\": {}}",
+    "light5 sss-thick {'ref_mm': 3.6, 'smin': 0.12, 'materials': 4, 'thin_share': 0.0515, 'p1_p5_p50_mm': [0.94, 3.49, 20.0], 's': 9.8}",
+    "light5 quality {'preset': 'farm', 'threshold': 0.004999999888241291, 'min': 64, 'guiding': False, 'filter': 1.2000000476837158}",
+    "person_guard dice: {\"diced\": \"blender\", \"edgePx\": 4.69, \"level\": 3, \"baseFaces\": 59636, \"facesAtLevel\": 3816704}",
+    "eye7_cycles gaze: {\"eyes\": [{\"clamped\": true, \"deg\": 17.5, \"head_deg\": 13.33, \"pitch_deg\": -4.07, \"side\": 1, \"yaw_deg\": -17.04}, {\"clamped\": true, \"deg\": 17.5, \"head_deg\": 11.35, \"pitch_deg\": -4.42, \"side\": -1, \"yaw_deg\": -16.95}], \"gaze\": \"camera\"}",
+    "06:25.798  render           | Saved: '/work/videos/out/gpu/1018-215126-issue87_s6_stylized_production_p/out/_cyc_L22_f27_black_bust_over_work_studior5_meter.exr'",
+    "08:06.608  render           | Saved: '/work/videos/out/gpu/1018-215126-issue87_s6_stylized_production_p/out/cyc_L22_f27_black_bust_over_work_studior5.exr'",
+    "meter {'p75': 0.011088334023952484, 'skinY': 0.05861572569727957, 'stops': 2.402245146602731, 'pixels': 5099, 'ms': 31349, 'tries': 1}",
+    "light5 card residual [0.99713, 1.0001, 1.0075]",
+    "person_guard vanish: {\"tag\": \"cyc_L22_f27_black_bust_over_work_studior5\", \"mode\": \"retry\", \"attempts\": [{\"step\": \"first\", \"skinPx\": null, \"reader\": \"read: ValueError('tiled / deep / multipart EXR (version flags 0x1402)')\", \"render_s\": 100.8, \"check_s\": 0.3, \"gpu\": {\"gpus\": [\"0,15,32768,0\"], \"apps\": 0, \"appsMiB\": [], \"cvd\": \"GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60\", \"host\": {\"error\": \"FileNotFoundError(2, 'No such file or directory')\"}}}], \"outcome\": \"unchecked\"}",
+    "frame cyc_L22_f27_black_bust_over_work_studior5: 100.8 s",
+    "done {\"tag\": \"cyc_L22_f27_black_bust_over_work_studior5\", \"shot\": \"bust\", \"light\": \"over\", \"stage\": \"studio@5\", \"register\": \"dressed\", \"W\": 1080, \"H\": 1350, \"samples\": 256, \"threads\": 0, \"device\": \"GPU\", \"build_s\": 349.9, \"meter\": {\"p75\": 0.011088334023952484, \"skinY\": 0.05861572569727957, \"stops\": 2.402245146602731, \"pixels\": 5099, \"ms\": 31349, \"tries\": 1}, \"display\": \"lib/fx/light/display.js acpDisplay (numpy port), white balance stage studio@5 (grey card)\", \"frames\": [{\"name\": \"cyc_L22_f27_black_bust_over_work_studior5\", \"render_s\": 100.8}], \"hair\": {\"hair_scalp\": {\"strands\": 134555, \"points\": 16223265}, \"hair_brows\": {\"strands\": 588, \"points\": 2526}, \"hair_lashes\": {\"strands\": 272, \"points\": 1422}, \"hair_lashesLow\": {\"strands\": 133, \"points\": 539}}, \"blender\": \"5.2.2 LTS\", \"light5\": {\"sssThick\": {\"ref_mm\": 3.6, \"smin\": 0.12, \"materials\": 4, \"thin_share\": 0.0515, \"p1_p5_p50_mm\": [0.94, 3.49, 20.0], \"s\": 9.8}, \"quality\": {\"preset\": \"farm\", \"threshold\": 0.004999999888241291, \"min\": 64, \"guiding\": false, \"filter\": 1.2000000476837158}}, \"camera7\": null, \"dice\": {\"diced\": \"blender\", \"edgePx\": 4.69, \"level\": 3, \"baseFaces\": 59636, \"facesAtLevel\": 3816704}, \"vanish\": [{\"mode\": \"retry\", \"attempts\": [{\"step\": \"first\", \"skinPx\": null, \"reader\": \"read: ValueError('tiled / deep / multipart EXR (version flags 0x1402)')\", \"render_s\": 100.8, \"check_s\": 0.3, \"gpu\": {\"gpus\": [\"0,15,32768,0\"], \"apps\": 0, \"appsMiB\": [], \"cvd\": \"GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60\", \"host\": {\"error\": \"FileNotFoundError(2, 'No such file or directory')\"}}}], \"outcome\": \"unchecked\"}], \"vanishArm\": {\"on\": true}, \"total_s\": 491.7}",
+    "Blender 5.2.2 LTS (hash d13f752e3b9c built 2026-09-15 01:34:58)",
+    "",
+    "Blender quit",
+    "person_job done",
+    "Blender 5.2.2 LTS (hash d13f752e3b9c built 2026-09-15 01:34:58)",
+    "",
+    "Blender quit"
+  ],
+  "blender_devices": [
+    {
+      "blender": "5.2.2 LTS",
+      "asked": "cuda",
+      "type": "CUDA",
+      "devices": [
+        "Tesla V100-SXM2-32GB"
+      ],
+      "tried": [],
+      "cuda_visible_devices": "GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60",
+      "shard": "0",
+      "threads": 64
+    }
+  ],
+  "seconds": {
+    "setup": 0.2,
+    "run": 2551.2,
+    "total": 2551.5
+  },
+  "exit_code": 0,
+  "ended": "2026-10-19T05:34:56Z",
+  "files": [
+    {
+      "path": "cyc_L22_f27_black_bust_over_work_studior5.exr",
+      "name": "cyc_L22_f27_black_bust_over_work_studior5.exr",
+      "size": 16724443,
+      "sha256": "11dbdc071cc81112c7f90fa7df031d4a18f55b024ad3b17a548d0812e6a0dff2"
+    },
+    {
+      "path": "cyc_L22_f27_black_bust_over_work_studior5.json",
+      "name": "cyc_L22_f27_black_bust_over_work_studior5.json",
+      "size": 1937,
+      "sha256": "deb4dfb13c7b079e08e21565cecb3b2e25c5b4ade7bb1db8544c2c11b6b03ecf"
+    },
+    {
+      "path": "cyc_L22_f27_black_bust_over_work_studior5.png",
+      "name": "cyc_L22_f27_black_bust_over_work_studior5.png",
+      "size": 1268906,
+      "sha256": "f6e14c0511e8052ff4e8103764d8cc22f54b8d4d079f1aeeac795c7f6eae3972"
+    },
+    {
+      "path": "cyc_L22_f27_black_face_over_work_studior5.exr",
+      "name": "cyc_L22_f27_black_face_over_work_studior5.exr",
+      "size": 16737752,
+      "sha256": "54c48275b70c20a543e387be0731fd14fda5f955abd15eebafc21bfb3fd5a027"
+    },
+    {
+      "path": "cyc_L22_f27_black_face_over_work_studior5.json",
+      "name": "cyc_L22_f27_black_face_over_work_studior5.json",
+      "size": 1939,
+      "sha256": "c0056ec5aa05c5cd522fb71a38879d03b3d8f22e176b05ec884bf6b1a266c536"
+    },
+    {
+      "path": "cyc_L22_f27_black_face_over_work_studior5.png",
+      "name": "cyc_L22_f27_black_face_over_work_studior5.png",
+      "size": 1412482,
+      "sha256": "ed512e49a5f51113d5b60cf70572040ad119997e847840daa77ef08b4f4de82b"
+    },
+    {
+      "path": "person_job_log.json",
+      "name": "person_job_log.json",
+      "size": 2549,
+      "sha256": "165c90eaeb6ec9290d0db5efdaf8acf7b8911915219b5873ceb9eb3eb515fa60"
+    }
+  ],
+  "out_bytes": 36150008,
+  "logs": [
+    "log.txt"
+  ],
+  "deliver": "videos/out/gpu/1018-215126-issue87_s6_stylized_production_p/deliver/",
+  "source_verification": {
+    "method": "host checkout and prepared input SHA256",
+    "commit": "4b1ea7abc03f51e9e6380a0bd0f46650484dd33d"
+  },
+  "commit": "4b1ea7abc03f51e9e6380a0bd0f46650484dd33d",
+  "gpu_kind": "blender",
+  "cpu_stage_policy": {
+    "cpu_stage_workers": 1,
+    "status": "qualification_required",
+    "source_sha256": "f3bd8d85640045d6c921e92ebed5a8127e82a0bd1021d52561de9d8ef40f7df8"
+  },
+  "resource_limits": {
+    "memory_gib": 48.0,
+    "cpu_cores": 14.0
+  },
+  "request_manifest_sha256": "df02ecae4916554a71ac89e68443b4b64239a981870d1a9594d8811fab2f85e6",
+  "cpu_stage_adapter_hashes": {},
+  "adapter_sha256": "464e8063b38dae5979cc5d53e1f44e81f32de8aab882da374eee7458ba1679ca",
+  "dependencies_sha256": "88c48710c4b4040b3e5bec39ae361cdbbdf202d8f5e085f9723f3d298f4af09f"
+}

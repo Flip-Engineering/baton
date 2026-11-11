@@ -1,0 +1,2845 @@
+{
+  "footplant_comparison": {
+    "after": {
+      "checks": {
+        "body_self_clearance_mm": true,
+        "cloth_contact_penetration_mm": true,
+        "cloth_layer_penetration_mm": true,
+        "com_support_margin_p05_mm": true,
+        "foot_drift_mm": true,
+        "foot_slide_mm": true,
+        "limb_flex_excess_deg": true,
+        "rig_bone_length_drift_mm": true
+      },
+      "clips": [
+        {
+          "checks": {
+            "body_self_clearance_mm": true,
+            "cloth_contact_penetration_mm": true,
+            "cloth_layer_penetration_mm": true,
+            "com_support_margin_p05_mm": true,
+            "foot_drift_mm": true,
+            "foot_slide_mm": true,
+            "limb_flex_excess_deg": true,
+            "rig_bone_length_drift_mm": true
+          },
+          "checks_passed": true,
+          "detail": {
+            "cloth_layer_penetration_mm": 0.0,
+            "collision_guard": {
+              "audit_only": true,
+              "enabled": true,
+              "guarded_frames": 11,
+              "max_delta_mm": 19.2002,
+              "max_ik_miss_mm": 0.0,
+              "max_shift_mm": 37.7013
+            },
+            "com_support_margin_median_mm": -7.6074,
+            "com_support_margin_p05_mm": -7.7265,
+            "com_worst_frame": 5,
+            "contact_worst": {
+              "a": "shinL",
+              "b": "shinR",
+              "frame": 29,
+              "gap_mm": 3.0723
+            },
+            "feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 3.1744,
+                "foot_slide_mean_mm": 0.8023,
+                "foot_slide_mm": 1.6404,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 5.0,
+                "foot_slide_mean_mm": 1.2528,
+                "foot_slide_mm": 2.9292,
+                "planted_frames": 4
+              }
+            },
+            "floor": {
+              "below_floor_mm": 0.0,
+              "floor_m": 0.0,
+              "max_foot_mm": 59.642302,
+              "min_foot_mm": 0.0
+            },
+            "footplant": {
+              "capped_frames": 9,
+              "corrected_frames": 11,
+              "enabled": true,
+              "max_correction_cap_mm": 40.0,
+              "max_correction_mm": 40.0,
+              "max_ik_miss_mm": 0.0,
+              "stance_achieved_max_mm": 40.0,
+              "stance_achieved_mean_mm": 36.2229,
+              "stance_mm": 45.0
+            },
+            "joint_limit_coverage": {
+              "axes": [
+                "flex"
+              ],
+              "joints": [
+                "knee",
+                "elbow",
+                "hip",
+                "shoulder"
+              ],
+              "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+            },
+            "joint_limit_worst": {
+              "allowed_deg": [
+                -20,
+                120
+              ],
+              "frame": 59,
+              "joint": "hip",
+              "side": "Left",
+              "value_deg": -28.0324
+            },
+            "raw_feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 26.2209,
+                "foot_slide_mean_mm": 5.3588,
+                "foot_slide_mm": 12.6837,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 41.4276,
+                "foot_slide_mean_mm": 10.3635,
+                "foot_slide_mm": 23.3088,
+                "planted_frames": 4
+              }
+            },
+            "support_frames": 3
+          },
+          "duration_s": 2.866655,
+          "fps": 30.00012,
+          "frames": 87,
+          "metrics": {
+            "body_self_clearance_mm": 3.0723,
+            "cloth_contact_penetration_mm": 0.0,
+            "cloth_layer_penetration_mm": 0.0,
+            "com_support_margin_mm": -7.7397,
+            "com_support_margin_p05_mm": -7.7265,
+            "foot_drift_mm": 5.0,
+            "foot_slide_mm": 2.9292,
+            "limb_flex_excess_deg": 8.0324,
+            "rig_bone_length_drift_mm": 0.0
+          },
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a",
+          "take": "02_01"
+        }
+      ],
+      "collision_guard": true,
+      "constants": {
+        "capsule_radii_m": {
+          "farm": 0.032,
+          "foot": 0.03,
+          "hand": 0.025,
+          "shin": 0.042,
+          "thigh": 0.07,
+          "trunk": 0.12,
+          "uarm": 0.04
+        },
+        "contact8_floor_mm": 1.5,
+        "contact_model": "audit-footplant-heuristic",
+        "footplant_cap_mm": 40.0,
+        "guard_iterations": 4,
+        "guard_margin_mm": 1.0,
+        "heel_toe_hysteresis_mm": 12.0,
+        "lift_h_mm": 35.0,
+        "max_guard_shift_mm": 60.0,
+        "plant_confirm_frames": 2,
+        "plant_h_mm": 10.0,
+        "runtime_blend_s": 0.11,
+        "runtime_lift_h_mm": 50.0,
+        "runtime_plant_h_mm": 28.0,
+        "settle9_gap_mm": 2.5,
+        "settle9_layer_gap_mm": 1.5,
+        "slip_release_mm": 25.0,
+        "stance_mm": 45.0,
+        "take_floor_mm": 0.0
+      },
+      "footplant": true,
+      "footplant_cap_m": 0.04,
+      "manifest_sha256": "734fc9421194f28fbc9955b84fe8eb66134099e1ec917f8bcac6fdc5f9854930",
+      "master_seed": "cbddeb6e385538d8aea2148927c0e0e15be5dfc9de01efb1046bd782f0c8bbbce8419bce63ef7d71abcb062cd241dbec6c108c31a92a82728f1b2fdcff76b114",
+      "metrics": {
+        "body_self_clearance_mm": 3.0723,
+        "cloth_contact_penetration_mm": 0.0,
+        "cloth_layer_penetration_mm": 0.0,
+        "com_support_margin_p05_mm": -7.7265,
+        "foot_drift_mm": 5.0,
+        "foot_slide_mm": 2.9292,
+        "limb_flex_excess_deg": 8.0324,
+        "rig_bone_length_drift_mm": 0.0
+      },
+      "notes": [
+        "The take floor is constant after _take_geometry normalisation; floor drift/penetration are not gated. COM is gated only in double support, so a take with no double support (20_06) fails closed on the missing COM value.",
+        "The FootPlant class is an audit contact heuristic, not a byte-for-byte mirror of rig/ground.js: audit uses 10/35 mm plus a 2-frame confirmation and 25 mm slip release; the runtime uses 28/50 mm with a release blend. Both constant sets are reported.",
+        "With footplant=true, stance feet are pinned before slide, COM, limb-flex and clearance measurement. The requested 45 mm stance is capped at 40 mm of actual shift; the report gives the achieved stance. A 150 mm cap gives zero slide but exceeds the photoreal limb-flex bound on 12_01.",
+        "The collision guard shifts only unplanted feet outward; a planted pin is never moved. It is audit-only: max_delta_mm reports the frame-to-frame shift change and no temporal-continuity claim is made. footplant=false reproduces the raw clip.",
+        "limb_flex_excess_deg covers hip/knee/elbow/shoulder flexion only; abduction/twist and spine/neck/head/hand/foot are outside the gate. cloth_layer_penetration_mm is gated against contact8 floor plus settle9 layer gap."
+      ],
+      "passed": true,
+      "pins": [
+        {
+          "path": "videos/web/lib/fx/bvh.js",
+          "sha256": "4e2e36b6720f8942c268ef85d9923e2ad48d29d31a4bd00bc403bfdc117f49d1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/ground.js",
+          "sha256": "d52974f777892e3a9465aab6ec6645dcc024ef2a3a076a7b78c1f85cce3fddb1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/balance.js",
+          "sha256": "55450a6edcacd2a44ac775858860b9320dd0a062b803fd3b0d2e62863d825881"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/limits.js",
+          "sha256": "bc88aa6236edc635cfbf805b108a1925d6a4844a1a3ab5ca17126958c1692b41"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth8/contact8.js",
+          "sha256": "368ad04642b7cb37773241fd41e14985eee3a72c9ca794eeda8e51806e96ea19"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth9/settle9.js",
+          "sha256": "e32b4bdeb8744d58becad08e0668d29d34f32a442b88706b3edca3db7f21446b"
+        },
+        {
+          "path": "videos/sources/mocap/SOURCES.csv",
+          "sha256": "5761b64a7f7f40e1629e929a46b5c429eded2e1db5c6233f20b1a2621ab8a123"
+        },
+        {
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a"
+        }
+      ],
+      "source_commit": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+      "stance_m": 0.045,
+      "style": "photorealistic",
+      "takes": [
+        "02_01"
+      ],
+      "thresholds": {
+        "body_self_clearance_mm": {
+          "direction": "min",
+          "limit": -25.0
+        },
+        "cloth_contact_penetration_mm": {
+          "direction": "max",
+          "limit": 26.5
+        },
+        "cloth_layer_penetration_mm": {
+          "direction": "max",
+          "limit": 29.0
+        },
+        "com_support_margin_p05_mm": {
+          "direction": "min",
+          "limit": -20.0
+        },
+        "foot_drift_mm": {
+          "direction": "max",
+          "limit": 100.0
+        },
+        "foot_slide_mm": {
+          "direction": "max",
+          "limit": 25.0
+        },
+        "limb_flex_excess_deg": {
+          "direction": "max",
+          "limit": 10.0
+        },
+        "rig_bone_length_drift_mm": {
+          "direction": "max",
+          "limit": 0.01
+        }
+      },
+      "version": "motion-collision-preflight-v3"
+    },
+    "before": {
+      "checks": {
+        "body_self_clearance_mm": false,
+        "cloth_contact_penetration_mm": false,
+        "cloth_layer_penetration_mm": false,
+        "com_support_margin_p05_mm": true,
+        "foot_drift_mm": true,
+        "foot_slide_mm": true,
+        "limb_flex_excess_deg": true,
+        "rig_bone_length_drift_mm": true
+      },
+      "clips": [
+        {
+          "checks": {
+            "body_self_clearance_mm": false,
+            "cloth_contact_penetration_mm": false,
+            "cloth_layer_penetration_mm": false,
+            "com_support_margin_p05_mm": true,
+            "foot_drift_mm": true,
+            "foot_slide_mm": true,
+            "limb_flex_excess_deg": true,
+            "rig_bone_length_drift_mm": true
+          },
+          "checks_passed": false,
+          "detail": {
+            "cloth_layer_penetration_mm": 39.7013,
+            "collision_guard": {
+              "audit_only": true,
+              "enabled": false,
+              "guarded_frames": 0,
+              "max_delta_mm": 0.0,
+              "max_ik_miss_mm": 0.0,
+              "max_shift_mm": 0.0
+            },
+            "com_support_margin_median_mm": -0.4561,
+            "com_support_margin_p05_mm": -3.1837,
+            "com_worst_frame": 4,
+            "contact_worst": {
+              "a": "thighL",
+              "b": "thighR",
+              "frame": 10,
+              "gap_mm": -36.7013
+            },
+            "feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 26.2209,
+                "foot_slide_mean_mm": 5.3588,
+                "foot_slide_mm": 12.6837,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 41.4276,
+                "foot_slide_mean_mm": 10.3635,
+                "foot_slide_mm": 23.3088,
+                "planted_frames": 4
+              }
+            },
+            "floor": {
+              "below_floor_mm": 0.0,
+              "floor_m": 0.0,
+              "max_foot_mm": 59.642302,
+              "min_foot_mm": 0.0
+            },
+            "footplant": {
+              "capped_frames": 0,
+              "corrected_frames": 0,
+              "enabled": false,
+              "max_correction_cap_mm": 0.0,
+              "max_correction_mm": 0.0,
+              "max_ik_miss_mm": 0.0,
+              "stance_achieved_max_mm": 0.0,
+              "stance_achieved_mean_mm": 0.0,
+              "stance_mm": 0.0
+            },
+            "joint_limit_coverage": {
+              "axes": [
+                "flex"
+              ],
+              "joints": [
+                "knee",
+                "elbow",
+                "hip",
+                "shoulder"
+              ],
+              "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+            },
+            "joint_limit_worst": {
+              "allowed_deg": [
+                -20,
+                120
+              ],
+              "frame": 37,
+              "joint": "hip",
+              "side": "Right",
+              "value_deg": -24.2057
+            },
+            "raw_feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 26.2209,
+                "foot_slide_mean_mm": 5.3588,
+                "foot_slide_mm": 12.6837,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 41.4276,
+                "foot_slide_mean_mm": 10.3635,
+                "foot_slide_mm": 23.3088,
+                "planted_frames": 4
+              }
+            },
+            "support_frames": 3
+          },
+          "duration_s": 2.866655,
+          "fps": 30.00012,
+          "frames": 87,
+          "metrics": {
+            "body_self_clearance_mm": -36.7013,
+            "cloth_contact_penetration_mm": 38.2013,
+            "cloth_layer_penetration_mm": 39.7013,
+            "com_support_margin_mm": -3.4867,
+            "com_support_margin_p05_mm": -3.1837,
+            "foot_drift_mm": 41.4276,
+            "foot_slide_mm": 23.3088,
+            "limb_flex_excess_deg": 4.2057,
+            "rig_bone_length_drift_mm": 0.0
+          },
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a",
+          "take": "02_01"
+        }
+      ],
+      "collision_guard": false,
+      "constants": {
+        "capsule_radii_m": {
+          "farm": 0.032,
+          "foot": 0.03,
+          "hand": 0.025,
+          "shin": 0.042,
+          "thigh": 0.07,
+          "trunk": 0.12,
+          "uarm": 0.04
+        },
+        "contact8_floor_mm": 1.5,
+        "contact_model": "audit-footplant-heuristic",
+        "footplant_cap_mm": 0.0,
+        "guard_iterations": 4,
+        "guard_margin_mm": 1.0,
+        "heel_toe_hysteresis_mm": 12.0,
+        "lift_h_mm": 35.0,
+        "max_guard_shift_mm": 60.0,
+        "plant_confirm_frames": 2,
+        "plant_h_mm": 10.0,
+        "runtime_blend_s": 0.11,
+        "runtime_lift_h_mm": 50.0,
+        "runtime_plant_h_mm": 28.0,
+        "settle9_gap_mm": 2.5,
+        "settle9_layer_gap_mm": 1.5,
+        "slip_release_mm": 25.0,
+        "stance_mm": 0.0,
+        "take_floor_mm": 0.0
+      },
+      "footplant": false,
+      "footplant_cap_m": 0.0,
+      "manifest_sha256": "2548c13d0a4f8a433a735c81914f3862769bd70cc2a06312db07cb1607612ae6",
+      "master_seed": "cbddeb6e385538d8aea2148927c0e0e15be5dfc9de01efb1046bd782f0c8bbbce8419bce63ef7d71abcb062cd241dbec6c108c31a92a82728f1b2fdcff76b114",
+      "metrics": {
+        "body_self_clearance_mm": -36.7013,
+        "cloth_contact_penetration_mm": 38.2013,
+        "cloth_layer_penetration_mm": 39.7013,
+        "com_support_margin_p05_mm": -3.1837,
+        "foot_drift_mm": 41.4276,
+        "foot_slide_mm": 23.3088,
+        "limb_flex_excess_deg": 4.2057,
+        "rig_bone_length_drift_mm": 0.0
+      },
+      "notes": [
+        "The take floor is constant after _take_geometry normalisation; floor drift/penetration are not gated. COM is gated only in double support, so a take with no double support (20_06) fails closed on the missing COM value.",
+        "The FootPlant class is an audit contact heuristic, not a byte-for-byte mirror of rig/ground.js: audit uses 10/35 mm plus a 2-frame confirmation and 25 mm slip release; the runtime uses 28/50 mm with a release blend. Both constant sets are reported.",
+        "With footplant=true, stance feet are pinned before slide, COM, limb-flex and clearance measurement. The requested 45 mm stance is capped at 40 mm of actual shift; the report gives the achieved stance. A 150 mm cap gives zero slide but exceeds the photoreal limb-flex bound on 12_01.",
+        "The collision guard shifts only unplanted feet outward; a planted pin is never moved. It is audit-only: max_delta_mm reports the frame-to-frame shift change and no temporal-continuity claim is made. footplant=false reproduces the raw clip.",
+        "limb_flex_excess_deg covers hip/knee/elbow/shoulder flexion only; abduction/twist and spine/neck/head/hand/foot are outside the gate. cloth_layer_penetration_mm is gated against contact8 floor plus settle9 layer gap."
+      ],
+      "passed": false,
+      "pins": [
+        {
+          "path": "videos/web/lib/fx/bvh.js",
+          "sha256": "4e2e36b6720f8942c268ef85d9923e2ad48d29d31a4bd00bc403bfdc117f49d1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/ground.js",
+          "sha256": "d52974f777892e3a9465aab6ec6645dcc024ef2a3a076a7b78c1f85cce3fddb1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/balance.js",
+          "sha256": "55450a6edcacd2a44ac775858860b9320dd0a062b803fd3b0d2e62863d825881"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/limits.js",
+          "sha256": "bc88aa6236edc635cfbf805b108a1925d6a4844a1a3ab5ca17126958c1692b41"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth8/contact8.js",
+          "sha256": "368ad04642b7cb37773241fd41e14985eee3a72c9ca794eeda8e51806e96ea19"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth9/settle9.js",
+          "sha256": "e32b4bdeb8744d58becad08e0668d29d34f32a442b88706b3edca3db7f21446b"
+        },
+        {
+          "path": "videos/sources/mocap/SOURCES.csv",
+          "sha256": "5761b64a7f7f40e1629e929a46b5c429eded2e1db5c6233f20b1a2621ab8a123"
+        },
+        {
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a"
+        }
+      ],
+      "source_commit": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+      "stance_m": 0.0,
+      "style": "photorealistic",
+      "takes": [
+        "02_01"
+      ],
+      "thresholds": {
+        "body_self_clearance_mm": {
+          "direction": "min",
+          "limit": -25.0
+        },
+        "cloth_contact_penetration_mm": {
+          "direction": "max",
+          "limit": 26.5
+        },
+        "cloth_layer_penetration_mm": {
+          "direction": "max",
+          "limit": 29.0
+        },
+        "com_support_margin_p05_mm": {
+          "direction": "min",
+          "limit": -20.0
+        },
+        "foot_drift_mm": {
+          "direction": "max",
+          "limit": 100.0
+        },
+        "foot_slide_mm": {
+          "direction": "max",
+          "limit": 25.0
+        },
+        "limb_flex_excess_deg": {
+          "direction": "max",
+          "limit": 10.0
+        },
+        "rig_bone_length_drift_mm": {
+          "direction": "max",
+          "limit": 0.01
+        }
+      },
+      "version": "motion-collision-preflight-v3"
+    },
+    "footplant_only": {
+      "checks": {
+        "body_self_clearance_mm": false,
+        "cloth_contact_penetration_mm": false,
+        "cloth_layer_penetration_mm": false,
+        "com_support_margin_p05_mm": true,
+        "foot_drift_mm": true,
+        "foot_slide_mm": true,
+        "limb_flex_excess_deg": true,
+        "rig_bone_length_drift_mm": true
+      },
+      "clips": [
+        {
+          "checks": {
+            "body_self_clearance_mm": false,
+            "cloth_contact_penetration_mm": false,
+            "cloth_layer_penetration_mm": false,
+            "com_support_margin_p05_mm": true,
+            "foot_drift_mm": true,
+            "foot_slide_mm": true,
+            "limb_flex_excess_deg": true,
+            "rig_bone_length_drift_mm": true
+          },
+          "checks_passed": false,
+          "detail": {
+            "cloth_layer_penetration_mm": 39.7013,
+            "collision_guard": {
+              "audit_only": true,
+              "enabled": false,
+              "guarded_frames": 0,
+              "max_delta_mm": 0.0,
+              "max_ik_miss_mm": 0.0,
+              "max_shift_mm": 0.0
+            },
+            "com_support_margin_median_mm": -7.6074,
+            "com_support_margin_p05_mm": -7.7265,
+            "com_worst_frame": 5,
+            "contact_worst": {
+              "a": "thighL",
+              "b": "thighR",
+              "frame": 10,
+              "gap_mm": -36.7013
+            },
+            "feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 3.1744,
+                "foot_slide_mean_mm": 0.8023,
+                "foot_slide_mm": 1.6404,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 5.0,
+                "foot_slide_mean_mm": 1.2528,
+                "foot_slide_mm": 2.9292,
+                "planted_frames": 4
+              }
+            },
+            "floor": {
+              "below_floor_mm": 0.0,
+              "floor_m": 0.0,
+              "max_foot_mm": 59.642302,
+              "min_foot_mm": 0.0
+            },
+            "footplant": {
+              "capped_frames": 9,
+              "corrected_frames": 11,
+              "enabled": true,
+              "max_correction_cap_mm": 40.0,
+              "max_correction_mm": 40.0,
+              "max_ik_miss_mm": 0.0,
+              "stance_achieved_max_mm": 40.0,
+              "stance_achieved_mean_mm": 36.2229,
+              "stance_mm": 45.0
+            },
+            "joint_limit_coverage": {
+              "axes": [
+                "flex"
+              ],
+              "joints": [
+                "knee",
+                "elbow",
+                "hip",
+                "shoulder"
+              ],
+              "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+            },
+            "joint_limit_worst": {
+              "allowed_deg": [
+                -20,
+                120
+              ],
+              "frame": 37,
+              "joint": "hip",
+              "side": "Right",
+              "value_deg": -24.2057
+            },
+            "raw_feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 26.2209,
+                "foot_slide_mean_mm": 5.3588,
+                "foot_slide_mm": 12.6837,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 41.4276,
+                "foot_slide_mean_mm": 10.3635,
+                "foot_slide_mm": 23.3088,
+                "planted_frames": 4
+              }
+            },
+            "support_frames": 3
+          },
+          "duration_s": 2.866655,
+          "fps": 30.00012,
+          "frames": 87,
+          "metrics": {
+            "body_self_clearance_mm": -36.7013,
+            "cloth_contact_penetration_mm": 38.2013,
+            "cloth_layer_penetration_mm": 39.7013,
+            "com_support_margin_mm": -7.7397,
+            "com_support_margin_p05_mm": -7.7265,
+            "foot_drift_mm": 5.0,
+            "foot_slide_mm": 2.9292,
+            "limb_flex_excess_deg": 4.2057,
+            "rig_bone_length_drift_mm": 0.0
+          },
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a",
+          "take": "02_01"
+        }
+      ],
+      "collision_guard": false,
+      "constants": {
+        "capsule_radii_m": {
+          "farm": 0.032,
+          "foot": 0.03,
+          "hand": 0.025,
+          "shin": 0.042,
+          "thigh": 0.07,
+          "trunk": 0.12,
+          "uarm": 0.04
+        },
+        "contact8_floor_mm": 1.5,
+        "contact_model": "audit-footplant-heuristic",
+        "footplant_cap_mm": 40.0,
+        "guard_iterations": 4,
+        "guard_margin_mm": 1.0,
+        "heel_toe_hysteresis_mm": 12.0,
+        "lift_h_mm": 35.0,
+        "max_guard_shift_mm": 60.0,
+        "plant_confirm_frames": 2,
+        "plant_h_mm": 10.0,
+        "runtime_blend_s": 0.11,
+        "runtime_lift_h_mm": 50.0,
+        "runtime_plant_h_mm": 28.0,
+        "settle9_gap_mm": 2.5,
+        "settle9_layer_gap_mm": 1.5,
+        "slip_release_mm": 25.0,
+        "stance_mm": 45.0,
+        "take_floor_mm": 0.0
+      },
+      "footplant": true,
+      "footplant_cap_m": 0.04,
+      "manifest_sha256": "dc57d9f2777dc87c5d75f8151ff459d3c46783ffca6ea973a20937b841c145b9",
+      "master_seed": "cbddeb6e385538d8aea2148927c0e0e15be5dfc9de01efb1046bd782f0c8bbbce8419bce63ef7d71abcb062cd241dbec6c108c31a92a82728f1b2fdcff76b114",
+      "metrics": {
+        "body_self_clearance_mm": -36.7013,
+        "cloth_contact_penetration_mm": 38.2013,
+        "cloth_layer_penetration_mm": 39.7013,
+        "com_support_margin_p05_mm": -7.7265,
+        "foot_drift_mm": 5.0,
+        "foot_slide_mm": 2.9292,
+        "limb_flex_excess_deg": 4.2057,
+        "rig_bone_length_drift_mm": 0.0
+      },
+      "notes": [
+        "The take floor is constant after _take_geometry normalisation; floor drift/penetration are not gated. COM is gated only in double support, so a take with no double support (20_06) fails closed on the missing COM value.",
+        "The FootPlant class is an audit contact heuristic, not a byte-for-byte mirror of rig/ground.js: audit uses 10/35 mm plus a 2-frame confirmation and 25 mm slip release; the runtime uses 28/50 mm with a release blend. Both constant sets are reported.",
+        "With footplant=true, stance feet are pinned before slide, COM, limb-flex and clearance measurement. The requested 45 mm stance is capped at 40 mm of actual shift; the report gives the achieved stance. A 150 mm cap gives zero slide but exceeds the photoreal limb-flex bound on 12_01.",
+        "The collision guard shifts only unplanted feet outward; a planted pin is never moved. It is audit-only: max_delta_mm reports the frame-to-frame shift change and no temporal-continuity claim is made. footplant=false reproduces the raw clip.",
+        "limb_flex_excess_deg covers hip/knee/elbow/shoulder flexion only; abduction/twist and spine/neck/head/hand/foot are outside the gate. cloth_layer_penetration_mm is gated against contact8 floor plus settle9 layer gap."
+      ],
+      "passed": false,
+      "pins": [
+        {
+          "path": "videos/web/lib/fx/bvh.js",
+          "sha256": "4e2e36b6720f8942c268ef85d9923e2ad48d29d31a4bd00bc403bfdc117f49d1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/ground.js",
+          "sha256": "d52974f777892e3a9465aab6ec6645dcc024ef2a3a076a7b78c1f85cce3fddb1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/balance.js",
+          "sha256": "55450a6edcacd2a44ac775858860b9320dd0a062b803fd3b0d2e62863d825881"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/limits.js",
+          "sha256": "bc88aa6236edc635cfbf805b108a1925d6a4844a1a3ab5ca17126958c1692b41"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth8/contact8.js",
+          "sha256": "368ad04642b7cb37773241fd41e14985eee3a72c9ca794eeda8e51806e96ea19"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth9/settle9.js",
+          "sha256": "e32b4bdeb8744d58becad08e0668d29d34f32a442b88706b3edca3db7f21446b"
+        },
+        {
+          "path": "videos/sources/mocap/SOURCES.csv",
+          "sha256": "5761b64a7f7f40e1629e929a46b5c429eded2e1db5c6233f20b1a2621ab8a123"
+        },
+        {
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a"
+        }
+      ],
+      "source_commit": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+      "stance_m": 0.045,
+      "style": "photorealistic",
+      "takes": [
+        "02_01"
+      ],
+      "thresholds": {
+        "body_self_clearance_mm": {
+          "direction": "min",
+          "limit": -25.0
+        },
+        "cloth_contact_penetration_mm": {
+          "direction": "max",
+          "limit": 26.5
+        },
+        "cloth_layer_penetration_mm": {
+          "direction": "max",
+          "limit": 29.0
+        },
+        "com_support_margin_p05_mm": {
+          "direction": "min",
+          "limit": -20.0
+        },
+        "foot_drift_mm": {
+          "direction": "max",
+          "limit": 100.0
+        },
+        "foot_slide_mm": {
+          "direction": "max",
+          "limit": 25.0
+        },
+        "limb_flex_excess_deg": {
+          "direction": "max",
+          "limit": 10.0
+        },
+        "rig_bone_length_drift_mm": {
+          "direction": "max",
+          "limit": 0.01
+        }
+      },
+      "version": "motion-collision-preflight-v3"
+    },
+    "take": "02_01"
+  },
+  "master_seed": "cbddeb6e385538d8aea2148927c0e0e15be5dfc9de01efb1046bd782f0c8bbbce8419bce63ef7d71abcb062cd241dbec6c108c31a92a82728f1b2fdcff76b114",
+  "reports": {
+    "photorealistic": {
+      "checks": {
+        "body_self_clearance_mm": true,
+        "cloth_contact_penetration_mm": true,
+        "cloth_layer_penetration_mm": true,
+        "com_support_margin_p05_mm": true,
+        "foot_drift_mm": true,
+        "foot_slide_mm": true,
+        "limb_flex_excess_deg": true,
+        "rig_bone_length_drift_mm": true
+      },
+      "clips": [
+        {
+          "checks": {
+            "body_self_clearance_mm": true,
+            "cloth_contact_penetration_mm": true,
+            "cloth_layer_penetration_mm": true,
+            "com_support_margin_p05_mm": true,
+            "foot_drift_mm": true,
+            "foot_slide_mm": true,
+            "limb_flex_excess_deg": true,
+            "rig_bone_length_drift_mm": true
+          },
+          "checks_passed": true,
+          "detail": {
+            "cloth_layer_penetration_mm": 0.0,
+            "collision_guard": {
+              "audit_only": true,
+              "enabled": true,
+              "guarded_frames": 11,
+              "max_delta_mm": 19.2002,
+              "max_ik_miss_mm": 0.0,
+              "max_shift_mm": 37.7013
+            },
+            "com_support_margin_median_mm": -7.6074,
+            "com_support_margin_p05_mm": -7.7265,
+            "com_worst_frame": 5,
+            "contact_worst": {
+              "a": "shinL",
+              "b": "shinR",
+              "frame": 29,
+              "gap_mm": 3.0723
+            },
+            "feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 3.1744,
+                "foot_slide_mean_mm": 0.8023,
+                "foot_slide_mm": 1.6404,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 5.0,
+                "foot_slide_mean_mm": 1.2528,
+                "foot_slide_mm": 2.9292,
+                "planted_frames": 4
+              }
+            },
+            "floor": {
+              "below_floor_mm": 0.0,
+              "floor_m": 0.0,
+              "max_foot_mm": 59.642302,
+              "min_foot_mm": 0.0
+            },
+            "footplant": {
+              "capped_frames": 9,
+              "corrected_frames": 11,
+              "enabled": true,
+              "max_correction_cap_mm": 40.0,
+              "max_correction_mm": 40.0,
+              "max_ik_miss_mm": 0.0,
+              "stance_achieved_max_mm": 40.0,
+              "stance_achieved_mean_mm": 36.2229,
+              "stance_mm": 45.0
+            },
+            "joint_limit_coverage": {
+              "axes": [
+                "flex"
+              ],
+              "joints": [
+                "knee",
+                "elbow",
+                "hip",
+                "shoulder"
+              ],
+              "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+            },
+            "joint_limit_worst": {
+              "allowed_deg": [
+                -20,
+                120
+              ],
+              "frame": 59,
+              "joint": "hip",
+              "side": "Left",
+              "value_deg": -28.0324
+            },
+            "raw_feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 26.2209,
+                "foot_slide_mean_mm": 5.3588,
+                "foot_slide_mm": 12.6837,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 41.4276,
+                "foot_slide_mean_mm": 10.3635,
+                "foot_slide_mm": 23.3088,
+                "planted_frames": 4
+              }
+            },
+            "support_frames": 3
+          },
+          "duration_s": 2.866655,
+          "fps": 30.00012,
+          "frames": 87,
+          "metrics": {
+            "body_self_clearance_mm": 3.0723,
+            "cloth_contact_penetration_mm": 0.0,
+            "cloth_layer_penetration_mm": 0.0,
+            "com_support_margin_mm": -7.7397,
+            "com_support_margin_p05_mm": -7.7265,
+            "foot_drift_mm": 5.0,
+            "foot_slide_mm": 2.9292,
+            "limb_flex_excess_deg": 8.0324,
+            "rig_bone_length_drift_mm": 0.0
+          },
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a",
+          "take": "02_01"
+        },
+        {
+          "checks": {
+            "body_self_clearance_mm": true,
+            "cloth_contact_penetration_mm": true,
+            "cloth_layer_penetration_mm": true,
+            "com_support_margin_p05_mm": true,
+            "foot_drift_mm": true,
+            "foot_slide_mm": true,
+            "limb_flex_excess_deg": true,
+            "rig_bone_length_drift_mm": true
+          },
+          "checks_passed": true,
+          "detail": {
+            "cloth_layer_penetration_mm": 2.3497,
+            "collision_guard": {
+              "audit_only": true,
+              "enabled": true,
+              "guarded_frames": 2,
+              "max_delta_mm": 0.0,
+              "max_ik_miss_mm": 0.0,
+              "max_shift_mm": 4.7388
+            },
+            "com_support_margin_median_mm": 0.8307,
+            "com_support_margin_p05_mm": -14.9354,
+            "com_worst_frame": 51,
+            "contact_worst": {
+              "a": "thighL",
+              "b": "thighR",
+              "frame": 44,
+              "gap_mm": 0.6503
+            },
+            "feet": {
+              "Left": {
+                "contact_float_mm": 34.3724,
+                "foot_drift_mm": 18.3082,
+                "foot_slide_mean_mm": 1.839,
+                "foot_slide_mm": 18.3741,
+                "planted_frames": 36
+              },
+              "Right": {
+                "contact_float_mm": 34.9528,
+                "foot_drift_mm": 18.4703,
+                "foot_slide_mean_mm": 1.7559,
+                "foot_slide_mm": 8.7295,
+                "planted_frames": 35
+              }
+            },
+            "floor": {
+              "below_floor_mm": 0.0,
+              "floor_m": 0.0,
+              "max_foot_mm": 27.826047,
+              "min_foot_mm": 0.0
+            },
+            "footplant": {
+              "capped_frames": 73,
+              "corrected_frames": 77,
+              "enabled": true,
+              "max_correction_cap_mm": 40.0,
+              "max_correction_mm": 40.0,
+              "max_ik_miss_mm": 0.0,
+              "stance_achieved_max_mm": 40.0,
+              "stance_achieved_mean_mm": 38.441,
+              "stance_mm": 45.0
+            },
+            "joint_limit_coverage": {
+              "axes": [
+                "flex"
+              ],
+              "joints": [
+                "knee",
+                "elbow",
+                "hip",
+                "shoulder"
+              ],
+              "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+            },
+            "joint_limit_worst": {
+              "allowed_deg": [
+                -20,
+                120
+              ],
+              "frame": 62,
+              "joint": "hip",
+              "side": "Left",
+              "value_deg": -24.004
+            },
+            "raw_feet": {
+              "Left": {
+                "contact_float_mm": 34.3724,
+                "foot_drift_mm": 41.4228,
+                "foot_slide_mean_mm": 3.6509,
+                "foot_slide_mm": 21.8459,
+                "planted_frames": 36
+              },
+              "Right": {
+                "contact_float_mm": 34.9528,
+                "foot_drift_mm": 39.7444,
+                "foot_slide_mean_mm": 3.5533,
+                "foot_slide_mm": 15.766,
+                "planted_frames": 35
+              }
+            },
+            "support_frames": 15
+          },
+          "duration_s": 2.999988,
+          "fps": 30.00012,
+          "frames": 91,
+          "metrics": {
+            "body_self_clearance_mm": 0.6503,
+            "cloth_contact_penetration_mm": 0.8497,
+            "cloth_layer_penetration_mm": 2.3497,
+            "com_support_margin_mm": -16.6021,
+            "com_support_margin_p05_mm": -14.9354,
+            "foot_drift_mm": 18.4703,
+            "foot_slide_mm": 18.3741,
+            "limb_flex_excess_deg": 4.004,
+            "rig_bone_length_drift_mm": 0.0
+          },
+          "path": "videos/sources/mocap/cmu/35_01.bvh",
+          "sha256": "0fafe38d68daa5b075ce6ec87019c5a1a4ac91c926096ce2383ac8e2f8683418",
+          "take": "35_01"
+        },
+        {
+          "checks": {
+            "body_self_clearance_mm": true,
+            "cloth_contact_penetration_mm": true,
+            "cloth_layer_penetration_mm": true,
+            "com_support_margin_p05_mm": true,
+            "foot_drift_mm": true,
+            "foot_slide_mm": true,
+            "limb_flex_excess_deg": true,
+            "rig_bone_length_drift_mm": true
+          },
+          "checks_passed": true,
+          "detail": {
+            "cloth_layer_penetration_mm": 0.0,
+            "collision_guard": {
+              "audit_only": true,
+              "enabled": true,
+              "guarded_frames": 0,
+              "max_delta_mm": 0.0,
+              "max_ik_miss_mm": 0.0,
+              "max_shift_mm": 0.0
+            },
+            "com_support_margin_median_mm": 5.0727,
+            "com_support_margin_p05_mm": -2.556,
+            "com_worst_frame": 122,
+            "contact_worst": {
+              "a": "shinL",
+              "b": "shinR",
+              "frame": 38,
+              "gap_mm": 35.2932
+            },
+            "feet": {
+              "Left": {
+                "contact_float_mm": 32.2659,
+                "foot_drift_mm": 32.4242,
+                "foot_slide_mean_mm": 1.931,
+                "foot_slide_mm": 10.7518,
+                "planted_frames": 21
+              },
+              "Right": {
+                "contact_float_mm": 30.7809,
+                "foot_drift_mm": 26.8393,
+                "foot_slide_mean_mm": 1.8884,
+                "foot_slide_mm": 16.6869,
+                "planted_frames": 21
+              }
+            },
+            "floor": {
+              "below_floor_mm": 0.0,
+              "floor_m": 0.0,
+              "max_foot_mm": 48.011561,
+              "min_foot_mm": 0.0
+            },
+            "footplant": {
+              "capped_frames": 45,
+              "corrected_frames": 45,
+              "enabled": true,
+              "max_correction_cap_mm": 40.0,
+              "max_correction_mm": 40.0,
+              "max_ik_miss_mm": 4.995,
+              "stance_achieved_max_mm": 40.0,
+              "stance_achieved_mean_mm": 38.175,
+              "stance_mm": 45.0
+            },
+            "joint_limit_coverage": {
+              "axes": [
+                "flex"
+              ],
+              "joints": [
+                "knee",
+                "elbow",
+                "hip",
+                "shoulder"
+              ],
+              "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+            },
+            "joint_limit_worst": {
+              "allowed_deg": [
+                -20,
+                120
+              ],
+              "frame": 106,
+              "joint": "hip",
+              "side": "Right",
+              "value_deg": -28.6265
+            },
+            "raw_feet": {
+              "Left": {
+                "contact_float_mm": 32.2659,
+                "foot_drift_mm": 62.2617,
+                "foot_slide_mean_mm": 3.6713,
+                "foot_slide_mm": 15.1054,
+                "planted_frames": 21
+              },
+              "Right": {
+                "contact_float_mm": 30.7809,
+                "foot_drift_mm": 57.1045,
+                "foot_slide_mean_mm": 3.3824,
+                "foot_slide_mm": 24.077,
+                "planted_frames": 21
+              }
+            },
+            "support_frames": 16
+          },
+          "duration_s": 4.366649,
+          "fps": 30.00012,
+          "frames": 132,
+          "metrics": {
+            "body_self_clearance_mm": 35.2932,
+            "cloth_contact_penetration_mm": 0.0,
+            "cloth_layer_penetration_mm": 0.0,
+            "com_support_margin_mm": -2.5672,
+            "com_support_margin_p05_mm": -2.556,
+            "foot_drift_mm": 32.4242,
+            "foot_slide_mm": 16.6869,
+            "limb_flex_excess_deg": 8.6265,
+            "rig_bone_length_drift_mm": 0.0
+          },
+          "path": "videos/sources/mocap/cmu/12_01.bvh",
+          "sha256": "bfa1405389bc042912e4480e27525c86e0009fe60c33a69b0cb4f9bde397fa86",
+          "take": "12_01"
+        }
+      ],
+      "collision_guard": true,
+      "constants": {
+        "capsule_radii_m": {
+          "farm": 0.032,
+          "foot": 0.03,
+          "hand": 0.025,
+          "shin": 0.042,
+          "thigh": 0.07,
+          "trunk": 0.12,
+          "uarm": 0.04
+        },
+        "contact8_floor_mm": 1.5,
+        "contact_model": "audit-footplant-heuristic",
+        "footplant_cap_mm": 40.0,
+        "guard_iterations": 4,
+        "guard_margin_mm": 1.0,
+        "heel_toe_hysteresis_mm": 12.0,
+        "lift_h_mm": 35.0,
+        "max_guard_shift_mm": 60.0,
+        "plant_confirm_frames": 2,
+        "plant_h_mm": 10.0,
+        "runtime_blend_s": 0.11,
+        "runtime_lift_h_mm": 50.0,
+        "runtime_plant_h_mm": 28.0,
+        "settle9_gap_mm": 2.5,
+        "settle9_layer_gap_mm": 1.5,
+        "slip_release_mm": 25.0,
+        "stance_mm": 45.0,
+        "take_floor_mm": 0.0
+      },
+      "footplant": true,
+      "footplant_cap_m": 0.04,
+      "manifest_sha256": "5f616b1f03bcf8f6f9289a02401d0e35a98099fdfb668d9a2927cda2bc9a34f1",
+      "master_seed": "cbddeb6e385538d8aea2148927c0e0e15be5dfc9de01efb1046bd782f0c8bbbce8419bce63ef7d71abcb062cd241dbec6c108c31a92a82728f1b2fdcff76b114",
+      "metrics": {
+        "body_self_clearance_mm": 0.6503,
+        "cloth_contact_penetration_mm": 0.8497,
+        "cloth_layer_penetration_mm": 2.3497,
+        "com_support_margin_p05_mm": -14.9354,
+        "foot_drift_mm": 32.4242,
+        "foot_slide_mm": 18.3741,
+        "limb_flex_excess_deg": 8.6265,
+        "rig_bone_length_drift_mm": 0.0
+      },
+      "notes": [
+        "The take floor is constant after _take_geometry normalisation; floor drift/penetration are not gated. COM is gated only in double support, so a take with no double support (20_06) fails closed on the missing COM value.",
+        "The FootPlant class is an audit contact heuristic, not a byte-for-byte mirror of rig/ground.js: audit uses 10/35 mm plus a 2-frame confirmation and 25 mm slip release; the runtime uses 28/50 mm with a release blend. Both constant sets are reported.",
+        "With footplant=true, stance feet are pinned before slide, COM, limb-flex and clearance measurement. The requested 45 mm stance is capped at 40 mm of actual shift; the report gives the achieved stance. A 150 mm cap gives zero slide but exceeds the photoreal limb-flex bound on 12_01.",
+        "The collision guard shifts only unplanted feet outward; a planted pin is never moved. It is audit-only: max_delta_mm reports the frame-to-frame shift change and no temporal-continuity claim is made. footplant=false reproduces the raw clip.",
+        "limb_flex_excess_deg covers hip/knee/elbow/shoulder flexion only; abduction/twist and spine/neck/head/hand/foot are outside the gate. cloth_layer_penetration_mm is gated against contact8 floor plus settle9 layer gap."
+      ],
+      "passed": true,
+      "pins": [
+        {
+          "path": "videos/web/lib/fx/bvh.js",
+          "sha256": "4e2e36b6720f8942c268ef85d9923e2ad48d29d31a4bd00bc403bfdc117f49d1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/ground.js",
+          "sha256": "d52974f777892e3a9465aab6ec6645dcc024ef2a3a076a7b78c1f85cce3fddb1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/balance.js",
+          "sha256": "55450a6edcacd2a44ac775858860b9320dd0a062b803fd3b0d2e62863d825881"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/limits.js",
+          "sha256": "bc88aa6236edc635cfbf805b108a1925d6a4844a1a3ab5ca17126958c1692b41"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth8/contact8.js",
+          "sha256": "368ad04642b7cb37773241fd41e14985eee3a72c9ca794eeda8e51806e96ea19"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth9/settle9.js",
+          "sha256": "e32b4bdeb8744d58becad08e0668d29d34f32a442b88706b3edca3db7f21446b"
+        },
+        {
+          "path": "videos/sources/mocap/SOURCES.csv",
+          "sha256": "5761b64a7f7f40e1629e929a46b5c429eded2e1db5c6233f20b1a2621ab8a123"
+        },
+        {
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a"
+        },
+        {
+          "path": "videos/sources/mocap/cmu/35_01.bvh",
+          "sha256": "0fafe38d68daa5b075ce6ec87019c5a1a4ac91c926096ce2383ac8e2f8683418"
+        },
+        {
+          "path": "videos/sources/mocap/cmu/12_01.bvh",
+          "sha256": "bfa1405389bc042912e4480e27525c86e0009fe60c33a69b0cb4f9bde397fa86"
+        }
+      ],
+      "source_commit": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+      "stance_m": 0.045,
+      "style": "photorealistic",
+      "takes": [
+        "02_01",
+        "35_01",
+        "12_01"
+      ],
+      "thresholds": {
+        "body_self_clearance_mm": {
+          "direction": "min",
+          "limit": -25.0
+        },
+        "cloth_contact_penetration_mm": {
+          "direction": "max",
+          "limit": 26.5
+        },
+        "cloth_layer_penetration_mm": {
+          "direction": "max",
+          "limit": 29.0
+        },
+        "com_support_margin_p05_mm": {
+          "direction": "min",
+          "limit": -20.0
+        },
+        "foot_drift_mm": {
+          "direction": "max",
+          "limit": 100.0
+        },
+        "foot_slide_mm": {
+          "direction": "max",
+          "limit": 25.0
+        },
+        "limb_flex_excess_deg": {
+          "direction": "max",
+          "limit": 10.0
+        },
+        "rig_bone_length_drift_mm": {
+          "direction": "max",
+          "limit": 0.01
+        }
+      },
+      "version": "motion-collision-preflight-v3"
+    },
+    "stylized": {
+      "checks": {
+        "body_self_clearance_mm": true,
+        "cloth_contact_penetration_mm": true,
+        "cloth_layer_penetration_mm": true,
+        "com_support_margin_p05_mm": true,
+        "foot_drift_mm": true,
+        "foot_slide_mm": true,
+        "limb_flex_excess_deg": true,
+        "rig_bone_length_drift_mm": true
+      },
+      "clips": [
+        {
+          "checks": {
+            "body_self_clearance_mm": true,
+            "cloth_contact_penetration_mm": true,
+            "cloth_layer_penetration_mm": true,
+            "com_support_margin_p05_mm": true,
+            "foot_drift_mm": true,
+            "foot_slide_mm": true,
+            "limb_flex_excess_deg": true,
+            "rig_bone_length_drift_mm": true
+          },
+          "checks_passed": true,
+          "detail": {
+            "cloth_layer_penetration_mm": 0.0,
+            "collision_guard": {
+              "audit_only": true,
+              "enabled": true,
+              "guarded_frames": 11,
+              "max_delta_mm": 19.2002,
+              "max_ik_miss_mm": 0.0,
+              "max_shift_mm": 37.7013
+            },
+            "com_support_margin_median_mm": -7.6074,
+            "com_support_margin_p05_mm": -7.7265,
+            "com_worst_frame": 5,
+            "contact_worst": {
+              "a": "shinL",
+              "b": "shinR",
+              "frame": 29,
+              "gap_mm": 3.0723
+            },
+            "feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 3.1744,
+                "foot_slide_mean_mm": 0.8023,
+                "foot_slide_mm": 1.6404,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 5.0,
+                "foot_slide_mean_mm": 1.2528,
+                "foot_slide_mm": 2.9292,
+                "planted_frames": 4
+              }
+            },
+            "floor": {
+              "below_floor_mm": 0.0,
+              "floor_m": 0.0,
+              "max_foot_mm": 59.642302,
+              "min_foot_mm": 0.0
+            },
+            "footplant": {
+              "capped_frames": 9,
+              "corrected_frames": 11,
+              "enabled": true,
+              "max_correction_cap_mm": 40.0,
+              "max_correction_mm": 40.0,
+              "max_ik_miss_mm": 0.0,
+              "stance_achieved_max_mm": 40.0,
+              "stance_achieved_mean_mm": 36.2229,
+              "stance_mm": 45.0
+            },
+            "joint_limit_coverage": {
+              "axes": [
+                "flex"
+              ],
+              "joints": [
+                "knee",
+                "elbow",
+                "hip",
+                "shoulder"
+              ],
+              "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+            },
+            "joint_limit_worst": {
+              "allowed_deg": [
+                -20,
+                120
+              ],
+              "frame": 59,
+              "joint": "hip",
+              "side": "Left",
+              "value_deg": -28.0324
+            },
+            "raw_feet": {
+              "Left": {
+                "contact_float_mm": 32.5528,
+                "foot_drift_mm": 26.2209,
+                "foot_slide_mean_mm": 5.3588,
+                "foot_slide_mm": 12.6837,
+                "planted_frames": 5
+              },
+              "Right": {
+                "contact_float_mm": 24.2413,
+                "foot_drift_mm": 41.4276,
+                "foot_slide_mean_mm": 10.3635,
+                "foot_slide_mm": 23.3088,
+                "planted_frames": 4
+              }
+            },
+            "support_frames": 3
+          },
+          "duration_s": 2.866655,
+          "fps": 30.00012,
+          "frames": 87,
+          "metrics": {
+            "body_self_clearance_mm": 3.0723,
+            "cloth_contact_penetration_mm": 0.0,
+            "cloth_layer_penetration_mm": 0.0,
+            "com_support_margin_mm": -7.7397,
+            "com_support_margin_p05_mm": -7.7265,
+            "foot_drift_mm": 5.0,
+            "foot_slide_mm": 2.9292,
+            "limb_flex_excess_deg": 8.0324,
+            "rig_bone_length_drift_mm": 0.0
+          },
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a",
+          "take": "02_01"
+        },
+        {
+          "checks": {
+            "body_self_clearance_mm": true,
+            "cloth_contact_penetration_mm": true,
+            "cloth_layer_penetration_mm": true,
+            "com_support_margin_p05_mm": true,
+            "foot_drift_mm": true,
+            "foot_slide_mm": true,
+            "limb_flex_excess_deg": true,
+            "rig_bone_length_drift_mm": true
+          },
+          "checks_passed": true,
+          "detail": {
+            "cloth_layer_penetration_mm": 2.3497,
+            "collision_guard": {
+              "audit_only": true,
+              "enabled": true,
+              "guarded_frames": 2,
+              "max_delta_mm": 0.0,
+              "max_ik_miss_mm": 0.0,
+              "max_shift_mm": 4.7388
+            },
+            "com_support_margin_median_mm": 0.8307,
+            "com_support_margin_p05_mm": -14.9354,
+            "com_worst_frame": 51,
+            "contact_worst": {
+              "a": "thighL",
+              "b": "thighR",
+              "frame": 44,
+              "gap_mm": 0.6503
+            },
+            "feet": {
+              "Left": {
+                "contact_float_mm": 34.3724,
+                "foot_drift_mm": 18.3082,
+                "foot_slide_mean_mm": 1.839,
+                "foot_slide_mm": 18.3741,
+                "planted_frames": 36
+              },
+              "Right": {
+                "contact_float_mm": 34.9528,
+                "foot_drift_mm": 18.4703,
+                "foot_slide_mean_mm": 1.7559,
+                "foot_slide_mm": 8.7295,
+                "planted_frames": 35
+              }
+            },
+            "floor": {
+              "below_floor_mm": 0.0,
+              "floor_m": 0.0,
+              "max_foot_mm": 27.826047,
+              "min_foot_mm": 0.0
+            },
+            "footplant": {
+              "capped_frames": 73,
+              "corrected_frames": 77,
+              "enabled": true,
+              "max_correction_cap_mm": 40.0,
+              "max_correction_mm": 40.0,
+              "max_ik_miss_mm": 0.0,
+              "stance_achieved_max_mm": 40.0,
+              "stance_achieved_mean_mm": 38.441,
+              "stance_mm": 45.0
+            },
+            "joint_limit_coverage": {
+              "axes": [
+                "flex"
+              ],
+              "joints": [
+                "knee",
+                "elbow",
+                "hip",
+                "shoulder"
+              ],
+              "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+            },
+            "joint_limit_worst": {
+              "allowed_deg": [
+                -20,
+                120
+              ],
+              "frame": 62,
+              "joint": "hip",
+              "side": "Left",
+              "value_deg": -24.004
+            },
+            "raw_feet": {
+              "Left": {
+                "contact_float_mm": 34.3724,
+                "foot_drift_mm": 41.4228,
+                "foot_slide_mean_mm": 3.6509,
+                "foot_slide_mm": 21.8459,
+                "planted_frames": 36
+              },
+              "Right": {
+                "contact_float_mm": 34.9528,
+                "foot_drift_mm": 39.7444,
+                "foot_slide_mean_mm": 3.5533,
+                "foot_slide_mm": 15.766,
+                "planted_frames": 35
+              }
+            },
+            "support_frames": 15
+          },
+          "duration_s": 2.999988,
+          "fps": 30.00012,
+          "frames": 91,
+          "metrics": {
+            "body_self_clearance_mm": 0.6503,
+            "cloth_contact_penetration_mm": 0.8497,
+            "cloth_layer_penetration_mm": 2.3497,
+            "com_support_margin_mm": -16.6021,
+            "com_support_margin_p05_mm": -14.9354,
+            "foot_drift_mm": 18.4703,
+            "foot_slide_mm": 18.3741,
+            "limb_flex_excess_deg": 4.004,
+            "rig_bone_length_drift_mm": 0.0
+          },
+          "path": "videos/sources/mocap/cmu/35_01.bvh",
+          "sha256": "0fafe38d68daa5b075ce6ec87019c5a1a4ac91c926096ce2383ac8e2f8683418",
+          "take": "35_01"
+        },
+        {
+          "checks": {
+            "body_self_clearance_mm": true,
+            "cloth_contact_penetration_mm": true,
+            "cloth_layer_penetration_mm": true,
+            "com_support_margin_p05_mm": true,
+            "foot_drift_mm": true,
+            "foot_slide_mm": true,
+            "limb_flex_excess_deg": true,
+            "rig_bone_length_drift_mm": true
+          },
+          "checks_passed": true,
+          "detail": {
+            "cloth_layer_penetration_mm": 0.0,
+            "collision_guard": {
+              "audit_only": true,
+              "enabled": true,
+              "guarded_frames": 0,
+              "max_delta_mm": 0.0,
+              "max_ik_miss_mm": 0.0,
+              "max_shift_mm": 0.0
+            },
+            "com_support_margin_median_mm": 5.0727,
+            "com_support_margin_p05_mm": -2.556,
+            "com_worst_frame": 122,
+            "contact_worst": {
+              "a": "shinL",
+              "b": "shinR",
+              "frame": 38,
+              "gap_mm": 35.2932
+            },
+            "feet": {
+              "Left": {
+                "contact_float_mm": 32.2659,
+                "foot_drift_mm": 32.4242,
+                "foot_slide_mean_mm": 1.931,
+                "foot_slide_mm": 10.7518,
+                "planted_frames": 21
+              },
+              "Right": {
+                "contact_float_mm": 30.7809,
+                "foot_drift_mm": 26.8393,
+                "foot_slide_mean_mm": 1.8884,
+                "foot_slide_mm": 16.6869,
+                "planted_frames": 21
+              }
+            },
+            "floor": {
+              "below_floor_mm": 0.0,
+              "floor_m": 0.0,
+              "max_foot_mm": 48.011561,
+              "min_foot_mm": 0.0
+            },
+            "footplant": {
+              "capped_frames": 45,
+              "corrected_frames": 45,
+              "enabled": true,
+              "max_correction_cap_mm": 40.0,
+              "max_correction_mm": 40.0,
+              "max_ik_miss_mm": 4.995,
+              "stance_achieved_max_mm": 40.0,
+              "stance_achieved_mean_mm": 38.175,
+              "stance_mm": 45.0
+            },
+            "joint_limit_coverage": {
+              "axes": [
+                "flex"
+              ],
+              "joints": [
+                "knee",
+                "elbow",
+                "hip",
+                "shoulder"
+              ],
+              "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+            },
+            "joint_limit_worst": {
+              "allowed_deg": [
+                -20,
+                120
+              ],
+              "frame": 106,
+              "joint": "hip",
+              "side": "Right",
+              "value_deg": -28.6265
+            },
+            "raw_feet": {
+              "Left": {
+                "contact_float_mm": 32.2659,
+                "foot_drift_mm": 62.2617,
+                "foot_slide_mean_mm": 3.6713,
+                "foot_slide_mm": 15.1054,
+                "planted_frames": 21
+              },
+              "Right": {
+                "contact_float_mm": 30.7809,
+                "foot_drift_mm": 57.1045,
+                "foot_slide_mean_mm": 3.3824,
+                "foot_slide_mm": 24.077,
+                "planted_frames": 21
+              }
+            },
+            "support_frames": 16
+          },
+          "duration_s": 4.366649,
+          "fps": 30.00012,
+          "frames": 132,
+          "metrics": {
+            "body_self_clearance_mm": 35.2932,
+            "cloth_contact_penetration_mm": 0.0,
+            "cloth_layer_penetration_mm": 0.0,
+            "com_support_margin_mm": -2.5672,
+            "com_support_margin_p05_mm": -2.556,
+            "foot_drift_mm": 32.4242,
+            "foot_slide_mm": 16.6869,
+            "limb_flex_excess_deg": 8.6265,
+            "rig_bone_length_drift_mm": 0.0
+          },
+          "path": "videos/sources/mocap/cmu/12_01.bvh",
+          "sha256": "bfa1405389bc042912e4480e27525c86e0009fe60c33a69b0cb4f9bde397fa86",
+          "take": "12_01"
+        }
+      ],
+      "collision_guard": true,
+      "constants": {
+        "capsule_radii_m": {
+          "farm": 0.032,
+          "foot": 0.03,
+          "hand": 0.025,
+          "shin": 0.042,
+          "thigh": 0.07,
+          "trunk": 0.12,
+          "uarm": 0.04
+        },
+        "contact8_floor_mm": 1.5,
+        "contact_model": "audit-footplant-heuristic",
+        "footplant_cap_mm": 40.0,
+        "guard_iterations": 4,
+        "guard_margin_mm": 1.0,
+        "heel_toe_hysteresis_mm": 12.0,
+        "lift_h_mm": 35.0,
+        "max_guard_shift_mm": 60.0,
+        "plant_confirm_frames": 2,
+        "plant_h_mm": 10.0,
+        "runtime_blend_s": 0.11,
+        "runtime_lift_h_mm": 50.0,
+        "runtime_plant_h_mm": 28.0,
+        "settle9_gap_mm": 2.5,
+        "settle9_layer_gap_mm": 1.5,
+        "slip_release_mm": 25.0,
+        "stance_mm": 45.0,
+        "take_floor_mm": 0.0
+      },
+      "footplant": true,
+      "footplant_cap_m": 0.04,
+      "manifest_sha256": "339cb0af57d14f2ec174e4a517c1afcb4e1a811e50275c2adb58644ce2c4debc",
+      "master_seed": "cbddeb6e385538d8aea2148927c0e0e15be5dfc9de01efb1046bd782f0c8bbbce8419bce63ef7d71abcb062cd241dbec6c108c31a92a82728f1b2fdcff76b114",
+      "metrics": {
+        "body_self_clearance_mm": 0.6503,
+        "cloth_contact_penetration_mm": 0.8497,
+        "cloth_layer_penetration_mm": 2.3497,
+        "com_support_margin_p05_mm": -14.9354,
+        "foot_drift_mm": 32.4242,
+        "foot_slide_mm": 18.3741,
+        "limb_flex_excess_deg": 8.6265,
+        "rig_bone_length_drift_mm": 0.0
+      },
+      "notes": [
+        "The take floor is constant after _take_geometry normalisation; floor drift/penetration are not gated. COM is gated only in double support, so a take with no double support (20_06) fails closed on the missing COM value.",
+        "The FootPlant class is an audit contact heuristic, not a byte-for-byte mirror of rig/ground.js: audit uses 10/35 mm plus a 2-frame confirmation and 25 mm slip release; the runtime uses 28/50 mm with a release blend. Both constant sets are reported.",
+        "With footplant=true, stance feet are pinned before slide, COM, limb-flex and clearance measurement. The requested 45 mm stance is capped at 40 mm of actual shift; the report gives the achieved stance. A 150 mm cap gives zero slide but exceeds the photoreal limb-flex bound on 12_01.",
+        "The collision guard shifts only unplanted feet outward; a planted pin is never moved. It is audit-only: max_delta_mm reports the frame-to-frame shift change and no temporal-continuity claim is made. footplant=false reproduces the raw clip.",
+        "limb_flex_excess_deg covers hip/knee/elbow/shoulder flexion only; abduction/twist and spine/neck/head/hand/foot are outside the gate. cloth_layer_penetration_mm is gated against contact8 floor plus settle9 layer gap."
+      ],
+      "passed": true,
+      "pins": [
+        {
+          "path": "videos/web/lib/fx/bvh.js",
+          "sha256": "4e2e36b6720f8942c268ef85d9923e2ad48d29d31a4bd00bc403bfdc117f49d1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/ground.js",
+          "sha256": "d52974f777892e3a9465aab6ec6645dcc024ef2a3a076a7b78c1f85cce3fddb1"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/balance.js",
+          "sha256": "55450a6edcacd2a44ac775858860b9320dd0a062b803fd3b0d2e62863d825881"
+        },
+        {
+          "path": "videos/web/lib/fx/rig/limits.js",
+          "sha256": "bc88aa6236edc635cfbf805b108a1925d6a4844a1a3ab5ca17126958c1692b41"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth8/contact8.js",
+          "sha256": "368ad04642b7cb37773241fd41e14985eee3a72c9ca794eeda8e51806e96ea19"
+        },
+        {
+          "path": "videos/web/lib/fx/cloth/cloth9/settle9.js",
+          "sha256": "e32b4bdeb8744d58becad08e0668d29d34f32a442b88706b3edca3db7f21446b"
+        },
+        {
+          "path": "videos/sources/mocap/SOURCES.csv",
+          "sha256": "5761b64a7f7f40e1629e929a46b5c429eded2e1db5c6233f20b1a2621ab8a123"
+        },
+        {
+          "path": "videos/sources/mocap/cmu/02_01.bvh",
+          "sha256": "9eee154edba732e449dfb63d0fc8c8c253803f782f729d771a0d452817063b8a"
+        },
+        {
+          "path": "videos/sources/mocap/cmu/35_01.bvh",
+          "sha256": "0fafe38d68daa5b075ce6ec87019c5a1a4ac91c926096ce2383ac8e2f8683418"
+        },
+        {
+          "path": "videos/sources/mocap/cmu/12_01.bvh",
+          "sha256": "bfa1405389bc042912e4480e27525c86e0009fe60c33a69b0cb4f9bde397fa86"
+        }
+      ],
+      "source_commit": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+      "stance_m": 0.045,
+      "style": "stylized",
+      "takes": [
+        "02_01",
+        "35_01",
+        "12_01"
+      ],
+      "thresholds": {
+        "body_self_clearance_mm": {
+          "direction": "min",
+          "limit": -50.0
+        },
+        "cloth_contact_penetration_mm": {
+          "direction": "max",
+          "limit": 51.5
+        },
+        "cloth_layer_penetration_mm": {
+          "direction": "max",
+          "limit": 54.0
+        },
+        "com_support_margin_p05_mm": {
+          "direction": "min",
+          "limit": -150.0
+        },
+        "foot_drift_mm": {
+          "direction": "max",
+          "limit": 200.0
+        },
+        "foot_slide_mm": {
+          "direction": "max",
+          "limit": 50.0
+        },
+        "limb_flex_excess_deg": {
+          "direction": "max",
+          "limit": 30.0
+        },
+        "rig_bone_length_drift_mm": {
+          "direction": "max",
+          "limit": 0.05
+        }
+      },
+      "version": "motion-collision-preflight-v3"
+    }
+  },
+  "seed_sample": {
+    "reports": {
+      "photorealistic": {
+        "checks": {
+          "body_self_clearance_mm": false,
+          "cloth_contact_penetration_mm": false,
+          "cloth_layer_penetration_mm": false,
+          "com_support_margin_p05_mm": false,
+          "foot_drift_mm": true,
+          "foot_slide_mm": true,
+          "limb_flex_excess_deg": false,
+          "rig_bone_length_drift_mm": true
+        },
+        "clips": [
+          {
+            "checks": {
+              "body_self_clearance_mm": true,
+              "cloth_contact_penetration_mm": true,
+              "cloth_layer_penetration_mm": true,
+              "com_support_margin_p05_mm": false,
+              "foot_drift_mm": true,
+              "foot_slide_mm": true,
+              "limb_flex_excess_deg": false,
+              "rig_bone_length_drift_mm": true
+            },
+            "checks_passed": false,
+            "detail": {
+              "cloth_layer_penetration_mm": 0.0,
+              "collision_guard": {
+                "audit_only": true,
+                "enabled": true,
+                "guarded_frames": 0,
+                "max_delta_mm": 0.0,
+                "max_ik_miss_mm": 0.0,
+                "max_shift_mm": 0.0
+              },
+              "com_support_margin_median_mm": -10.2663,
+              "com_support_margin_p05_mm": -30.7349,
+              "com_worst_frame": 29,
+              "contact_worst": {
+                "a": "shinL",
+                "b": "shinR",
+                "frame": 18,
+                "gap_mm": 22.5677
+              },
+              "feet": {
+                "Left": {
+                  "contact_float_mm": 0.0,
+                  "foot_drift_mm": 0.0,
+                  "foot_slide_mean_mm": 0.0,
+                  "foot_slide_mm": 0.0,
+                  "planted_frames": 0
+                },
+                "Right": {
+                  "contact_float_mm": 34.8312,
+                  "foot_drift_mm": 30.5004,
+                  "foot_slide_mean_mm": 2.2715,
+                  "foot_slide_mm": 6.6017,
+                  "planted_frames": 40
+                }
+              },
+              "floor": {
+                "below_floor_mm": 0.0,
+                "floor_m": 0.0,
+                "max_foot_mm": 22.410423,
+                "min_foot_mm": 0.0
+              },
+              "footplant": {
+                "capped_frames": 42,
+                "corrected_frames": 43,
+                "enabled": true,
+                "max_correction_cap_mm": 40.0,
+                "max_correction_mm": 40.0,
+                "max_ik_miss_mm": 15.7974,
+                "stance_achieved_max_mm": 40.0,
+                "stance_achieved_mean_mm": 35.1382,
+                "stance_mm": 45.0
+              },
+              "joint_limit_coverage": {
+                "axes": [
+                  "flex"
+                ],
+                "joints": [
+                  "knee",
+                  "elbow",
+                  "hip",
+                  "shoulder"
+                ],
+                "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+              },
+              "joint_limit_worst": {
+                "allowed_deg": [
+                  -20,
+                  120
+                ],
+                "frame": 78,
+                "joint": "hip",
+                "side": "Right",
+                "value_deg": -31.296
+              },
+              "raw_feet": {
+                "Left": {
+                  "contact_float_mm": 0.0,
+                  "foot_drift_mm": 0.0,
+                  "foot_slide_mean_mm": 0.0,
+                  "foot_slide_mm": 0.0,
+                  "planted_frames": 0
+                },
+                "Right": {
+                  "contact_float_mm": 32.7228,
+                  "foot_drift_mm": 63.5723,
+                  "foot_slide_mean_mm": 4.4749,
+                  "foot_slide_mm": 12.0241,
+                  "planted_frames": 40
+                }
+              },
+              "support_frames": 9
+            },
+            "duration_s": 2.933322,
+            "fps": 30.00012,
+            "frames": 89,
+            "metrics": {
+              "body_self_clearance_mm": 22.5677,
+              "cloth_contact_penetration_mm": 0.0,
+              "cloth_layer_penetration_mm": 0.0,
+              "com_support_margin_mm": -34.9513,
+              "com_support_margin_p05_mm": -30.7349,
+              "foot_drift_mm": 30.5004,
+              "foot_slide_mm": 6.6017,
+              "limb_flex_excess_deg": 11.296,
+              "rig_bone_length_drift_mm": 0.0
+            },
+            "path": "videos/sources/mocap/cmu/38_01.bvh",
+            "sha256": "ce97ad1e9b4517f188809ac09df3688cb4b0a3039c67126f9945164476a79a05",
+            "take": "38_01"
+          },
+          {
+            "checks": {
+              "body_self_clearance_mm": false,
+              "cloth_contact_penetration_mm": false,
+              "cloth_layer_penetration_mm": false,
+              "com_support_margin_p05_mm": true,
+              "foot_drift_mm": true,
+              "foot_slide_mm": true,
+              "limb_flex_excess_deg": true,
+              "rig_bone_length_drift_mm": true
+            },
+            "checks_passed": false,
+            "detail": {
+              "cloth_layer_penetration_mm": 30.1803,
+              "collision_guard": {
+                "audit_only": true,
+                "enabled": true,
+                "guarded_frames": 15,
+                "max_delta_mm": 12.4466,
+                "max_ik_miss_mm": 0.0,
+                "max_shift_mm": 27.629
+              },
+              "com_support_margin_median_mm": 2.447,
+              "com_support_margin_p05_mm": 0.9849,
+              "com_worst_frame": 85,
+              "contact_worst": {
+                "a": "shinL",
+                "b": "shinR",
+                "frame": 100,
+                "gap_mm": -27.1803
+              },
+              "feet": {
+                "Left": {
+                  "contact_float_mm": 31.8671,
+                  "foot_drift_mm": 7.2131,
+                  "foot_slide_mean_mm": 1.5339,
+                  "foot_slide_mm": 3.4687,
+                  "planted_frames": 6
+                },
+                "Right": {
+                  "contact_float_mm": 0.0,
+                  "foot_drift_mm": 0.0,
+                  "foot_slide_mean_mm": 0.0,
+                  "foot_slide_mm": 0.0,
+                  "planted_frames": 0
+                }
+              },
+              "floor": {
+                "below_floor_mm": 0.0,
+                "floor_m": 0.0,
+                "max_foot_mm": 47.476371,
+                "min_foot_mm": 0.0
+              },
+              "footplant": {
+                "capped_frames": 7,
+                "corrected_frames": 7,
+                "enabled": true,
+                "max_correction_cap_mm": 40.0,
+                "max_correction_mm": 40.0,
+                "max_ik_miss_mm": 0.0,
+                "stance_achieved_max_mm": 40.0,
+                "stance_achieved_mean_mm": 39.8272,
+                "stance_mm": 45.0
+              },
+              "joint_limit_coverage": {
+                "axes": [
+                  "flex"
+                ],
+                "joints": [
+                  "knee",
+                  "elbow",
+                  "hip",
+                  "shoulder"
+                ],
+                "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+              },
+              "joint_limit_worst": null,
+              "raw_feet": {
+                "Left": {
+                  "contact_float_mm": 31.8671,
+                  "foot_drift_mm": 11.1743,
+                  "foot_slide_mean_mm": 2.4249,
+                  "foot_slide_mm": 3.7934,
+                  "planted_frames": 6
+                },
+                "Right": {
+                  "contact_float_mm": 0.0,
+                  "foot_drift_mm": 0.0,
+                  "foot_slide_mean_mm": 0.0,
+                  "foot_slide_mm": 0.0,
+                  "planted_frames": 0
+                }
+              },
+              "support_frames": 6
+            },
+            "duration_s": 6.966639,
+            "fps": 30.00012,
+            "frames": 210,
+            "metrics": {
+              "body_self_clearance_mm": -27.1803,
+              "cloth_contact_penetration_mm": 28.6803,
+              "cloth_layer_penetration_mm": 30.1803,
+              "com_support_margin_mm": 0.9775,
+              "com_support_margin_p05_mm": 0.9849,
+              "foot_drift_mm": 7.2131,
+              "foot_slide_mm": 3.4687,
+              "limb_flex_excess_deg": 0.0,
+              "rig_bone_length_drift_mm": 0.0
+            },
+            "path": "videos/sources/mocap/cmu/26_01.bvh",
+            "sha256": "2794e34513688853f8a0c1c0cc41aac0b5f7a99bb632cb3f91ad144872860474",
+            "take": "26_01"
+          },
+          {
+            "checks": {
+              "body_self_clearance_mm": true,
+              "cloth_contact_penetration_mm": true,
+              "cloth_layer_penetration_mm": true,
+              "com_support_margin_p05_mm": false,
+              "foot_drift_mm": true,
+              "foot_slide_mm": true,
+              "limb_flex_excess_deg": true,
+              "rig_bone_length_drift_mm": true
+            },
+            "checks_passed": false,
+            "detail": {
+              "cloth_layer_penetration_mm": 1.5085,
+              "collision_guard": {
+                "audit_only": true,
+                "enabled": true,
+                "guarded_frames": 0,
+                "max_delta_mm": 0.0,
+                "max_ik_miss_mm": 0.0,
+                "max_shift_mm": 0.0
+              },
+              "com_support_margin_median_mm": -52.6191,
+              "com_support_margin_p05_mm": -106.438,
+              "com_worst_frame": 41,
+              "contact_worst": {
+                "a": "thighL",
+                "b": "thighR",
+                "frame": 35,
+                "gap_mm": 1.4915
+              },
+              "feet": {
+                "Left": {
+                  "contact_float_mm": 34.953,
+                  "foot_drift_mm": 36.6693,
+                  "foot_slide_mean_mm": 2.7312,
+                  "foot_slide_mm": 15.18,
+                  "planted_frames": 28
+                },
+                "Right": {
+                  "contact_float_mm": 33.8864,
+                  "foot_drift_mm": 12.5476,
+                  "foot_slide_mean_mm": 0.9753,
+                  "foot_slide_mm": 2.4069,
+                  "planted_frames": 32
+                }
+              },
+              "floor": {
+                "below_floor_mm": 0.0,
+                "floor_m": 0.0,
+                "max_foot_mm": 46.039405,
+                "min_foot_mm": 0.0
+              },
+              "footplant": {
+                "capped_frames": 61,
+                "corrected_frames": 64,
+                "enabled": true,
+                "max_correction_cap_mm": 40.0,
+                "max_correction_mm": 40.0,
+                "max_ik_miss_mm": 0.0,
+                "stance_achieved_max_mm": 40.0,
+                "stance_achieved_mean_mm": 39.3959,
+                "stance_mm": 45.0
+              },
+              "joint_limit_coverage": {
+                "axes": [
+                  "flex"
+                ],
+                "joints": [
+                  "knee",
+                  "elbow",
+                  "hip",
+                  "shoulder"
+                ],
+                "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+              },
+              "joint_limit_worst": null,
+              "raw_feet": {
+                "Left": {
+                  "contact_float_mm": 34.953,
+                  "foot_drift_mm": 42.0638,
+                  "foot_slide_mean_mm": 3.3284,
+                  "foot_slide_mm": 15.963,
+                  "planted_frames": 28
+                },
+                "Right": {
+                  "contact_float_mm": 33.8864,
+                  "foot_drift_mm": 20.6253,
+                  "foot_slide_mean_mm": 1.8852,
+                  "foot_slide_mm": 9.0668,
+                  "planted_frames": 32
+                }
+              },
+              "support_frames": 20
+            },
+            "duration_s": 5.133313,
+            "fps": 30.00012,
+            "frames": 155,
+            "metrics": {
+              "body_self_clearance_mm": 1.4915,
+              "cloth_contact_penetration_mm": 0.0085,
+              "cloth_layer_penetration_mm": 1.5085,
+              "com_support_margin_mm": -113.4259,
+              "com_support_margin_p05_mm": -106.438,
+              "foot_drift_mm": 36.6693,
+              "foot_slide_mm": 15.18,
+              "limb_flex_excess_deg": 0.0,
+              "rig_bone_length_drift_mm": 0.0
+            },
+            "path": "videos/sources/mocap/cmu/46_01.bvh",
+            "sha256": "8c07c57e899163b832861b74f246305ae0fee3284c4949d50f52981000825132",
+            "take": "46_01"
+          }
+        ],
+        "collision_guard": true,
+        "constants": {
+          "capsule_radii_m": {
+            "farm": 0.032,
+            "foot": 0.03,
+            "hand": 0.025,
+            "shin": 0.042,
+            "thigh": 0.07,
+            "trunk": 0.12,
+            "uarm": 0.04
+          },
+          "contact8_floor_mm": 1.5,
+          "contact_model": "audit-footplant-heuristic",
+          "footplant_cap_mm": 40.0,
+          "guard_iterations": 4,
+          "guard_margin_mm": 1.0,
+          "heel_toe_hysteresis_mm": 12.0,
+          "lift_h_mm": 35.0,
+          "max_guard_shift_mm": 60.0,
+          "plant_confirm_frames": 2,
+          "plant_h_mm": 10.0,
+          "runtime_blend_s": 0.11,
+          "runtime_lift_h_mm": 50.0,
+          "runtime_plant_h_mm": 28.0,
+          "settle9_gap_mm": 2.5,
+          "settle9_layer_gap_mm": 1.5,
+          "slip_release_mm": 25.0,
+          "stance_mm": 45.0,
+          "take_floor_mm": 0.0
+        },
+        "footplant": true,
+        "footplant_cap_m": 0.04,
+        "manifest_sha256": "be45367dfee17f5591ec1334d02c7ebaf6552a178cd7c6344e0107fca6d3f5a4",
+        "master_seed": "cbddeb6e385538d8aea2148927c0e0e15be5dfc9de01efb1046bd782f0c8bbbce8419bce63ef7d71abcb062cd241dbec6c108c31a92a82728f1b2fdcff76b114",
+        "metrics": {
+          "body_self_clearance_mm": -27.1803,
+          "cloth_contact_penetration_mm": 28.6803,
+          "cloth_layer_penetration_mm": 30.1803,
+          "com_support_margin_p05_mm": -106.438,
+          "foot_drift_mm": 36.6693,
+          "foot_slide_mm": 15.18,
+          "limb_flex_excess_deg": 11.296,
+          "rig_bone_length_drift_mm": 0.0
+        },
+        "notes": [
+          "The take floor is constant after _take_geometry normalisation; floor drift/penetration are not gated. COM is gated only in double support, so a take with no double support (20_06) fails closed on the missing COM value.",
+          "The FootPlant class is an audit contact heuristic, not a byte-for-byte mirror of rig/ground.js: audit uses 10/35 mm plus a 2-frame confirmation and 25 mm slip release; the runtime uses 28/50 mm with a release blend. Both constant sets are reported.",
+          "With footplant=true, stance feet are pinned before slide, COM, limb-flex and clearance measurement. The requested 45 mm stance is capped at 40 mm of actual shift; the report gives the achieved stance. A 150 mm cap gives zero slide but exceeds the photoreal limb-flex bound on 12_01.",
+          "The collision guard shifts only unplanted feet outward; a planted pin is never moved. It is audit-only: max_delta_mm reports the frame-to-frame shift change and no temporal-continuity claim is made. footplant=false reproduces the raw clip.",
+          "limb_flex_excess_deg covers hip/knee/elbow/shoulder flexion only; abduction/twist and spine/neck/head/hand/foot are outside the gate. cloth_layer_penetration_mm is gated against contact8 floor plus settle9 layer gap."
+        ],
+        "passed": false,
+        "pins": [
+          {
+            "path": "videos/web/lib/fx/bvh.js",
+            "sha256": "4e2e36b6720f8942c268ef85d9923e2ad48d29d31a4bd00bc403bfdc117f49d1"
+          },
+          {
+            "path": "videos/web/lib/fx/rig/ground.js",
+            "sha256": "d52974f777892e3a9465aab6ec6645dcc024ef2a3a076a7b78c1f85cce3fddb1"
+          },
+          {
+            "path": "videos/web/lib/fx/rig/balance.js",
+            "sha256": "55450a6edcacd2a44ac775858860b9320dd0a062b803fd3b0d2e62863d825881"
+          },
+          {
+            "path": "videos/web/lib/fx/rig/limits.js",
+            "sha256": "bc88aa6236edc635cfbf805b108a1925d6a4844a1a3ab5ca17126958c1692b41"
+          },
+          {
+            "path": "videos/web/lib/fx/cloth/cloth8/contact8.js",
+            "sha256": "368ad04642b7cb37773241fd41e14985eee3a72c9ca794eeda8e51806e96ea19"
+          },
+          {
+            "path": "videos/web/lib/fx/cloth/cloth9/settle9.js",
+            "sha256": "e32b4bdeb8744d58becad08e0668d29d34f32a442b88706b3edca3db7f21446b"
+          },
+          {
+            "path": "videos/sources/mocap/SOURCES.csv",
+            "sha256": "5761b64a7f7f40e1629e929a46b5c429eded2e1db5c6233f20b1a2621ab8a123"
+          },
+          {
+            "path": "videos/sources/mocap/cmu/38_01.bvh",
+            "sha256": "ce97ad1e9b4517f188809ac09df3688cb4b0a3039c67126f9945164476a79a05"
+          },
+          {
+            "path": "videos/sources/mocap/cmu/26_01.bvh",
+            "sha256": "2794e34513688853f8a0c1c0cc41aac0b5f7a99bb632cb3f91ad144872860474"
+          },
+          {
+            "path": "videos/sources/mocap/cmu/46_01.bvh",
+            "sha256": "8c07c57e899163b832861b74f246305ae0fee3284c4949d50f52981000825132"
+          }
+        ],
+        "source_commit": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+        "stance_m": 0.045,
+        "style": "photorealistic",
+        "takes": [
+          "38_01",
+          "26_01",
+          "46_01"
+        ],
+        "thresholds": {
+          "body_self_clearance_mm": {
+            "direction": "min",
+            "limit": -25.0
+          },
+          "cloth_contact_penetration_mm": {
+            "direction": "max",
+            "limit": 26.5
+          },
+          "cloth_layer_penetration_mm": {
+            "direction": "max",
+            "limit": 29.0
+          },
+          "com_support_margin_p05_mm": {
+            "direction": "min",
+            "limit": -20.0
+          },
+          "foot_drift_mm": {
+            "direction": "max",
+            "limit": 100.0
+          },
+          "foot_slide_mm": {
+            "direction": "max",
+            "limit": 25.0
+          },
+          "limb_flex_excess_deg": {
+            "direction": "max",
+            "limit": 10.0
+          },
+          "rig_bone_length_drift_mm": {
+            "direction": "max",
+            "limit": 0.01
+          }
+        },
+        "version": "motion-collision-preflight-v3"
+      },
+      "stylized": {
+        "checks": {
+          "body_self_clearance_mm": true,
+          "cloth_contact_penetration_mm": true,
+          "cloth_layer_penetration_mm": true,
+          "com_support_margin_p05_mm": true,
+          "foot_drift_mm": true,
+          "foot_slide_mm": true,
+          "limb_flex_excess_deg": true,
+          "rig_bone_length_drift_mm": true
+        },
+        "clips": [
+          {
+            "checks": {
+              "body_self_clearance_mm": true,
+              "cloth_contact_penetration_mm": true,
+              "cloth_layer_penetration_mm": true,
+              "com_support_margin_p05_mm": true,
+              "foot_drift_mm": true,
+              "foot_slide_mm": true,
+              "limb_flex_excess_deg": true,
+              "rig_bone_length_drift_mm": true
+            },
+            "checks_passed": true,
+            "detail": {
+              "cloth_layer_penetration_mm": 0.0,
+              "collision_guard": {
+                "audit_only": true,
+                "enabled": true,
+                "guarded_frames": 0,
+                "max_delta_mm": 0.0,
+                "max_ik_miss_mm": 0.0,
+                "max_shift_mm": 0.0
+              },
+              "com_support_margin_median_mm": -10.2663,
+              "com_support_margin_p05_mm": -30.7349,
+              "com_worst_frame": 29,
+              "contact_worst": {
+                "a": "shinL",
+                "b": "shinR",
+                "frame": 18,
+                "gap_mm": 22.5677
+              },
+              "feet": {
+                "Left": {
+                  "contact_float_mm": 0.0,
+                  "foot_drift_mm": 0.0,
+                  "foot_slide_mean_mm": 0.0,
+                  "foot_slide_mm": 0.0,
+                  "planted_frames": 0
+                },
+                "Right": {
+                  "contact_float_mm": 34.8312,
+                  "foot_drift_mm": 30.5004,
+                  "foot_slide_mean_mm": 2.2715,
+                  "foot_slide_mm": 6.6017,
+                  "planted_frames": 40
+                }
+              },
+              "floor": {
+                "below_floor_mm": 0.0,
+                "floor_m": 0.0,
+                "max_foot_mm": 22.410423,
+                "min_foot_mm": 0.0
+              },
+              "footplant": {
+                "capped_frames": 42,
+                "corrected_frames": 43,
+                "enabled": true,
+                "max_correction_cap_mm": 40.0,
+                "max_correction_mm": 40.0,
+                "max_ik_miss_mm": 15.7974,
+                "stance_achieved_max_mm": 40.0,
+                "stance_achieved_mean_mm": 35.1382,
+                "stance_mm": 45.0
+              },
+              "joint_limit_coverage": {
+                "axes": [
+                  "flex"
+                ],
+                "joints": [
+                  "knee",
+                  "elbow",
+                  "hip",
+                  "shoulder"
+                ],
+                "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+              },
+              "joint_limit_worst": {
+                "allowed_deg": [
+                  -20,
+                  120
+                ],
+                "frame": 78,
+                "joint": "hip",
+                "side": "Right",
+                "value_deg": -31.296
+              },
+              "raw_feet": {
+                "Left": {
+                  "contact_float_mm": 0.0,
+                  "foot_drift_mm": 0.0,
+                  "foot_slide_mean_mm": 0.0,
+                  "foot_slide_mm": 0.0,
+                  "planted_frames": 0
+                },
+                "Right": {
+                  "contact_float_mm": 32.7228,
+                  "foot_drift_mm": 63.5723,
+                  "foot_slide_mean_mm": 4.4749,
+                  "foot_slide_mm": 12.0241,
+                  "planted_frames": 40
+                }
+              },
+              "support_frames": 9
+            },
+            "duration_s": 2.933322,
+            "fps": 30.00012,
+            "frames": 89,
+            "metrics": {
+              "body_self_clearance_mm": 22.5677,
+              "cloth_contact_penetration_mm": 0.0,
+              "cloth_layer_penetration_mm": 0.0,
+              "com_support_margin_mm": -34.9513,
+              "com_support_margin_p05_mm": -30.7349,
+              "foot_drift_mm": 30.5004,
+              "foot_slide_mm": 6.6017,
+              "limb_flex_excess_deg": 11.296,
+              "rig_bone_length_drift_mm": 0.0
+            },
+            "path": "videos/sources/mocap/cmu/38_01.bvh",
+            "sha256": "ce97ad1e9b4517f188809ac09df3688cb4b0a3039c67126f9945164476a79a05",
+            "take": "38_01"
+          },
+          {
+            "checks": {
+              "body_self_clearance_mm": true,
+              "cloth_contact_penetration_mm": true,
+              "cloth_layer_penetration_mm": true,
+              "com_support_margin_p05_mm": true,
+              "foot_drift_mm": true,
+              "foot_slide_mm": true,
+              "limb_flex_excess_deg": true,
+              "rig_bone_length_drift_mm": true
+            },
+            "checks_passed": true,
+            "detail": {
+              "cloth_layer_penetration_mm": 30.1803,
+              "collision_guard": {
+                "audit_only": true,
+                "enabled": true,
+                "guarded_frames": 15,
+                "max_delta_mm": 12.4466,
+                "max_ik_miss_mm": 0.0,
+                "max_shift_mm": 27.629
+              },
+              "com_support_margin_median_mm": 2.447,
+              "com_support_margin_p05_mm": 0.9849,
+              "com_worst_frame": 85,
+              "contact_worst": {
+                "a": "shinL",
+                "b": "shinR",
+                "frame": 100,
+                "gap_mm": -27.1803
+              },
+              "feet": {
+                "Left": {
+                  "contact_float_mm": 31.8671,
+                  "foot_drift_mm": 7.2131,
+                  "foot_slide_mean_mm": 1.5339,
+                  "foot_slide_mm": 3.4687,
+                  "planted_frames": 6
+                },
+                "Right": {
+                  "contact_float_mm": 0.0,
+                  "foot_drift_mm": 0.0,
+                  "foot_slide_mean_mm": 0.0,
+                  "foot_slide_mm": 0.0,
+                  "planted_frames": 0
+                }
+              },
+              "floor": {
+                "below_floor_mm": 0.0,
+                "floor_m": 0.0,
+                "max_foot_mm": 47.476371,
+                "min_foot_mm": 0.0
+              },
+              "footplant": {
+                "capped_frames": 7,
+                "corrected_frames": 7,
+                "enabled": true,
+                "max_correction_cap_mm": 40.0,
+                "max_correction_mm": 40.0,
+                "max_ik_miss_mm": 0.0,
+                "stance_achieved_max_mm": 40.0,
+                "stance_achieved_mean_mm": 39.8272,
+                "stance_mm": 45.0
+              },
+              "joint_limit_coverage": {
+                "axes": [
+                  "flex"
+                ],
+                "joints": [
+                  "knee",
+                  "elbow",
+                  "hip",
+                  "shoulder"
+                ],
+                "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+              },
+              "joint_limit_worst": null,
+              "raw_feet": {
+                "Left": {
+                  "contact_float_mm": 31.8671,
+                  "foot_drift_mm": 11.1743,
+                  "foot_slide_mean_mm": 2.4249,
+                  "foot_slide_mm": 3.7934,
+                  "planted_frames": 6
+                },
+                "Right": {
+                  "contact_float_mm": 0.0,
+                  "foot_drift_mm": 0.0,
+                  "foot_slide_mean_mm": 0.0,
+                  "foot_slide_mm": 0.0,
+                  "planted_frames": 0
+                }
+              },
+              "support_frames": 6
+            },
+            "duration_s": 6.966639,
+            "fps": 30.00012,
+            "frames": 210,
+            "metrics": {
+              "body_self_clearance_mm": -27.1803,
+              "cloth_contact_penetration_mm": 28.6803,
+              "cloth_layer_penetration_mm": 30.1803,
+              "com_support_margin_mm": 0.9775,
+              "com_support_margin_p05_mm": 0.9849,
+              "foot_drift_mm": 7.2131,
+              "foot_slide_mm": 3.4687,
+              "limb_flex_excess_deg": 0.0,
+              "rig_bone_length_drift_mm": 0.0
+            },
+            "path": "videos/sources/mocap/cmu/26_01.bvh",
+            "sha256": "2794e34513688853f8a0c1c0cc41aac0b5f7a99bb632cb3f91ad144872860474",
+            "take": "26_01"
+          },
+          {
+            "checks": {
+              "body_self_clearance_mm": true,
+              "cloth_contact_penetration_mm": true,
+              "cloth_layer_penetration_mm": true,
+              "com_support_margin_p05_mm": true,
+              "foot_drift_mm": true,
+              "foot_slide_mm": true,
+              "limb_flex_excess_deg": true,
+              "rig_bone_length_drift_mm": true
+            },
+            "checks_passed": true,
+            "detail": {
+              "cloth_layer_penetration_mm": 1.5085,
+              "collision_guard": {
+                "audit_only": true,
+                "enabled": true,
+                "guarded_frames": 0,
+                "max_delta_mm": 0.0,
+                "max_ik_miss_mm": 0.0,
+                "max_shift_mm": 0.0
+              },
+              "com_support_margin_median_mm": -52.6191,
+              "com_support_margin_p05_mm": -106.438,
+              "com_worst_frame": 41,
+              "contact_worst": {
+                "a": "thighL",
+                "b": "thighR",
+                "frame": 35,
+                "gap_mm": 1.4915
+              },
+              "feet": {
+                "Left": {
+                  "contact_float_mm": 34.953,
+                  "foot_drift_mm": 36.6693,
+                  "foot_slide_mean_mm": 2.7312,
+                  "foot_slide_mm": 15.18,
+                  "planted_frames": 28
+                },
+                "Right": {
+                  "contact_float_mm": 33.8864,
+                  "foot_drift_mm": 12.5476,
+                  "foot_slide_mean_mm": 0.9753,
+                  "foot_slide_mm": 2.4069,
+                  "planted_frames": 32
+                }
+              },
+              "floor": {
+                "below_floor_mm": 0.0,
+                "floor_m": 0.0,
+                "max_foot_mm": 46.039405,
+                "min_foot_mm": 0.0
+              },
+              "footplant": {
+                "capped_frames": 61,
+                "corrected_frames": 64,
+                "enabled": true,
+                "max_correction_cap_mm": 40.0,
+                "max_correction_mm": 40.0,
+                "max_ik_miss_mm": 0.0,
+                "stance_achieved_max_mm": 40.0,
+                "stance_achieved_mean_mm": 39.3959,
+                "stance_mm": 45.0
+              },
+              "joint_limit_coverage": {
+                "axes": [
+                  "flex"
+                ],
+                "joints": [
+                  "knee",
+                  "elbow",
+                  "hip",
+                  "shoulder"
+                ],
+                "note": "limb-flex subset; abduction/twist and spine/neck/head/hand/foot are not gated"
+              },
+              "joint_limit_worst": null,
+              "raw_feet": {
+                "Left": {
+                  "contact_float_mm": 34.953,
+                  "foot_drift_mm": 42.0638,
+                  "foot_slide_mean_mm": 3.3284,
+                  "foot_slide_mm": 15.963,
+                  "planted_frames": 28
+                },
+                "Right": {
+                  "contact_float_mm": 33.8864,
+                  "foot_drift_mm": 20.6253,
+                  "foot_slide_mean_mm": 1.8852,
+                  "foot_slide_mm": 9.0668,
+                  "planted_frames": 32
+                }
+              },
+              "support_frames": 20
+            },
+            "duration_s": 5.133313,
+            "fps": 30.00012,
+            "frames": 155,
+            "metrics": {
+              "body_self_clearance_mm": 1.4915,
+              "cloth_contact_penetration_mm": 0.0085,
+              "cloth_layer_penetration_mm": 1.5085,
+              "com_support_margin_mm": -113.4259,
+              "com_support_margin_p05_mm": -106.438,
+              "foot_drift_mm": 36.6693,
+              "foot_slide_mm": 15.18,
+              "limb_flex_excess_deg": 0.0,
+              "rig_bone_length_drift_mm": 0.0
+            },
+            "path": "videos/sources/mocap/cmu/46_01.bvh",
+            "sha256": "8c07c57e899163b832861b74f246305ae0fee3284c4949d50f52981000825132",
+            "take": "46_01"
+          }
+        ],
+        "collision_guard": true,
+        "constants": {
+          "capsule_radii_m": {
+            "farm": 0.032,
+            "foot": 0.03,
+            "hand": 0.025,
+            "shin": 0.042,
+            "thigh": 0.07,
+            "trunk": 0.12,
+            "uarm": 0.04
+          },
+          "contact8_floor_mm": 1.5,
+          "contact_model": "audit-footplant-heuristic",
+          "footplant_cap_mm": 40.0,
+          "guard_iterations": 4,
+          "guard_margin_mm": 1.0,
+          "heel_toe_hysteresis_mm": 12.0,
+          "lift_h_mm": 35.0,
+          "max_guard_shift_mm": 60.0,
+          "plant_confirm_frames": 2,
+          "plant_h_mm": 10.0,
+          "runtime_blend_s": 0.11,
+          "runtime_lift_h_mm": 50.0,
+          "runtime_plant_h_mm": 28.0,
+          "settle9_gap_mm": 2.5,
+          "settle9_layer_gap_mm": 1.5,
+          "slip_release_mm": 25.0,
+          "stance_mm": 45.0,
+          "take_floor_mm": 0.0
+        },
+        "footplant": true,
+        "footplant_cap_m": 0.04,
+        "manifest_sha256": "7c7e534c7bf7c468fd206718679eb853df4fad1dbafe4c46cdf87b360d6156b0",
+        "master_seed": "cbddeb6e385538d8aea2148927c0e0e15be5dfc9de01efb1046bd782f0c8bbbce8419bce63ef7d71abcb062cd241dbec6c108c31a92a82728f1b2fdcff76b114",
+        "metrics": {
+          "body_self_clearance_mm": -27.1803,
+          "cloth_contact_penetration_mm": 28.6803,
+          "cloth_layer_penetration_mm": 30.1803,
+          "com_support_margin_p05_mm": -106.438,
+          "foot_drift_mm": 36.6693,
+          "foot_slide_mm": 15.18,
+          "limb_flex_excess_deg": 11.296,
+          "rig_bone_length_drift_mm": 0.0
+        },
+        "notes": [
+          "The take floor is constant after _take_geometry normalisation; floor drift/penetration are not gated. COM is gated only in double support, so a take with no double support (20_06) fails closed on the missing COM value.",
+          "The FootPlant class is an audit contact heuristic, not a byte-for-byte mirror of rig/ground.js: audit uses 10/35 mm plus a 2-frame confirmation and 25 mm slip release; the runtime uses 28/50 mm with a release blend. Both constant sets are reported.",
+          "With footplant=true, stance feet are pinned before slide, COM, limb-flex and clearance measurement. The requested 45 mm stance is capped at 40 mm of actual shift; the report gives the achieved stance. A 150 mm cap gives zero slide but exceeds the photoreal limb-flex bound on 12_01.",
+          "The collision guard shifts only unplanted feet outward; a planted pin is never moved. It is audit-only: max_delta_mm reports the frame-to-frame shift change and no temporal-continuity claim is made. footplant=false reproduces the raw clip.",
+          "limb_flex_excess_deg covers hip/knee/elbow/shoulder flexion only; abduction/twist and spine/neck/head/hand/foot are outside the gate. cloth_layer_penetration_mm is gated against contact8 floor plus settle9 layer gap."
+        ],
+        "passed": true,
+        "pins": [
+          {
+            "path": "videos/web/lib/fx/bvh.js",
+            "sha256": "4e2e36b6720f8942c268ef85d9923e2ad48d29d31a4bd00bc403bfdc117f49d1"
+          },
+          {
+            "path": "videos/web/lib/fx/rig/ground.js",
+            "sha256": "d52974f777892e3a9465aab6ec6645dcc024ef2a3a076a7b78c1f85cce3fddb1"
+          },
+          {
+            "path": "videos/web/lib/fx/rig/balance.js",
+            "sha256": "55450a6edcacd2a44ac775858860b9320dd0a062b803fd3b0d2e62863d825881"
+          },
+          {
+            "path": "videos/web/lib/fx/rig/limits.js",
+            "sha256": "bc88aa6236edc635cfbf805b108a1925d6a4844a1a3ab5ca17126958c1692b41"
+          },
+          {
+            "path": "videos/web/lib/fx/cloth/cloth8/contact8.js",
+            "sha256": "368ad04642b7cb37773241fd41e14985eee3a72c9ca794eeda8e51806e96ea19"
+          },
+          {
+            "path": "videos/web/lib/fx/cloth/cloth9/settle9.js",
+            "sha256": "e32b4bdeb8744d58becad08e0668d29d34f32a442b88706b3edca3db7f21446b"
+          },
+          {
+            "path": "videos/sources/mocap/SOURCES.csv",
+            "sha256": "5761b64a7f7f40e1629e929a46b5c429eded2e1db5c6233f20b1a2621ab8a123"
+          },
+          {
+            "path": "videos/sources/mocap/cmu/38_01.bvh",
+            "sha256": "ce97ad1e9b4517f188809ac09df3688cb4b0a3039c67126f9945164476a79a05"
+          },
+          {
+            "path": "videos/sources/mocap/cmu/26_01.bvh",
+            "sha256": "2794e34513688853f8a0c1c0cc41aac0b5f7a99bb632cb3f91ad144872860474"
+          },
+          {
+            "path": "videos/sources/mocap/cmu/46_01.bvh",
+            "sha256": "8c07c57e899163b832861b74f246305ae0fee3284c4949d50f52981000825132"
+          }
+        ],
+        "source_commit": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+        "stance_m": 0.045,
+        "style": "stylized",
+        "takes": [
+          "38_01",
+          "26_01",
+          "46_01"
+        ],
+        "thresholds": {
+          "body_self_clearance_mm": {
+            "direction": "min",
+            "limit": -50.0
+          },
+          "cloth_contact_penetration_mm": {
+            "direction": "max",
+            "limit": 51.5
+          },
+          "cloth_layer_penetration_mm": {
+            "direction": "max",
+            "limit": 54.0
+          },
+          "com_support_margin_p05_mm": {
+            "direction": "min",
+            "limit": -150.0
+          },
+          "foot_drift_mm": {
+            "direction": "max",
+            "limit": 200.0
+          },
+          "foot_slide_mm": {
+            "direction": "max",
+            "limit": 50.0
+          },
+          "limb_flex_excess_deg": {
+            "direction": "max",
+            "limit": 30.0
+          },
+          "rig_bone_length_drift_mm": {
+            "direction": "max",
+            "limit": 0.05
+          }
+        },
+        "version": "motion-collision-preflight-v3"
+      }
+    },
+    "takes": [
+      "38_01",
+      "26_01",
+      "46_01"
+    ]
+  },
+  "seed_selected_takes": [
+    "38_01",
+    "26_01",
+    "46_01"
+  ],
+  "source_commit": "e235ca432f1514842da8e99ec28addf77c99b2d4",
+  "version": "motion-collision-preflight-v3"
+}

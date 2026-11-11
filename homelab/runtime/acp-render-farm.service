@@ -1,0 +1,17 @@
+[Unit]
+Description=ACP render queue on NVMe using GPU0 and GPU1
+After=default.target
+ConditionPathIsMountPoint=/mnt/nvme4tb
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /mnt/nvme4tb/automated-content-pipeline-homelab-20261002/runtime_launch.py --selection /mnt/nvme4tb/automated-content-pipeline-homelab-20261002/runtime-selection.json --releases /mnt/nvme4tb/automated-content-pipeline-homelab-20261002/runtime-releases -- selected_lane_launch.py /mnt/nvme4tb/automated-content-pipeline-homelab-20261002 gpu0
+WorkingDirectory=/mnt/nvme4tb/automated-content-pipeline-homelab-20261002
+Environment=DOCKER_HOST=unix:///var/run/docker.sock
+KillMode=mixed
+SendSIGKILL=no
+TimeoutStopSec=120
+Restart=no
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,50 @@
+{
+ "_about": "Papers, inks and process constants for printlab (Python engine/printlab/press.py and web/lib/printlab.js read this file). Lengths in mm unless named _um. Each entry says where its numbers came from: MEAS = measured by engine/printlab/measure.py (measured.json), LIT = published figure, EST = estimate.",
+ "papers": {
+  "book1874": {"rgb": [0.906, 0.879, 0.802], "tooth_um": 9, "fibre_mm": 0.03, "fibre_len": 9, "formation_mm": 3.0, "formation_sd": 0.025, "fleck": 0.3,
+               "why": "MEAS paper of the Page 1874 specimen (median of the paper areas, L* 89, b* +10: aged wove book paper); texture EST"},
+  "rag": {"rgb": [0.93, 0.905, 0.84], "tooth_um": 14, "fibre_mm": 0.035, "fibre_len": 10, "formation_mm": 4.0, "formation_sd": 0.03, "fleck": 0.4,
+          "why": "EST cotton rag for letterpress (soft, takes impression)"},
+  "whatman": {"rgb": [0.790, 0.802, 0.750], "tooth_um": 12, "fibre_mm": 0.03, "fibre_len": 8, "formation_mm": 5.0, "formation_sd": 0.035, "fleck": 0.2,
+              "why": "MEAS paper of the Atkins cyanotype (Met 285421), 99th-percentile L*: 1850s writing paper as it is now (aged, toned)"},
+  "newsprint": {"rgb": [0.86, 0.84, 0.77], "tooth_um": 10, "fibre_mm": 0.025, "fibre_len": 6, "formation_mm": 2.0, "formation_sd": 0.05, "fleck": 1.0,
+                "why": "EST groundwood newsprint, aged"},
+  "poster": {"rgb": [0.93, 0.91, 0.86], "tooth_um": 6, "fibre_mm": 0.03, "fibre_len": 7, "formation_mm": 6.0, "formation_sd": 0.015, "fleck": 0.1,
+             "why": "EST poster board (WPA silkscreen posters were printed on board / heavy stock)"},
+  "riso_bond": {"rgb": [0.95, 0.95, 0.93], "tooth_um": 8, "fibre_mm": 0.025, "fibre_len": 6, "formation_mm": 2.5, "formation_sd": 0.02, "fleck": 0.05,
+                "why": "EST uncoated bond (Munken-type)"},
+  "supercal": {"rgb": [0.89, 0.86, 0.79], "tooth_um": 3, "fibre_mm": 0.02, "fibre_len": 6, "formation_mm": 2.5, "formation_sd": 0.02, "fleck": 0.3,
+               "why": "EST supercalendered magazine stock of a 1920s rotogravure supplement (smooth, cream, aged)"}
+ },
+ "inks": {
+  "black1874": {"D": [1.375, 1.361, 1.329], "why": "MEAS solid black wood-type letters, Page 1874 p24 (density rel. paper)"},
+  "blue1874": {"D": [1.699, 1.021, 0.467], "why": "MEAS solid blue letters, Page 1874 p5"},
+  "green1874": {"D": [0.629, 0.326, 0.640], "why": "MEAS solid green letters, Page 1874 p6"},
+  "vermilion": {"D": [0.10, 1.10, 1.25], "why": "EST letterpress vermilion red"},
+  "prussian": {"D": [1.268, 0.556, 0.252], "why": "MEAS Prussian blue at Dmax, Atkins cyanotype (Met 285421)"},
+  "sepia_gravure": {"D": [1.55, 1.80, 1.95], "why": "EST brown-black gravure ink; Dmax ~1.8 on supercalendered stock (LIT: gravure's deep blacks)"},
+  "green_gravure": {"D": [1.70, 1.45, 1.70], "why": "EST the green-black of 1920s-30s gravure supplements"},
+  "riso_black": {"hex": "#000000", "D": [1.30, 1.30, 1.28], "why": "EST riso black on bond (soy ink is not deep: D ~1.3)"},
+  "riso_federal_blue": {"hex": "#3D5588", "why": "LIT stencil.wiki Riso ink library"},
+  "riso_fluo_pink": {"hex": "#FF48B0", "why": "LIT stencil.wiki"},
+  "riso_red": {"hex": "#FF665E", "why": "LIT stencil.wiki (Bright Red)"},
+  "riso_yellow": {"hex": "#FFE800", "why": "LIT stencil.wiki"},
+  "riso_teal": {"hex": "#00838A", "why": "LIT stencil.wiki"},
+  "riso_orange": {"hex": "#FF6C2F", "why": "LIT stencil.wiki"},
+  "screen_ochre": {"rgb": [0.80, 0.58, 0.22], "opacity": 0.92, "why": "EST opaque poster ochre (WPA-style oil-based screen ink)"},
+  "screen_red": {"rgb": [0.72, 0.16, 0.12], "opacity": 0.94, "why": "EST opaque poster red"},
+  "screen_black": {"rgb": [0.09, 0.085, 0.08], "opacity": 0.97, "why": "EST"},
+  "screen_cream": {"rgb": [0.95, 0.92, 0.84], "opacity": 0.85, "why": "EST"},
+  "screen_blue_tr": {"D": [0.85, 0.35, 0.05], "why": "EST transparent base + pigment (Corita-style overprint)"},
+  "screen_pink_tr": {"D": [0.02, 0.75, 0.30], "why": "EST transparent"},
+  "screen_yellow_tr": {"D": [0.02, 0.06, 0.90], "why": "EST transparent"}
+ },
+ "process": {
+  "letterpress": {"ink_film_um": 4.0, "squash_mm": 0.06, "rim": 0.22, "mottle_mm": 3.85, "mottle_sd": 0.07, "starve_mm": 60, "starve": 0.25,
+                  "why": "MEAS mottle: Page 1874 solids D sd 0.09-0.10 at 3.9 mm correlation (sd/D ~7%); LIT squash 0.05-0.1 mm; EST film and starvation"},
+  "riso": {"dpi": 300, "spread_mm": 0.03, "band_sd": 0.05, "misreg_mm": 0.5, "why": "LIT master 300 dpi (some 600); drum-to-drum drift up to ~1 mm"},
+  "silkscreen": {"tpi": 150, "thread": 0.35, "deposit_sd": 0.08, "why": "LIT mesh 110-200 threads/inch; EST thread fraction and deposit variation"},
+  "cyanotype": {"H0": 0.9, "stain": 0.04, "why": "MEAS Dmax and colour (Atkins); EST dose constant"},
+  "gravure": {"lpi": 150, "wall": 0.18, "angle": 45, "snow": 0.12, "why": "LIT 150-175 lines/in, cells of equal area and variable depth; EST wall width and missing-dot threshold"}
+ }
+}
