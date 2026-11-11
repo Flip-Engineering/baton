@@ -1,0 +1,93 @@
+From 0f6a5589da1106a7669fd55db929be1e6c88c661 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sun, 18 Oct 2026 20:03:04 -0700
+Subject: [PATCH] Avoid output-only observer checkpoints
+
+Port candidate 3bbec5969 onto the destructured checkpoint predicate at
+76681ac97: checkpoint_due_next no longer takes the previous output cursor
+or computes output_changed, and the two candidate laws are added to
+observer-checkpoint-laws.bend. The spool byte cursor is committed with
+the next semantic snapshot; positioned replay rewrites the same bytes
+from the prior durable offset.
+
+Focused harness on this tree: 258,051 old-predicate checkpoints versus
+0 patched for the identified message_update class; positioned partial
+replay and final truncation pass. Parent code gives 258,051 patched
+count under the same harness.
+---
+ .../src/coordinator/observer-checkpoint-laws.bend  | 14 ++++++++++++++
+ bend2/src/coordinator/observer-checkpoint.bend     |  9 +++++----
+ 2 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/bend2/src/coordinator/observer-checkpoint-laws.bend b/bend2/src/coordinator/observer-checkpoint-laws.bend
+index 9d4aa35d9..5cd81c2eb 100644
+--- a/bend2/src/coordinator/observer-checkpoint-laws.bend
++++ b/bend2/src/coordinator/observer-checkpoint-laws.bend
+@@ -32,6 +32,14 @@ law held_prefix_progress_keeps_the_prior_replay_offset:
+   for +prefix: String
+   {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n","","","","","","",prefix)) == False{} : Bool}
+ 
++law output_cursor_progress_keeps_the_prior_replay_offset:
++  for +offset: String
++  {Observer.checkpoint_due_fields(Observer.with_output(Observer.make("0\n","","","","same terminal","","",""),"0"),Observer.with_output(Observer.make("0\n","","","","same terminal","","",""),offset),True{},True{},True{}) == False{} : Bool}
++
++law terminal_change_advances_reducer_checkpoint:
++  for +terminal: String
++  {Observer.checkpoint_due_fields(Observer.make("0\n","","","","","","",""),Observer.make("0\n","","","",terminal,"","",""),True{},True{},True{}) == Bool.or(Bool.not(String.eq("",terminal)),False{}) : Bool}
++
+ law omp_completed_message_advances_reducer_checkpoint:
+   for +message: String
+   {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n",message,"","","","","","")) == Bool.or(Bool.not(String.eq("",message)),False{}) : Bool}
+@@ -55,6 +63,12 @@ def reducer_schema_version_is_explicit():
+ def held_prefix_progress_keeps_the_prior_replay_offset(prefix):
+   {==}
+ 
++def output_cursor_progress_keeps_the_prior_replay_offset(offset):
++  {==}
++
++def terminal_change_advances_reducer_checkpoint(terminal):
++  {==}
++
+ def omp_completed_message_advances_reducer_checkpoint(message):
+   {==}
+ 
+diff --git a/bend2/src/coordinator/observer-checkpoint.bend b/bend2/src/coordinator/observer-checkpoint.bend
+index 7cbade06d..b6fe73c2b 100644
+--- a/bend2/src/coordinator/observer-checkpoint.bend
++++ b/bend2/src/coordinator/observer-checkpoint.bend
+@@ -118,27 +118,28 @@ def changed_when(enabled: Bool, previous: String, next: String) -> Bool:
+ 
+ # Turn supplies the payload fields its reducer can change on this frame.
+ # Cursor, command and filter changes always participate in the decision.
+-def checkpoint_due_next(+previous_episode: String, +previous_cursor: String, +previous_message: String, +previous_output: String, +previous_activity: String, +previous_primary: String, +previous_current: String, +previous_terminal: String, +previous_filter: String, +previous_codex: String, next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
++def checkpoint_due_next(+previous_episode: String, +previous_cursor: String, +previous_message: String, +previous_activity: String, +previous_primary: String, +previous_current: String, +previous_terminal: String, +previous_filter: String, +previous_codex: String, next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
+   match next:
+     case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}:
+       +episode_changed = Bool.not(String.eq(previous_episode,episode))
+       +guidance_changed = Bool.not(String.eq(previous_cursor,guidance_cursor))
+       +message_changed = changed_when(message_enabled,previous_message,last_message)
+-      +output_changed = Bool.not(String.eq(previous_output,output))
++      # The spool byte cursor is committed with the next semantic snapshot.
++      # Positioned replay rewrites the same bytes from the prior durable offset.
+       +activity_changed = Bool.not(String.eq(previous_activity,omp_activity))
+       +primary_changed = Bool.not(String.eq(previous_primary,muse_primary))
+       +current_changed = Bool.not(String.eq(previous_current,muse_current))
+       +terminal_changed = changed_when(terminal_enabled,previous_terminal,terminal)
+       +filter_changed = Bool.not(String.eq(previous_filter,filter_mode))
+       +codex_changed = changed_when(codex_enabled,previous_codex,codex_log)
+-      Bool.or(episode_changed,Bool.or(output_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed)))))))))
++      Bool.or(episode_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed))))))))
+ 
+ # Destructure each state once. The previous accessor chain matched the whole
+ # state for every field, copying the terminal and message strings repeatedly.
+ def checkpoint_due_fields(+previous: State, +next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
+   match previous:
+     case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}:
+-      checkpoint_due_next(episode,guidance_cursor,last_message,output,omp_activity,muse_primary,muse_current,terminal,filter_mode,codex_log,next,message_enabled,terminal_enabled,codex_enabled)
++      checkpoint_due_next(episode,guidance_cursor,last_message,omp_activity,muse_primary,muse_current,terminal,filter_mode,codex_log,next,message_enabled,terminal_enabled,codex_enabled)
+ 
+ def checkpoint_due(previous: State, next: State) -> Bool:
+   checkpoint_due_fields(previous,next,True{},True{},True{})
+-- 
+2.43.0
+

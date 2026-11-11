@@ -1,0 +1,2272 @@
+From 99996e6e8312a9772d8d8b0d69c41f3e6c681bf3 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 15:37:33 -0700
+Subject: [PATCH 01/14] Check coordinator laws in the native validation gate
+
+---
+ bend2/scripts/check-native.sh                 |   5 +
+ .../context/native-managed-query-laws.bend    |   2 +-
+ bend2/src/coordinator/connect-laws.bend       |   8 +-
+ bend2/src/coordinator/knowledge-laws.bend     | 230 +++++++++++++-----
+ bend2/src/coordinator/laws.bend               |   3 +-
+ bend2/src/coordinator/receive-laws.bend       |  21 +-
+ bend2/src/harness/laws.bend                   |   2 -
+ bend2/src/host/laws.bend                      |   7 +-
+ 8 files changed, 203 insertions(+), 75 deletions(-)
+
+diff --git a/bend2/scripts/check-native.sh b/bend2/scripts/check-native.sh
+index fd0079791..fd051d1cd 100644
+--- a/bend2/scripts/check-native.sh
++++ b/bend2/scripts/check-native.sh
+@@ -7,6 +7,11 @@ if python3 --version 2>/dev/null; then
+ else
+   PYTHON3=/usr/bin/python3
+ fi
++compiler=${BEND:-"$root/.bend/bin/bend"}
++if [ ! -x "$compiler" ]; then
++  compiler="$root/node_modules/.bend/bin/bend"
++fi
++BEND_NO_TELEMETRY=1 "$compiler" bend2/src/coordinator/laws.bend --check-only
+ sh bend2/scripts/build-native.sh
+ sh bend2/scripts/build-native.sh bend2/test/process.bend .scratch/bend2/process-test
+ sh bend2/scripts/build-native.sh bend2/test/instance.bend .scratch/bend2/instance-test
+diff --git a/bend2/src/context/native-managed-query-laws.bend b/bend2/src/context/native-managed-query-laws.bend
+index 47664b9e5..e1868ae9c 100644
+--- a/bend2/src/context/native-managed-query-laws.bend
++++ b/bend2/src/context/native-managed-query-laws.bend
+@@ -35,7 +35,7 @@ def sealed_bootstrap_recovery_preserves_the_original_owner_witness_and_artifact(
+   {==}
+ 
+ law an_absent_origin_attempt_serializes_as_null:
+-  {Managed.nullable_text("") == J.Jnil{} : J.Json}
++  {Managed.nullable_text("") == J.Jnull{} : J.Json}
+ 
+ def an_absent_origin_attempt_serializes_as_null():
+   {==}
+diff --git a/bend2/src/coordinator/connect-laws.bend b/bend2/src/coordinator/connect-laws.bend
+index 4098bb93f..7190a5899 100644
+--- a/bend2/src/coordinator/connect-laws.bend
++++ b/bend2/src/coordinator/connect-laws.bend
+@@ -1,4 +1,4 @@
+-# The entry imports these admission laws. SQLite evaluates the declared
++# The native check imports these admission laws. SQLite evaluates the declared
+ # predicate and transaction; the native connect tests verify stored state and
+ # delivery through the real executable.
+ import Base
+@@ -41,10 +41,10 @@ def connect_updates_and_answers_only_after_admission(id,native,endpoint):
+   {==}
+ 
+ law connect_refusal_is_classified_before_delivery:
+-  for +saved: String
+-  {Store.refused(saved) == Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\"")))) : Bool}
++  for detail: String
++  {Store.refused("{\"error\":\"invalid-endpoint\"" ++ detail) == True{} : Bool}
+ 
+-def connect_refusal_is_classified_before_delivery(saved):
++def connect_refusal_is_classified_before_delivery(detail):
+   {==}
+ 
+ law refused_connections_return_the_structured_error:
+diff --git a/bend2/src/coordinator/knowledge-laws.bend b/bend2/src/coordinator/knowledge-laws.bend
+index bdcae7f14..b3980c845 100644
+--- a/bend2/src/coordinator/knowledge-laws.bend
++++ b/bend2/src/coordinator/knowledge-laws.bend
+@@ -1,22 +1,14 @@
+-# The knowledge workflow's own decisions, stated over the functions the entry
+-# calls: shared reads and promotion provenance, the evidence
+-# condition, what each command writes and answers, the statement each command
+-# composes, and the IO sequence each command runs. A change to shared-read behavior, a
+-# promotion admission, the evidence condition, an answer or the composition of
+-# a command's own statement changes a term a named law pins.
+-#
+-# The actor checks are declared-actor checks inside a trusted local database.
+-# These laws claim no authentication boundary and no confidentiality against a
+-# party that can write that database.
++# Knowledge laws cover shared reads, scoped promotion provenance, command
++# parsing, transaction composition and notice delivery. Evidence retains the
++# author's supplied text. Actor checks use declared sessions in the local database.
+ import Base
+ import ../coordinator/commands.bend as C
+ import ./knowledge.bend as K
+ import ./delivery.bend as Delivery
+ import ./store.bend as Store
+-import ../host/sqlite.bend as DB
+ 
+ law m1_the_knowledge_schema_retains_findings_and_promotions:
+-  {K.knowledge_schema() == "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL);" : String}
++  {K.knowledge_schema() == "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'finding');" ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL, source_kind TEXT NOT NULL DEFAULT 'session', destination_kind TEXT NOT NULL DEFAULT 'session');" ++ "CREATE TABLE IF NOT EXISTS knowledge_relations (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, relation TEXT NOT NULL, target TEXT NOT NULL);" : String}
+ 
+ def m1_the_knowledge_schema_retains_findings_and_promotions():
+   {==}
+@@ -32,8 +24,8 @@ def m1_knowledge_statements_share_one_schema_ready_transaction(statements):
+ # M-8: the cited message is exposed whole, so its identity, sender, recipient
+ # and body travel with the finding.
+ law m8_the_evidence_message_is_exposed_whole:
+-  for evidence: String
+-  {K.evidence_message(evidence) == "(SELECT json_object('id',id,'sender',sender,'recipient',recipient,'body',body) FROM messages WHERE id=substr(" ++ evidence ++ ",9))" : String}
++  for +evidence: String
++  {K.evidence_message(evidence) == "(SELECT json_object('id',id,'sender',sender,'recipient',recipient,'body',body) FROM messages WHERE substr(" ++ evidence ++ ",1,8)='message:' AND id=substr(" ++ evidence ++ ",9))" : String}
+ 
+ def m8_the_evidence_message_is_exposed_whole(evidence):
+   {==}
+@@ -42,7 +34,7 @@ def m8_the_evidence_message_is_exposed_whole(evidence):
+ # finding, its original author, the scope drawn from, the scope promoted into,
+ # and the actor that promoted it.
+ law m8_a_registered_reader_reads_all_promotion_provenance:
+-  {K.knowledge_promotions() == "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by) AS item FROM knowledge_promotions p WHERE p.finding=k.id))" : String}
++  {K.knowledge_promotions(True{}) == "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)," ++ K.endpoint_fields("p.",True{}) ++ ") AS item FROM knowledge_promotions p WHERE p.finding=k.id))" : String}
+ 
+ def m8_a_registered_reader_reads_all_promotion_provenance():
+   {==}
+@@ -60,15 +52,6 @@ law m1_the_finding_answer_is_the_row_it_wrote:
+ def m1_the_finding_answer_is_the_row_it_wrote(id, author, claim, evidence, limits):
+   {==}
+ 
+-# M-8: evidence names an existing retained message the author is a party to.
+-law m8_the_evidence_is_a_reference_to_an_existing_message:
+-  for author: String
+-  for evidence: String
+-  {K.evidence_ok(author, evidence) == "(substr(" ++ C.q(evidence) ++ ",1,8)='message:' AND EXISTS(SELECT 1 FROM messages WHERE id=substr(" ++ C.q(evidence) ++ ",9) AND (sender=" ++ C.q(author) ++ " OR recipient=" ++ C.q(author) ++ ")))" : String}
+-
+-def m8_the_evidence_is_a_reference_to_an_existing_message(author, evidence):
+-  {==}
+-
+ # M-8: the notice a record writes is addressed to the author's immediate parent.
+ law m8_a_notice_is_addressed_to_the_authors_parent:
+   for author: String
+@@ -97,32 +80,36 @@ def m14_the_notice_names_the_finding_it_carries(finding):
+ # M-8: only the registered destination owner is admitted as a promoter.
+ law m8_only_the_destination_owner_admits_a_promotion:
+   for promoter: String
++  for kind: String
+   for destination: String
+-  {K.promotion_admitted(promoter, destination) == C.q(promoter) ++ "=" ++ C.q(destination) ++ " AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(destination) ++ ")" : String}
++  {K.promotion_admitted(promoter, kind, destination) == C.q(promoter) ++ "=" ++ K.promotion_owner(kind,destination) : String}
+ 
+ 
+-def m8_only_the_destination_owner_admits_a_promotion(promoter, destination):
++def m8_only_the_destination_owner_admits_a_promotion(promoter, kind, destination):
+   {==}
+ 
+ # M-8: the named source carries that exact finding when it is the original
+ # author's scope or a destination recorded for that finding.
+ law m8_a_promotion_source_carries_the_exact_finding:
+-  for source: String
+-  {K.source_carries(source) == "(" ++ C.q(source) ++ "=k.author OR EXISTS(SELECT 1 FROM knowledge_promotions prev WHERE prev.finding=k.id AND prev.destination=" ++ C.q(source) ++ "))" : String}
++  for +kind: String
++  for +source: String
++  {K.source_carries(kind,source) == "((" ++ C.q(kind) ++ "='session' AND " ++ C.q(source) ++ "=k.author) OR EXISTS(SELECT 1 FROM knowledge_promotions prev WHERE prev.finding=k.id AND prev.destination_kind=" ++ C.q(kind) ++ " AND prev.destination=" ++ C.q(source) ++ "))" : String}
+ 
+-def m8_a_promotion_source_carries_the_exact_finding(source):
++def m8_a_promotion_source_carries_the_exact_finding(kind,source):
+   {==}
+ # M-1: a promotion answers this call's own promotion, so the same id with
+ # different coordinates cannot answer another row's content.
+ law m1_the_promotion_answer_is_this_calls_promotion:
+   for id: String
+   for promoter: String
++  for source_kind: String
+   for source: String
++  for destination_kind: String
+   for destination: String
+   for finding: String
+-  {K.promotion_answer(id, promoter, source, destination, finding) == "SELECT json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by) FROM knowledge_promotions WHERE id=" ++ C.q(id) ++ " AND finding=" ++ C.q(finding) ++ " AND source=" ++ C.q(source) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter) ++ ";" : String}
++  {K.promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding) == "SELECT json_patch(json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by)," ++ K.endpoint_fields("",True{}) ++ ") FROM knowledge_promotions WHERE " ++ K.promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ";" : String}
+ 
+-def m1_the_promotion_answer_is_this_calls_promotion(id, promoter, source, destination, finding):
++def m1_the_promotion_answer_is_this_calls_promotion(id,promoter,source_kind,source,destination_kind,destination,finding):
+   {==}
+ 
+ 
+@@ -151,11 +138,11 @@ def m1_a_delivered_notice_answers_the_stored_row(output):
+ 
+ # M-1: the record statement is the finding, then its notice, then the answer.
+ law m1_the_record_statement_carries_the_finding_the_notice_and_the_answer:
+-  for id: String
+-  for author: String
+-  for claim: String
+-  for evidence: String
+-  for limits: String
++  for +id: String
++  for +author: String
++  for +claim: String
++  for +evidence: String
++  for +limits: String
+   {K.record_statements(id, author, claim, evidence, limits) == K.finding_statement(id,author,claim,evidence,limits) ++ K.notice_statement(id,author,claim,evidence,limits) ++ K.knowledge_answer(id,author,claim,evidence,limits) : String}
+ 
+ def m1_the_record_statement_carries_the_finding_the_notice_and_the_answer(id, author, claim, evidence, limits):
+@@ -171,14 +158,16 @@ def m8_the_destinations_are_all_recorded_for_the_finding():
+ 
+ 
+ law m1_the_promote_statement_carries_the_promotion_notice_and_answer:
+-  for id: String
+-  for promoter: String
+-  for source: String
+-  for destination: String
+-  for finding: String
+-  {K.promote_statements(id, promoter, source, destination, finding) == K.promotion_statement(id,promoter,source,destination,finding) ++ K.promotion_notice_statement(id,promoter,source,destination,finding) ++ K.promotion_answer(id,promoter,source,destination,finding) : String}
+-
+-def m1_the_promote_statement_carries_the_promotion_notice_and_answer(id, promoter, source, destination, finding):
++  for +id: String
++  for +promoter: String
++  for +source_kind: String
++  for +source: String
++  for +destination_kind: String
++  for +destination: String
++  for +finding: String
++  {K.promote_statements(id,promoter,source_kind,source,destination_kind,destination,finding) == K.promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ K.promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ K.promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding) : String}
++
++def m1_the_promote_statement_carries_the_promotion_notice_and_answer(id,promoter,source_kind,source,destination_kind,destination,finding):
+   {==}
+ 
+ # M-14: each promotion notice has its own identity and full sharing coordinates.
+@@ -190,7 +179,7 @@ def m14_the_promotion_notice_names_the_promotion(id):
+   {==}
+ 
+ law m14_the_promotion_notice_body_names_its_provenance:
+-  {K.promotion_notice_body() == "json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)" : String}
++  {K.promotion_notice_body() == "json_patch(json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)," ++ K.endpoint_fields("p.",True{}) ++ ")" : String}
+ 
+ def m14_the_promotion_notice_body_names_its_provenance():
+   {==}
+@@ -218,9 +207,10 @@ def m1_a_stored_record_result_delivers_its_notice(db,id,h,t):
+ 
+ def record_io(+db: String, +id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
+   do IO<Unit>:
+-    saved : String <- IO.try(String,Store.transact_sql(db,K.commit_sql(K.record_statements(id,author,claim,evidence,limits))))
+-    delivery : Result<&1,&1,U32 & String,String> <- K.deliver_record(db,id,saved)
+-    K.answered(delivery)
++    +saved : String <- IO.try(String,Store.transact_sql(db,K.commit_sql(K.record_statements(id,author,claim,evidence,limits))))
++    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
++      delivery : Result<&1,&1,U32 & String,String> <- K.deliver_record(db,id,saved)
++      K.answered(delivery))
+ 
+ law m1_the_record_io_queries_delivers_and_answers:
+   for db: String
+@@ -234,10 +224,10 @@ law m1_the_record_io_queries_delivers_and_answers:
+ def m1_the_record_io_queries_delivers_and_answers(db, id, author, claim, evidence, limits):
+   {==}
+ 
+-# M-8: the read's own IO sequence: one read-only query, then the answer.
++# M-8: the read resolves the stored schema and findings, then writes the answer.
+ def read_io(+db: String, +reader: String) -> IO(Unit):
+   do IO<Unit>:
+-    visible : String <- IO.try(String,DB.Sql.read(db,K.read_sql(reader)))
++    visible : String <- K.read_value(db,reader)
+     IO.write(visible)
+ 
+ law m8_the_read_io_queries_the_visible_findings_and_answers:
+@@ -271,9 +261,10 @@ def m1_a_stored_promotion_result_delivers_its_notice(db,id,h,t):
+ # M-1: the promotion commits its row and notice, delivers, then answers.
+ def promote_io(+db: String, +id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> IO(Unit):
+   do IO<Unit>:
+-    saved : String <- IO.try(String,Store.transact_sql(db,K.commit_sql(K.promote_statements(id,promoter,source,destination,finding))))
+-    delivery : Result<&1,&1,U32 & String,String> <- K.deliver_promotion(db,id,saved)
+-    K.answered(delivery)
++    +saved : String <- IO.try(String,Store.transact_sql(db,K.commit_sql(K.promote_statements(id,promoter,"session",source,"session",destination,finding))))
++    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
++      delivery : Result<&1,&1,U32 & String,String> <- K.deliver_promotion(db,id,saved)
++      K.answered(delivery))
+ 
+ law m1_the_promote_io_queries_delivers_and_answers:
+   for db: String
+@@ -287,8 +278,7 @@ law m1_the_promote_io_queries_delivers_and_answers:
+ def m1_the_promote_io_queries_delivers_and_answers(db, id, promoter, source, destination, finding):
+   {==}
+ 
+-# M-14: the three verbs build the three knowledge commands, including their
+-# argument positions, and a verb with too few arguments is refused.
++# M-14: command parsing retains the supplied knowledge coordinates and text.
+ law m14_the_record_verb_builds_a_knowledge_record:
+   for id: String
+   for author: String
+@@ -323,3 +313,133 @@ law m14_the_knowledge_verb_refuses_a_missing_argument:
+ 
+ def m14_the_knowledge_verb_refuses_a_missing_argument():
+   {==}
++
++law typed_records_preserve_the_authored_kind_and_evidence:
++  for id: String
++  for author: String
++  for kind: String
++  for claim: String
++  for evidence: String
++  for limits: String
++  {C.parse(["record-typed",id,author,kind,claim,evidence,limits]) == C.KnowledgeRecordTyped{id,author,kind,claim,evidence,limits} : C.Command}
++
++def typed_records_preserve_the_authored_kind_and_evidence(id,author,kind,claim,evidence,limits):
++  {==}
++
++law linked_records_preserve_the_authored_links:
++  for id: String
++  for author: String
++  for kind: String
++  for claim: String
++  for evidence: String
++  for limits: String
++  for links: String
++  {C.parse(["record-linked",id,author,kind,claim,evidence,limits,links]) == C.KnowledgeRecordLinked{id,author,kind,claim,evidence,limits,links} : C.Command}
++
++def linked_records_preserve_the_authored_links(id,author,kind,claim,evidence,limits,links):
++  {==}
++
++law knowledge_search_preserves_scope_and_complete_query:
++  for reader: String
++  for scope: String
++  for subject: String
++  for query: String
++  {C.parse(["knowledge-search",reader,scope,subject,query]) == C.KnowledgeSearch{reader,scope,subject,query} : C.Command}
++
++def knowledge_search_preserves_scope_and_complete_query(reader,scope,subject,query):
++  {==}
++
++law recursive_traversal_preserves_reference_direction_and_relation:
++  for reader: String
++  for scope: String
++  for subject: String
++  for reference: String
++  for direction: String
++  for relation: String
++  {C.parse(["knowledge-traverse",reader,scope,subject,reference,direction,relation,"recursive"]) == C.KnowledgeTraverse{reader,scope,subject,reference,direction,relation,True{}} : C.Command}
++
++def recursive_traversal_preserves_reference_direction_and_relation(reader,scope,subject,reference,direction,relation):
++  {==}
++
++law neighbor_traversal_preserves_reference_direction_and_relation:
++  for reader: String
++  for scope: String
++  for subject: String
++  for reference: String
++  for direction: String
++  for relation: String
++  {C.parse(["knowledge-traverse",reader,scope,subject,reference,direction,relation,"neighbors"]) == C.KnowledgeTraverse{reader,scope,subject,reference,direction,relation,False{}} : C.Command}
++
++def neighbor_traversal_preserves_reference_direction_and_relation(reader,scope,subject,reference,direction,relation):
++  {==}
++
++law scoped_detail_reads_preserve_finding_identity:
++  for reader: String
++  for scope: String
++  for subject: String
++  for id: String
++  {C.parse(["knowledge-scope",reader,scope,subject,"--id",id]) == C.KnowledgeScopeDetail{reader,scope,subject,id} : C.Command}
++
++def scoped_detail_reads_preserve_finding_identity(reader,scope,subject,id):
++  {==}
++
++law relation_commands_preserve_authored_coordinates:
++  for id: String
++  for author: String
++  for source: String
++  for relation: String
++  for target: String
++  {C.parse(["relate",id,author,source,relation,target]) == C.KnowledgeRelate{id,author,source,relation,target} : C.Command}
++
++def relation_commands_preserve_authored_coordinates(id,author,source,relation,target):
++  {==}
++
++law scoped_promotions_preserve_endpoint_kinds:
++  for id: String
++  for promoter: String
++  for source_kind: String
++  for source: String
++  for destination_kind: String
++  for destination: String
++  for finding: String
++  {C.parse(["promote-scoped",id,promoter,source_kind,source,destination_kind,destination,finding]) == C.KnowledgePromoteScoped{id,promoter,source_kind,source,destination_kind,destination,finding} : C.Command}
++
++def scoped_promotions_preserve_endpoint_kinds(id,promoter,source_kind,source,destination_kind,destination,finding):
++  {==}
++
++law group_promotions_resolve_the_registered_ensemble_owner:
++  for destination: String
++  {K.promotion_owner("group",destination) == "(SELECT owner FROM ensembles WHERE id=" ++ C.q(destination) ++ ")" : String}
++
++def group_promotions_resolve_the_registered_ensemble_owner(destination):
++  {==}
++
++law historical_group_reads_without_endpoint_columns_have_no_group_holdings:
++  for subject: String
++  {K.scope_findings_sql("group",subject,False{}) == "0" : String}
++
++def historical_group_reads_without_endpoint_columns_have_no_group_holdings(subject):
++  {==}
++
++law historical_reads_without_relations_return_an_empty_array:
++  for db: String
++  for reader: String
++  for scope: String
++  for subject: String
++  {K.relations_when_present(db,reader,scope,subject,False{}) == IO.pure(String,"[]\n") : IO(String)}
++
++def historical_reads_without_relations_return_an_empty_array(db,reader,scope,subject):
++  {==}
++
++law historical_promotions_omit_endpoint_kind_fields:
++  for row: String
++  {K.endpoint_fields(row,False{}) == "json('{}')" : String}
++
++def historical_promotions_omit_endpoint_kind_fields(row):
++  {==}
++
++law historical_promotions_have_session_destinations:
++  {K.destination_kind(False{}) == "'session'" : String}
++
++def historical_promotions_have_session_destinations():
++  {==}
+diff --git a/bend2/src/coordinator/laws.bend b/bend2/src/coordinator/laws.bend
+index af747192e..052ce4fff 100644
+--- a/bend2/src/coordinator/laws.bend
++++ b/bend2/src/coordinator/laws.bend
+@@ -9,6 +9,7 @@ import ./observer-checkpoint-laws.bend as ObserverCheckpointLaws
+ import ./instance-laws.bend as InstanceLaws
+ import ./messaging-laws.bend as MessagingLaws
+ import ./connect-laws.bend as ConnectLaws
++import ./control-laws.bend as ControlLaws
+ import ./naming-laws.bend as NamingLaws
+ import ./delivery.bend as Delivery
+ import ./turn.bend as Turn
+@@ -87,6 +88,7 @@ law m17_missing_native_result_reports_to_the_parent:
+   for +db: String
+   for +player: String
+   for +id: String
++  for +log: String
+   for +stderr: String
+   for +status: String
+   {Turn.result_missing(db, player, id, log, stderr, status, False{}) == Turn.report(db, player, id, "Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr) : IO(Unit)}
+@@ -837,7 +839,6 @@ law m2_omp_launch_reaches_the_omp_adapter:
+   for +model: String
+   for +effort: String
+   for +cwd: String
+-  for +log: String
+   for +stderr: String
+   for +session: String
+   for +task: String
+diff --git a/bend2/src/coordinator/receive-laws.bend b/bend2/src/coordinator/receive-laws.bend
+index 0f21cadf4..97740985a 100644
+--- a/bend2/src/coordinator/receive-laws.bend
++++ b/bend2/src/coordinator/receive-laws.bend
+@@ -28,25 +28,30 @@ import ../host/sqlite.bend as DB
+ import ../git/text.bend as Tx
+ import ../host/text.bend as Text
+ import ./store.bend as Store
++import ./control.bend as Control
+ 
+ law direct_replay_keeps_output_failure_for_completion:
+   for +db: String
+   for +player: String
+   for +id: String
+-  for cmd: String
+-  for model: String
+-  for effort: String
+-  for cwd: String
++  for +cmd: String
++  for +model: String
++  for +effort: String
++  for +cwd: String
+   for +task: String
+   for log: String
+   for session: String
+   for harness: String
+-  {Turn.choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,True{}) == (do IO<Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>>:
++  for directory: String
++  for prompt: String
++  for lock: U32
++  {Turn.choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock,True{}) == (do IO<Unit>:
++    receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,log)
+     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
+     written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
+-    IO.pure(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,Turn.replay_result(written))) : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
++    Turn.direct_replay_finished(db,player,lock,written)) : IO(Unit)}
+ 
+-def direct_replay_keeps_output_failure_for_completion(db,player,id,cmd,model,effort,cwd,task,log,session,harness):
++def direct_replay_keeps_output_failure_for_completion(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock):
+   {==}
+ 
+ law failed_replay_releases_and_wakes_before_reporting_output_error:
+@@ -109,7 +114,7 @@ law completion_without_parent_returns_output_failure:
+   for +event: String
+   for error: String
+   {Turn.finish_parent(db,player,id,log,Turn.Ended{status,event,error,False{}},False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+-    output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
++    output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
+     Text.Text.control_output(output)) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+ def completion_without_parent_returns_output_failure(db,player,id,log,status,event,error):
+diff --git a/bend2/src/harness/laws.bend b/bend2/src/harness/laws.bend
+index 832c9dd16..ed8c294e1 100644
+--- a/bend2/src/harness/laws.bend
++++ b/bend2/src/harness/laws.bend
+@@ -37,7 +37,6 @@ law m2_omp_fresh_start_is_the_spawn_attempt:
+   for +model: String
+   for +effort: String
+   for +cwd: String
+-  for +log: String
+   for +sessions: String
+   for session: String
+   for +stderr: String
+@@ -113,7 +112,6 @@ law m5_omp_resume_carries_the_accepted_session:
+   for +model: String
+   for +effort: String
+   for +cwd: String
+-  for +log: String
+   for +sessions: String
+   for +session: String
+   for +stderr: String
+diff --git a/bend2/src/host/laws.bend b/bend2/src/host/laws.bend
+index 3747ca43b..b00c1c9f2 100644
+--- a/bend2/src/host/laws.bend
++++ b/bend2/src/host/laws.bend
+@@ -1,7 +1,6 @@
+-# CLAIM: the operative laws whose real functions live in bend2/src/host, each stated over the
+-# function that implements it and proved beside its claim. The coordinator laws module imports
+-# this module, and the coordinator entry imports that, so every compile of the entry verifies
+-# every law here.
++# Host laws state equations over the host functions and prove each claim beside
++# its declaration. The coordinator law module imports them, and check-native.sh
++# verifies that module through the compiler's --check-only command.
+ #
+ # Policies: docs/bend2/laws-proposed.md. Reference: docs/bend2/reference/README.md, bend 2.0.25.
+ import Base
+-- 
+2.43.0
+
+
+From 2c0dc8268ae4eb22c41e1d010848e7aa978a9a20 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 15:51:49 -0700
+Subject: [PATCH 02/14] Update aggregate laws for current coordinator contracts
+
+---
+ bend2/src/coordinator/laws.bend | 61 +++++++++++++++++++++++----------
+ 1 file changed, 43 insertions(+), 18 deletions(-)
+
+diff --git a/bend2/src/coordinator/laws.bend b/bend2/src/coordinator/laws.bend
+index 052ce4fff..7b1519913 100644
+--- a/bend2/src/coordinator/laws.bend
++++ b/bend2/src/coordinator/laws.bend
+@@ -13,6 +13,8 @@ import ./control-laws.bend as ControlLaws
+ import ./naming-laws.bend as NamingLaws
+ import ./delivery.bend as Delivery
+ import ./turn.bend as Turn
++import ./agent-input.bend as AgentInput
++import ./message-status.bend as MessageStatus
+ import ../coordinator/commands.bend as C
+ import ./receive.bend as Receive
+ import ./guidance.bend as Guidance
+@@ -55,7 +57,7 @@ law m1_failed_delivery_is_not_an_acceptance:
+   for +saved: String
+   for +log: String
+   for +out: String
+-  {Delivery.result(saved, log, T.RRun{T.SExit{1}, out}) == Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
++  {Delivery.result(saved, log, T.RRun{T.SExit{1}, out}) == Fail{(1,"Message committed; session delivery failed (exit 1): " ++ out ++ "\nRead " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
+ 
+ def m1_failed_delivery_is_not_an_acceptance(saved, log, out):
+   {==}
+@@ -64,7 +66,7 @@ law m1_unstarted_delivery_is_not_an_acceptance:
+   for +saved: String
+   for +log: String
+   for +detail: String
+-  {Delivery.result(saved, log, T.RSpawn{detail}) == Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
++  {Delivery.result(saved, log, T.RSpawn{detail}) == Fail{(1,"Message committed; session delivery failed: " ++ detail ++ ". Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
+ 
+ def m1_unstarted_delivery_is_not_an_acceptance(saved, log, detail):
+   {==}
+@@ -101,9 +103,10 @@ law m17_missing_observation_reports_to_the_parent:
+   for +player: String
+   for +id: String
+   for +text: String
+-  {Turn.diagnostic(db, player, id, text, False{}) == Turn.report(db, player, id ++ ":observation", "Native output observation failed: " ++ text) : IO(Unit)}
++  for +event: String
++  {Turn.diagnostic(db, player, id, text, event, False{}) == Turn.report(db, player, id ++ ":observation", "Native output observation failed: " ++ text ++ Bool.pick(String,String.is_empty(event),"","\nNative event: " ++ event)) : IO(Unit)}
+ 
+-def m17_missing_observation_reports_to_the_parent(db, player, id, text):
++def m17_missing_observation_reports_to_the_parent(db, player, id, text, event):
+   {==}
+ 
+ # ---------------------------------------------------------------------------
+@@ -350,7 +353,7 @@ def m17_clean_receive_reports_completion():
+ # M-12: with no input still owed the receiver answers at once and does not
+ # re-enter delivery.
+ law m12_nothing_owed_answers_at_once:
+-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
++  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+   {Receive.continue_if(again, False{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+ def m12_nothing_owed_answers_at_once(again):
+@@ -490,7 +493,7 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
+ # session. The store's own schema declares that reference, so the database
+ # refuses a message from an unknown sender.
+ law m7_the_store_validates_the_sender_it_records:
+-  {C.schema() == C.wake_claim_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
++  {C.schema() == C.wake_claim_schema() ++ C.task_input_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');" ++ MessageStatus.schema()
+   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() ++ C.log_schema() : String}
+ 
+ def m7_the_store_validates_the_sender_it_records():
+@@ -538,7 +541,7 @@ law m8_player_registration_is_bound_to_the_stored_row:
+   for +branch: String
+   for +base: String
+   {C.sql(C.Player{id, parent, harness, model, effort, workspace, branch, base}) == "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ C.q(id) ++ "," ++ C.q(parent) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(workspace) ++ "," ++ C.q(branch) ++ "," ++ C.q(base) ++ ") ON CONFLICT(id) DO NOTHING;"
+-  ++ "SELECT json_object('error','player-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ C.q(parent) ++ ",'harness'," ++ C.q(harness) ++ ",'model'," ++ C.q(model) ++ ",'effort'," ++ C.q(effort) ++ ",'workspace'," ++ C.q(workspace) ++ ",'branch'," ++ C.q(branch) ++ ",'base'," ++ C.q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID. Retry recruit with the recorded assignment, or recruit a new ID with a new branch and unused path; retain the original work.') FROM sessions WHERE id=" ++ C.q(id) ++ " AND NOT " ++ C.player_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
++  ++ "SELECT json_object('error','player-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ C.q(parent) ++ ",'harness'," ++ C.q(harness) ++ ",'model'," ++ C.q(model) ++ ",'effort'," ++ C.q(effort) ++ ",'workspace'," ++ C.q(workspace) ++ ",'branch'," ++ C.q(branch) ++ ",'base'," ++ C.q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID and retain the original work. Retry with the recorded assignment. Move a finished Player with receiver ID HARNESS_CMD OUTPUT_LOG CWD. Use join for an additional Player in an existing checkout, or recruit when a separate worktree is needed.') FROM sessions WHERE id=" ++ C.q(id) ++ " AND NOT " ++ C.player_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
+   ++ C.session_result_where("id=" ++ C.q(id) ++ " AND " ++ C.player_matches(parent,harness,model,effort,workspace,branch,base)) : String}
+ 
+ def m8_player_registration_is_bound_to_the_stored_row(id, parent, harness, model, effort, workspace, branch, base):
+@@ -787,9 +790,11 @@ law m8_an_unregistered_player_is_refused_before_any_turn:
+   for +log: String
+   for +session: String
+   for +harness: String
+-  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,2,"Player is not registered; register it before starting a turn.") : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
++  for lock: U32
++  for supplied: Maybe<String>
++  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, lock, True{}, supplied) == IO.die(Unit,2,"Player is not registered; register it before starting a turn.") : IO(Unit)}
+ 
+-def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, model, effort, cwd, task, log, session, harness):
++def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, model, effort, cwd, task, log, session, harness, lock, supplied):
+   {==}
+ 
+ # ---------------------------------------------------------------------------
+@@ -966,7 +971,7 @@ law m5_the_retained_muse_argv_resumes_the_recorded_conversation:
+   for +effort: String
+   for +prompt_file: String
+   for +session: String
+-  {Turn.muse_retained_arguments(cmd,model,effort,prompt_file,session) == List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session])) : List<String>}
++  {Turn.muse_retained_arguments(cmd,model,effort,prompt_file,session) == List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session,"--allow-workspace-switch"])) : List<String>}
+ 
+ def m5_the_retained_muse_argv_resumes_the_recorded_conversation(cmd, model, effort, prompt_file, session):
+   {==}
+@@ -1078,21 +1083,39 @@ law a_recorded_deferred_note_is_not_written_again:
+   for +db: String
+   for +player: String
+   for +id: String
+-  {Turn.write_deferred(db,player,id,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
++  for failure: String
++  for pending: String
++  {Turn.write_deferred(db,player,id,failure,pending,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+ 
+-def a_recorded_deferred_note_is_not_written_again(db,player,id):
++def a_recorded_deferred_note_is_not_written_again(db,player,id,failure,pending):
+   {==}
+ 
+ law an_absent_deferred_note_names_the_outstanding_guidance:
+   for +db: String
+   for +player: String
+   for +id: String
+-  {Turn.write_deferred(db,player,id,False{}) == (do IO<Unit>:
+-    +pending : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_pending_sql(player)))
+-    noted : Unit <- Turn.report(db,player,id ++ ":deferred",Turn.deferred_text(id,Tx.trim_nl(pending)))
++  for +failure: String
++  for +pending: String
++  {Turn.write_deferred(db,player,id,failure,pending,False{}) == (do IO<Unit>:
++    noted : Unit <- Turn.report(db,player,id ++ ":deferred",Bool.pick(String,String.is_empty(failure),Turn.deferred_text(id,pending),Turn.deferred_failure_text(id,failure,pending)))
+     IO.pure(Unit,Unit{})) : IO(Unit)}
+ 
+-def an_absent_deferred_note_names_the_outstanding_guidance(db,player,id):
++def an_absent_deferred_note_names_the_outstanding_guidance(db,player,id,failure,pending):
++  {==}
++
++law deferred_reporting_reads_presence_guidance_and_failure:
++  for +db: String
++  for +player: String
++  for +id: String
++  for +event: String
++  for report_id: String
++  {Turn.publish_deferred(db,player,id,event,report_id,False{}) == (do IO<Unit>:
++    presence : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_recorded_sql(id)))
++    pending : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_pending_sql(player)))
++    failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
++    Turn.write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))) : IO(Unit)}
++
++def deferred_reporting_reads_presence_guidance_and_failure(db,player,id,event,report_id):
+   {==}
+ 
+ law completion_preparation_checks_the_upstream_recipient:
+@@ -1101,11 +1124,13 @@ law completion_preparation_checks_the_upstream_recipient:
+   for +id: String
+   for log: String
+   for stderr: String
+-  for outcome: Turn.Outcome
++  for +outcome: Turn.Outcome
+   {Turn.prepare(db,player,id,log,stderr,outcome) == (do IO<Unit>:
+     +generation : String <- IO.pure(String,Turn.generation_log(log,id))
+     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
+-    Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))) : IO(Unit)}
++    reported : Unit <- Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
++    success : Bool <- Turn.settlement_success(db,outcome)
++    AgentInput.settle_if(db,player,id,success)) : IO(Unit)}
+ 
+ def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
+   {==}
+-- 
+2.43.0
+
+
+From 8303bb66c8aeb90ced1ecc2539cbeb8994e98c48 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 16:02:47 -0700
+Subject: [PATCH 03/14] Use the shared message status namespace in coordinator
+ laws
+
+---
+ bend2/src/coordinator/laws.bend | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bend2/src/coordinator/laws.bend b/bend2/src/coordinator/laws.bend
+index 7b1519913..3529986e3 100644
+--- a/bend2/src/coordinator/laws.bend
++++ b/bend2/src/coordinator/laws.bend
+@@ -14,7 +14,7 @@ import ./naming-laws.bend as NamingLaws
+ import ./delivery.bend as Delivery
+ import ./turn.bend as Turn
+ import ./agent-input.bend as AgentInput
+-import ./message-status.bend as MessageStatus
++import ../coordinator/message-status.bend as MessageStatus
+ import ../coordinator/commands.bend as C
+ import ./receive.bend as Receive
+ import ./guidance.bend as Guidance
+-- 
+2.43.0
+
+
+From 5942313eea62952451d67f2c4dfc8ba29a20286f Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 16:17:10 -0700
+Subject: [PATCH 04/14] Update receive laws for current admission and
+ completion contracts
+
+---
+ bend2/src/coordinator/receive-laws.bend | 150 +++++++++++++-----------
+ 1 file changed, 80 insertions(+), 70 deletions(-)
+
+diff --git a/bend2/src/coordinator/receive-laws.bend b/bend2/src/coordinator/receive-laws.bend
+index 97740985a..2947988e8 100644
+--- a/bend2/src/coordinator/receive-laws.bend
++++ b/bend2/src/coordinator/receive-laws.bend
+@@ -140,10 +140,11 @@ law busy_receive_only_reports_queued:
+   for effort: String
+   for cwd: String
+   for log: String
+-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,None{},again) == Receive.receive_status(db,session,"queued") : IO(Result<&1,&1,U32 & String,Unit>)}
++  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  for predecessor: String
++  {Receive.acquired(db,session,cmd,model,effort,cwd,log,None{},again,predecessor) == Receive.receive_status(db,session,"queued") : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def busy_receive_only_reports_queued(db,session,cmd,model,effort,cwd,log,again):
++def busy_receive_only_reports_queued(db,session,cmd,model,effort,cwd,log,again,predecessor):
+   {==}
+ 
+ # The recovery attachment boundary opens the supplied attempt directory and
+@@ -198,6 +199,7 @@ law m17_not_refused_conversation_completes_the_attempt:
+   for +id: String
+   for +log: String
+   for +stderr: String
++  for +attempt: String
+   for +cursor: String
+   for native: String
+   for cwd: String
+@@ -205,10 +207,11 @@ law m17_not_refused_conversation_completes_the_attempt:
+   for -lock: Maybe<U32>
+   for +outcome: Turn.Outcome
+   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,False{}) == Receive.completed(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  for superseded: Bool
++  {Receive.complete_or_restart(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,False{},superseded) == Receive.completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,superseded) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def m17_not_refused_conversation_completes_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again):
++def m17_not_refused_conversation_completes_the_attempt(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,superseded):
+   {==}
+ 
+ # M-17: the branch taken when the recorded conversation is refused (gone =
+@@ -219,6 +222,7 @@ law m17_refused_conversation_restarts_the_attempt:
+   for +id: String
+   for log: String
+   for stderr: String
++  for attempt: String
+   for +cursor: String
+   for native: String
+   for cwd: String
+@@ -226,25 +230,26 @@ law m17_refused_conversation_restarts_the_attempt:
+   for -lock: Maybe<U32>
+   for outcome: Turn.Outcome
+   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,True{}) == Receive.restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  for superseded: Bool
++  {Receive.complete_or_restart(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,True{},superseded) == Receive.restart_pending(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again):
++def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,superseded):
+   {==}
+ 
+ # M-17: the receive entry's own dispatch. The branch argument is the refusal
+-# predicate Turn.refusal(attempt ++ "/native",
++# predicate Turn.refusal(attempt ++ "/native.stderr",
+ # Bool.not(String.is_empty(native)), outcome) while the session remains open.
+ # The exit and terminal stop are recorded before dispatch. The stderr path handed to
+ # the branches is the derived attempt ++ "/native.stderr". The written-out
+-# dispatch below is the whole obligation: reading a different predicate, or
+-# passing the undecorated attempt, breaks this proof.
+-def observed_dispatch(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
++# dispatch below carries the refusal result, derived stderr path, and original
++# attempt directory to the completion or restart branch.
++def observed_dispatch(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+   do IO<Result<&1,&1,U32 & String,Unit>>:
+     exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
+     closed : Bool <- Stop.stopped(db,session)
+-    gone : Bool <- Turn.refusal(attempt ++ "/native", Bool.not(String.is_empty(native)), outcome)
+-    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)))
++    gone : Bool <- Turn.refusal(attempt ++ "/native.stderr",Bool.not(String.is_empty(native)),outcome)
++    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)),superseded)
+ 
+ law m17_the_observed_dispatch_is_the_refusal_it_read:
+   for +db: String
+@@ -259,10 +264,11 @@ law m17_the_observed_dispatch_is_the_refusal_it_read:
+   for -lock: Maybe<U32>
+   for +outcome: Turn.Outcome
+   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.observed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again) == observed_dispatch(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  for superseded: Bool
++  {Receive.observed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,superseded) == observed_dispatch(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,superseded) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again):
++def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,superseded):
+   {==}
+ 
+ # M-17: the restart reads the recovery-input row, records the recovery, and
+@@ -270,14 +276,14 @@ def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,na
+ # and settles question deliveries before acknowledging and retiring it. The
+ # written-out order is the whole obligation: a reordering of any two steps
+ # breaks this proof.
+-def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
++def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, attempt: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+   do IO<Result<&1,&1,U32 & String,Unit>>:
+     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
+     saved : Unit <- Receive.record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
+     observer_released : Unit <- Receive.release_observer(lock)
+     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
+     delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":recovery","1",""))
+-    next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
++    next : Result<&1,&1,U32 & String,Unit> <- again(attempt)
+     woken : Result<&1,&1,U32 & String,Unit> <- Receive.wake_due(db,session,cursor,launch => Receive.wake_launch(db,launch))
+     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
+     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
+@@ -289,16 +295,17 @@ law m17_restart_records_before_releasing_and_waking:
+   for +db: String
+   for +session: String
+   for +id: String
++  for attempt: String
+   for +cursor: String
+   for +native: String
+   for +cwd: String
+   for +handle: U32
+   for -lock: Maybe<U32>
+   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) == restart_records_before_releasing_and_waking(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  {Receive.restart_pending(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again) == restart_records_before_releasing_and_waking(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def m17_restart_records_before_releasing_and_waking(db,session,id,cursor,native,cwd,handle,lock,deliveries,again):
++def m17_restart_records_before_releasing_and_waking(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again):
+   {==}
+ 
+ 
+@@ -361,83 +368,82 @@ def m17_recovery_input_is_one_guarded_transaction(db,session,id,native,note):
+ 
+ # M-8: one owner resolves the durable attempt before admitting another native.
+ law acquired_native_owner_resolves_recorded_attempt:
+-  for db: String
+-  for session: String
++  for +db: String
++  for +session: String
+   for cmd: String
+   for model: String
+   for effort: String
+   for cwd: String
+   for log: String
+-  for lock: U32
+-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again) == Receive.acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for +lock: U32
++  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  for predecessor: String
++  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again,predecessor) == (do IO<Result<&1,&1,U32 & String,Unit>>:
++    ensured : Unit <- Store.ensure_before_begin(db)
++    Receive.acquired_recorded(db,session,lock,again,continuation => Receive.acquired_pending(db,session,cmd,model,effort,cwd,log,lock,continuation,predecessor))) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,again):
++def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,again,predecessor):
+   {==}
+ 
+-def recorded_attempt_before_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
++def recorded_attempt_before_pending(+db: String, +session: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+   do IO<Result<&1,&1,U32 & String,Unit>>:
+     +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
+     +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
+     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
+-    Receive.acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,attempt,recovery,again)
++    Receive.acquired_attempt(db,session,lock,attempt,recovery,again,pending)
+ 
+ law native_admission_reads_current_attempt_before_pending_input:
+   for +db: String
+   for +session: String
+-  for cmd: String
+-  for model: String
+-  for effort: String
+-  for cwd: String
+-  for log: String
+   for +lock: U32
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again) == recorded_attempt_before_pending(db,session,cmd,model,effort,cwd,log,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  for -pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)
++  {Receive.acquired_recorded(db,session,lock,again,pending) == recorded_attempt_before_pending(db,session,lock,again,pending) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def native_admission_reads_current_attempt_before_pending_input(db,session,cmd,model,effort,cwd,log,lock,again):
++def native_admission_reads_current_attempt_before_pending_input(db,session,lock,again,pending):
+   {==}
+ 
+ law surviving_attempt_recovery_preserves_its_guard:
+   for db: String
+   for session: String
+-  for cmd: String
+-  for model: String
+-  for effort: String
+-  for cwd: String
+-  for log: String
+   for lock: U32
+   for directory: String
+   for args: String
+-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,directory,Some{args},again) == Receive.recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  for pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)
++  {Receive.acquired_attempt(db,session,lock,directory,Some{args},again,pending) == Receive.recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def surviving_attempt_recovery_preserves_its_guard(db,session,cmd,model,effort,cwd,log,lock,directory,args,again):
++def surviving_attempt_recovery_preserves_its_guard(db,session,lock,directory,args,again,pending):
+   {==}
+ 
+-def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
++def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+   do IO<Result<&1,&1,U32 & String,Unit>>:
++    failed : Bool <- Receive.outcome_failed(db,outcome)
++    transient : Bool <- Receive.transient_provider_error(db,outcome)
++    +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,Receive.observation_clear(outcome)))),cursor,"0"))
+     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
+     observer_released : Unit <- Receive.release_observer(lock)
+     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
+-    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => Receive.ack_then_retire(handle))
+-    woken : Result<&1,&1,U32 & String,Unit> <- Receive.wake_due(db,session,cursor,target => Receive.wake_launch(db,target))
+-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,woken))
++    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => Receive.ack_then_retire(handle),superseded)
++    Receive.wake_if_kept(db,session,pending_cursor,superseded,finished)
+ 
+ law native_completion_is_committed_before_owner_release:
+   for +db: String
+   for +session: String
+   for +id: String
+   for +log: String
++  for attempt: String
+   for +stderr: String
+   for +cursor: String
+   for +handle: U32
+   for -lock: Maybe<U32>
+   for +outcome: Turn.Outcome
+   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.completed(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again) == completion_prepares_before_owner_release(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  for +superseded: Bool
++  {Receive.completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,superseded) == completion_prepares_before_owner_release(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,superseded) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def native_completion_is_committed_before_owner_release(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again):
++def native_completion_is_committed_before_owner_release(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,superseded):
+   {==}
+ 
+ # An incomplete native observation keeps the attempt available for recovery.
+@@ -469,9 +475,9 @@ def retired_slot_advances_only_after_acknowledgement(handle):
+ def direct_admission_checks_receive(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, handle: U32) -> IO(Unit):
+   do IO<Unit>:
+     retained : Unit <- Turn.retained_receive_guard(db,player)
++    direct : Unit <- Turn.unresolved_direct_execution_guard(db,player)
+     harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+-    result : Result<&1,&1,U32 & String,Maybe<Turn.Outcome>> <- Turn.player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)
+-    Turn.complete_locked(db,player,id,log,handle,result)
++    Turn.player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,handle,missing,None{})
+ 
+ law direct_turn_checks_receive_before_admission:
+   for +db: String
+@@ -564,18 +570,19 @@ law retained_observation_uses_the_reconciled_input_cursor:
+   for lock: Maybe<U32>
+   for +outcome: Turn.Outcome
+   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+   for adopted: Bool
+-  {Receive.observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),again,adopted) == Receive.observed(db,session,id,log,Receive.reconciled_cursor(cursor,adopted,outcome),native,cwd,attempt,handle,lock,outcome,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for superseded: Bool
++  {Receive.observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),again,adopted,superseded) == Receive.observed(db,session,id,log,Receive.reconciled_cursor(cursor,adopted,outcome),native,cwd,attempt,handle,lock,outcome,deliveries,again,superseded) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def retained_observation_uses_the_reconciled_input_cursor(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted):
++def retained_observation_uses_the_reconciled_input_cursor(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded):
+   {==}
+ 
+-def guarded_attempt_observation(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
++def guarded_attempt_observation(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+   do IO<Result<&1,&1,U32 & String,Unit>>:
+-    reconciled : Unit <- Stop.reconcile(db,session,id,directory)
++    reconciled : Unit <- Stop.observing(db,session,id,directory)
+     observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle,"unknown")
+-    Receive.observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted)
++    Receive.completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
+ 
+ law guarded_observation_preserves_its_adopted_origin:
+   for +db: String
+@@ -592,7 +599,7 @@ law guarded_observation_preserves_its_adopted_origin:
+   for native: String
+   for +handle: U32
+   for lock: Maybe<U32>
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+   for adopted: Bool
+   {Receive.observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted) == guarded_attempt_observation(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+@@ -613,7 +620,7 @@ law keeper_recovery_preserves_the_original_input_cursor:
+   for directory: String
+   for native: String
+   for +handle: U32
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+   {Receive.observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again) == Receive.observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+ def keeper_recovery_preserves_the_original_input_cursor(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again):
+@@ -639,7 +646,7 @@ law the_wake_driver_reads_the_count_before_it_locks:
+ def the_wake_driver_reads_the_count_before_it_locks(db,session,cursor,launch):
+   {==}
+ 
+-def continuation_reads_the_count_then_locks(+db: String, +session: String, +cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
++def continuation_reads_the_count_then_locks(+db: String, +session: String, +cursor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+   do IO<Result<&1,&1,U32 & String,Unit>>:
+     pending : String <- IO.try(String,DB.Sql.query(db,Receive.pending_count_sql(session,cursor)))
+     Receive.continue_locked(db,session,cursor,again,Bool.not(String.eq(pending,"0\n")))
+@@ -648,7 +655,7 @@ law the_continuation_reads_the_count_before_it_locks:
+   for +db: String
+   for +session: String
+   for +cursor: String
+-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
++  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+   {Receive.continue_pending(db,session,cursor,again) == continuation_reads_the_count_then_locks(db,session,cursor,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+ def the_continuation_reads_the_count_before_it_locks(db,session,cursor,again):
+@@ -728,7 +735,8 @@ def fenced_admission_reads_claim_and_custody(+db: String, +session: String, +cur
+     +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
+     +dead : Bool <- Receive.custody_dead(db,trimmed,String.is_empty(trimmed))
+     recovered : Unit <- Receive.recover_if_dead(db,session,dead)
+-    Receive.wake_admit(db,session,cursor,launch,lock,state,dead)
++    replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
++    Receive.wake_admit(db,session,replay_cursor,launch,lock,state,dead)
+ 
+ law the_wake_admits_on_claim_and_custody:
+   for +db: String
+@@ -777,17 +785,19 @@ law a_failed_recovery_read_keeps_the_obligation:
+ def a_failed_recovery_read_keeps_the_obligation():
+   {==}
+ 
+-law a_held_obligation_launches_nothing:
++law a_held_obligation_adopts_recorded_work:
+   for +db: String
+   for +session: String
+   for +cursor: String
+   for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+   for lock: U32
+   {Receive.wake_stand(db,session,cursor,launch,lock,True{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
++    +found : String <- Receive.wake_found(db,session,cursor)
+     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+-    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})) : IO(Result<&1,&1,U32 & String,Unit>)}
++    Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(found),
++      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),Receive.wake_launch(db,found))) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def a_held_obligation_launches_nothing(db,session,cursor,launch,lock):
++def a_held_obligation_adopts_recorded_work(db,session,cursor,launch,lock):
+   {==}
+ 
+ law a_released_obligation_proceeds_to_claim_and_launch:
+-- 
+2.43.0
+
+
+From d404492b51ab5e2597f805c467123498b961d43d Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 16:36:02 -0700
+Subject: [PATCH 05/14] Update stop laws for current receive and runtime
+ contracts
+
+---
+ bend2/src/coordinator/stop-laws.bend | 22 +++++++++++++---------
+ 1 file changed, 13 insertions(+), 9 deletions(-)
+
+diff --git a/bend2/src/coordinator/stop-laws.bend b/bend2/src/coordinator/stop-laws.bend
+index a9ba20f0a..44c75f2a0 100644
+--- a/bend2/src/coordinator/stop-laws.bend
++++ b/bend2/src/coordinator/stop-laws.bend
+@@ -6,6 +6,7 @@ import ../host/process.bend as P
+ import ../host/session-lock.bend as Lock
+ import ../host/sqlite.bend as DB
+ import ../git/text.bend as Tx
++import ../context/native-runtime.bend as ContextRuntime
+ 
+ # These equations bind command admission and keeper control effects. SQLite
+ # transaction isolation and native process lifetime remain host obligations;
+@@ -18,10 +19,11 @@ law stopped_receive_cannot_acquire_an_owner:
+   for effort: String
+   for cwd: String
+   for log: String
+-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.available(db,session,cmd,model,effort,cwd,log,again,True{}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  for predecessor: String
++  {Receive.available(db,session,cmd,model,effort,cwd,log,again,True{},predecessor) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def stopped_receive_cannot_acquire_an_owner(db,session,cmd,model,effort,cwd,log,again):
++def stopped_receive_cannot_acquire_an_owner(db,session,cmd,model,effort,cwd,log,again,predecessor):
+   {==}
+ 
+ def refused_admission_releases(lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+@@ -46,10 +48,11 @@ law stopped_admission_releases_without_launch:
+   for storage: String
+   for prompt: String
+   for recovery: String
+-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,again,False{}) == refused_admission_releases(lock) : IO(Result<&1,&1,U32 & String,Unit>)}
++  for predecessor: String
++  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
++  {Receive.start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,predecessor,again,False{}) == refused_admission_releases(lock) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+-def stopped_admission_releases_without_launch(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,again):
++def stopped_admission_releases_without_launch(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,predecessor,again):
+   {==}
+ 
+ # Both direct turns and retained receives call this transaction while holding
+@@ -121,6 +124,7 @@ def accepted_stop(+db: String, +session: String, id: String, reason: String, for
+     error : String <- IO.try(String,Stop.request(db,session,id,reason,force))
+     checked : Unit <- Stop.validate(error)
+     reconciled : Unit <- Stop.reconcile_request(db,session)
++    runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
+     result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
+     IO.write(result)
+ 
+@@ -178,9 +182,9 @@ def stopped_completion_reports_to_the_recorded_upstream_recipient(session,attemp
+   {==}
+ 
+ law admitted_stop_clears_only_its_own_claim:
+-  for session: String
+-  for id: String
+-  for reason: String
++  for +session: String
++  for +id: String
++  for +reason: String
+   {Stop.stop_claim_sql(session,id,reason) == "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ");" : String}
+ 
+ def admitted_stop_clears_only_its_own_claim(session,id,reason):
+-- 
+2.43.0
+
+
+From 673e9a179db8ab801811d7f11594b4ffe3314003 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 17:41:54 -0700
+Subject: [PATCH 06/14] Refresh messaging laws for current admission contracts
+
+---
+ bend2/src/coordinator/messaging-laws.bend | 20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/bend2/src/coordinator/messaging-laws.bend b/bend2/src/coordinator/messaging-laws.bend
+index 671f47218..cf2a74f9f 100644
+--- a/bend2/src/coordinator/messaging-laws.bend
++++ b/bend2/src/coordinator/messaging-laws.bend
+@@ -23,6 +23,14 @@ law ensemble_commands_apply_the_owner_and_coupling_declaration:
+ def ensemble_commands_apply_the_owner_and_coupling_declaration(id,owner,coupling):
+   {==}
+ 
++law ensemble_ensure_commands_preserve_recorded_coupling:
++  for id: String
++  for owner: String
++  {C.sql(C.EnsembleEnsure{id,owner}) == C.ensemble_ensure_sql(id,owner) : String}
++
++def ensemble_ensure_commands_preserve_recorded_coupling(id,owner):
++  {==}
++
+ law ensemble_member_commands_apply_explicit_membership:
+   for id: String
+   for owner: String
+@@ -33,12 +41,12 @@ law ensemble_member_commands_apply_explicit_membership:
+ def ensemble_member_commands_apply_explicit_membership(id,owner,session,action):
+   {==}
+ 
+-law ensemble_creation_defaults_to_loose:
++law ensemble_commands_without_coupling_select_ensure:
+   for id: String
+   for owner: String
+-  {C.parse(["ensemble",id,owner]) == C.Ensemble{id,owner,"loose"} : C.Command}
++  {C.parse(["ensemble",id,owner]) == C.EnsembleEnsure{id,owner} : C.Command}
+ 
+-def ensemble_creation_defaults_to_loose(id,owner):
++def ensemble_commands_without_coupling_select_ensure(id,owner):
+   {==}
+ 
+ law message_policy_schema_records_roles_coupling_and_membership:
+@@ -90,7 +98,7 @@ def operator_routes_require_an_explicit_top_level_conductor(sender,recipient):
+ law message_routes_require_registered_distinct_sessions_and_a_permitted_relation:
+   for +sender: String
+   for +recipient: String
+-  {C.message_route(sender,recipient) == "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR (" ++ C.assigned_role(sender) ++ "='conductor' AND " ++ C.descendant(sender,recipient) ++ ") OR " ++ C.tight_peers(sender,recipient) ++ ")) OR " ++ C.operator_route(sender,recipient) ++ "))" : String}
++  {C.message_route(sender,recipient) == "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ C.assigned_role(sender) ++ "='conductor' AND " ++ C.descendant(sender,recipient) ++ ") OR " ++ C.tight_peers(sender,recipient) ++ ")) OR " ++ C.operator_route(sender,recipient) ++ "))" : String}
+ 
+ def message_routes_require_registered_distinct_sessions_and_a_permitted_relation(sender,recipient):
+   {==}
+@@ -135,7 +143,7 @@ law ensemble_membership_requires_the_owner_and_registered_agent_members:
+   for +action: String
+   {C.ensemble_member_sql(id,owner,session,action) == "DELETE FROM ensemble_members WHERE ensemble=" ++ C.q(id) ++ " AND session=" ++ C.q(session) ++ " AND " ++ C.q(action) ++ "='remove' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(id) ++ " AND owner=" ++ C.q(owner) ++ ");"
+   ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ C.q(id) ++ "," ++ C.q(session) ++ " WHERE " ++ C.q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(id) ++ " AND owner=" ++ C.q(owner) ++ ") AND " ++ C.assigned_role(C.q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ");"
+-  ++ "SELECT json_object('ensemble'," ++ C.q(id) ++ ",'owner'," ++ C.q(owner) ++ ",'session'," ++ C.q(session) ++ ",'membership'," ++ C.q(action) ++ ") WHERE EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(id) ++ " AND owner=" ++ C.q(owner) ++ ") AND ((" ++ C.q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ C.q(id) ++ " AND session=" ++ C.q(session) ++ ")) OR (" ++ C.q(action) ++ "='remove' AND NOT EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ C.q(id) ++ " AND session=" ++ C.q(session) ++ ")));" : String}
++  ++ C.ensemble_member_result_sql(id,owner,session,action) : String}
+ 
+ def ensemble_membership_requires_the_owner_and_registered_agent_members(id,owner,session,action):
+   {==}
+@@ -162,7 +170,7 @@ law committed_message_routes_refuse_before_endpoint_delivery:
+   for db: String
+   for command: C.Command
+   for +saved: String
+-  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))))) : IO(Result<&1,&1,U32 & String,String>)}
++  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\"")))))))))) : IO(Result<&1,&1,U32 & String,String>)}
+ 
+ def committed_message_routes_refuse_before_endpoint_delivery(db,command,saved):
+   {==}
+-- 
+2.43.0
+
+
+From ddd3fe6484aa562591813566287df42512049d74 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 17:51:09 -0700
+Subject: [PATCH 07/14] Refresh control and Muse laws for current IO and
+ arguments
+
+---
+ bend2/src/coordinator/control-laws.bend | 32 ++++++++++++++++++-------
+ bend2/src/harness/laws.bend             |  4 ++--
+ 2 files changed, 25 insertions(+), 11 deletions(-)
+
+diff --git a/bend2/src/coordinator/control-laws.bend b/bend2/src/coordinator/control-laws.bend
+index 3542ebe40..380545434 100644
+--- a/bend2/src/coordinator/control-laws.bend
++++ b/bend2/src/coordinator/control-laws.bend
+@@ -2,7 +2,6 @@ import Base
+ import ./control.bend as Control
+ import ../coordinator/commands.bend as C
+ import ./store.bend as Store
+-import ./wake.bend as Wake
+ import ./delivery.bend as Delivery
+ import ./recruit.bend as Recruit
+ import ./knowledge.bend as Knowledge
+@@ -38,13 +37,13 @@ law principal_startup_checks_assignment_and_operator_scope:
+ def principal_startup_checks_assignment_and_operator_scope(session,harness,model,effort,cwd):
+   {==}
+ 
+-law native_receiver_checks_harness_stop_and_endpoint_admission:
++law native_receiver_checks_harness_model_directory_and_endpoint_admission:
+   for +session: String
+   for +endpoint: String
+   for +cwd: String
+-  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
++  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
+ 
+-def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint,cwd):
++def native_receiver_checks_harness_model_directory_and_endpoint_admission(session,endpoint,cwd):
+   {==}
+ 
+ law receiver_directory_reads_the_supplied_or_recorded_path:
+@@ -72,7 +71,6 @@ law detached_delivery_commits_before_launch_and_checks_refusals:
+   {Control.dispatch_body(db,id,sender,recipient,kind,body) == (do IO<String>:
+   +saved : String <- IO.try(String,Store.commit(db,C.Message{id,sender,recipient,kind,body}))
+   launched : String <- Control.dispatch_admitted(db,id,saved,Bool.or(Store.refused(saved),Tx.starts_with(saved,"{\"error\":\"session-stopped\"")))
+-  woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,id)
+   IO.pure(String,launched)) : IO(String)}
+ 
+ def detached_delivery_commits_before_launch_and_checks_refusals(db,id,sender,recipient,kind,body):
+@@ -91,14 +89,30 @@ law principal_startup_validates_before_assignment_and_dispatch:
+   for +task: String
+   {Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task) == (do IO<String>:
+   body : String <- IO.try(String,Text.Text.read(task))
++  configured : String <- Control.start_setup(db,session,harness,cmd,model,effort,cwd,log)
++  Control.dispatch_body(db,id,"operator",session,"task",body)) : IO(String)}
++
++def principal_startup_validates_before_assignment_and_dispatch(db,session,harness,cmd,model,effort,cwd,log,id,task):
++  {==}
++
++law principal_startup_reads_the_assigned_session_after_admission:
++  for +db: String
++  for +session: String
++  for harness: String
++  for cmd: String
++  for +model: String
++  for effort: String
++  for cwd: String
++  for log: String
++  {Control.start_setup(db,session,harness,cmd,model,effort,cwd,log) == (do IO<String>:
+   workspace : String <- IO.try(String,Host.Control.workspace(cwd))
+   schema : String <- IO.try(String,Store.commit(db,C.Session{session}))
+   endpoint : String <- Control.configured_endpoint(db,session,cmd,log,model)
+   configured : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ Control.start_sql(session,harness,model,effort,workspace,endpoint) ++ "COMMIT;"))
+   allowed : Unit <- Control.startup_refused(Tx.trim_nl(configured))
+-  Control.dispatch_body(db,id,"operator",session,"task",body)) : IO(String)}
++  IO.try(String,Store.read(db,C.Session{session}))) : IO(String)}
+ 
+-def principal_startup_validates_before_assignment_and_dispatch(db,session,harness,cmd,model,effort,cwd,log,id,task):
++def principal_startup_reads_the_assigned_session_after_admission(db,session,harness,cmd,model,effort,cwd,log):
+   {==}
+ 
+ law detached_turn_requires_a_recruited_active_supported_player:
+@@ -118,7 +132,7 @@ law detached_turn_uses_the_recorded_assignment_and_native_identity:
+   {Control.dispatch_turn(db,player,id,cmd,log,task) == (do IO<String>:
+   found : String <- IO.try(String,Store.commit(db,C.Session{player}))
+   present : String <- Control.registered(found)
+-  allowed : String <- IO.try(String,DB.Sql.query(db,Control.turn_admission_sql(player)))
++  allowed : String <- IO.try(String,DB.Sql.read(db,Control.turn_admission_sql(player)))
+   admitted : Unit <- Control.turn_admitted(String.eq(allowed,"1\n"))
+   command : Unit <- Control.command_present(String.is_empty(cmd))
+   harness_cmd : String <- IO.try(String,Host.Control.command(cmd))
+@@ -237,7 +251,7 @@ law receiver_update_changes_only_an_admitted_endpoint:
+   for +cwd: String
+   for +admitted: String
+   {Control.receiver_update_sql(session,endpoint,cwd,admitted) == ("UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
+-++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model with configure and the working directory with receiver, then dispatch complete task text with dispatch TEXT --to SESSION. Pass the CWD argument when only the directory is missing. Then inspect the session and retained inbox and retry; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
++++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model with configure and the working directory with receiver, then dispatch complete task text with dispatch TEXT --to SESSION. Pass the CWD argument when only the directory is missing. Inspect the session and retained inbox and retry. Receiver registration preserves an explicit stop; resume SESSION --lift-stop explicitly lifts it and continues pending work.') WHERE NOT " ++ admitted ++ ";"
+ ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";") : String}
+ 
+ def receiver_update_changes_only_an_admitted_endpoint(session,endpoint,cwd,admitted):
+diff --git a/bend2/src/harness/laws.bend b/bend2/src/harness/laws.bend
+index ed8c294e1..17c44da9c 100644
+--- a/bend2/src/harness/laws.bend
++++ b/bend2/src/harness/laws.bend
+@@ -160,7 +160,7 @@ law m5_muse_resume_carries_the_accepted_session:
+   for +stderr: String
+   for +session: String
+   for +task: String
+-  {Muse.resume_player(cmd, model, effort, cwd, stderr, session, task) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Muse.arguments(cmd,model,effort,task),["--session-id",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
++  {Muse.resume_player(cmd, model, effort, cwd, stderr, session, task) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Muse.arguments(cmd,model,effort,task),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session,"--allow-workspace-switch"]))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+ 
+ def m5_muse_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session, task):
+   {==}
+@@ -200,7 +200,7 @@ law m11_muse_arguments_keep_the_task_one_element:
+   for +model: String
+   for +effort: String
+   for +task: String
+-  {Muse.arguments(cmd, model, effort, task) == [cmd,"exec","--json","--prompt-file",task,"--model",model,"--reasoning-effort",effort,"--yolo"] : List<String>}
++  {Muse.arguments(cmd, model, effort, task) == List.append(&1,String,[cmd,"exec","--json","--prompt-file",task,"--model",model,"--reasoning-effort",effort,"--yolo"],Bool.pick(List<String>,String.eq(model,"muse-spark-1.3-contributor"),["--contributor-mode","on"],Nil{})) : List<String>}
+ 
+ def m11_muse_arguments_keep_the_task_one_element(cmd, model, effort, task):
+   {==}
+-- 
+2.43.0
+
+
+From b7161b1a804bbf91f2d9fec4f4817fa7a21d061c Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 17:57:24 -0700
+Subject: [PATCH 08/14] Complete the structured-error prefix in the connect law
+
+---
+ bend2/src/coordinator/connect-laws.bend | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bend2/src/coordinator/connect-laws.bend b/bend2/src/coordinator/connect-laws.bend
+index 7190a5899..fa2c679db 100644
+--- a/bend2/src/coordinator/connect-laws.bend
++++ b/bend2/src/coordinator/connect-laws.bend
+@@ -42,7 +42,7 @@ def connect_updates_and_answers_only_after_admission(id,native,endpoint):
+ 
+ law connect_refusal_is_classified_before_delivery:
+   for detail: String
+-  {Store.refused("{\"error\":\"invalid-endpoint\"" ++ detail) == True{} : Bool}
++  {Store.refused("{\"error\":\"invalid-endpoint\"}" ++ detail) == True{} : Bool}
+ 
+ def connect_refusal_is_classified_before_delivery(detail):
+   {==}
+-- 
+2.43.0
+
+
+From d52d0c8995fba69ffe372a8591400bbe819cc228 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 18:03:13 -0700
+Subject: [PATCH 09/14] Match the empty process answer law to its parser
+ diagnostic
+
+---
+ bend2/src/git/laws.bend | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bend2/src/git/laws.bend b/bend2/src/git/laws.bend
+index 836d047b9..e2c5778d2 100644
+--- a/bend2/src/git/laws.bend
++++ b/bend2/src/git/laws.bend
+@@ -311,7 +311,7 @@ def m11_tx_signal_reads_the_observed_status():
+ 
+ # M-2: a process that answered nothing stays unresolved until justified.
+ law m2_tx_empty_answer_stays_unresolved:
+-  {Tx.run_res(Done{""}) == T.RSpawn{"process answered nothing"} : T.RunRes}
++  {Tx.run_res(Done{""}) == T.RSpawn{"process answered no status line"} : T.RunRes}
+ 
+ def m2_tx_empty_answer_stays_unresolved():
+   {==}
+-- 
+2.43.0
+
+
+From 66a0bb38f35a424deb9ded33ad13dcd7d9ef09a5 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 14:29:05 -0700
+Subject: [PATCH 10/14] Validate knowledge scopes and traversal directions
+
+---
+ bend2/src/coordinator/control.bend   |  4 ++
+ bend2/src/coordinator/knowledge.bend | 50 +++++++++++++++---
+ bend2/test/knowledge.py              | 79 ++++++++++++++++++++++++++++
+ 3 files changed, 125 insertions(+), 8 deletions(-)
+
+diff --git a/bend2/src/coordinator/control.bend b/bend2/src/coordinator/control.bend
+index 0de7d4a93..7bb433e1a 100644
+--- a/bend2/src/coordinator/control.bend
++++ b/bend2/src/coordinator/control.bend
+@@ -341,6 +341,10 @@ def read_snapshot(db: String, command: C.Command) -> IO(String):
+     case C.KnowledgeDetail{reader,id}: Knowledge.detail_value(db,reader,"all","",id)
+     case C.KnowledgeScopeIndex{reader,scope,subject}: Knowledge.index_value(db,reader,scope,subject,True{})
+     case C.KnowledgeScopeDetail{reader,scope,subject,id}: Knowledge.detail_value(db,reader,scope,subject,id)
++    case C.KnowledgeSearch{reader,scope,subject,query}:
++      Knowledge.graph_value(db,reader,scope,subject,query,True{},"both","",False{})
++    case C.KnowledgeTraverse{reader,scope,subject,reference,direction,relation,recursive}:
++      Knowledge.graph_value(db,reader,scope,subject,reference,False{},direction,relation,recursive)
+     case other: IO.try(String,Store.read(db,other))
+ 
+ def pretty(+db: String, command: C.Command) -> IO(String):
+diff --git a/bend2/src/coordinator/knowledge.bend b/bend2/src/coordinator/knowledge.bend
+index 1b0e7c992..59c448d85 100644
+--- a/bend2/src/coordinator/knowledge.bend
++++ b/bend2/src/coordinator/knowledge.bend
+@@ -74,12 +74,35 @@ def knowledge_item_with_types(+typed: Bool, groups: Bool) -> String:
+ def knowledge_item() -> String:
+   knowledge_item_with_types(True{},True{})
+ 
++def subject_error(subject: String) -> String:
++  Bool.pick(String,String.is_empty(subject),
++    "{\"error\":\"knowledge-subject-required\",\"condition\":\"worker and group scopes require a nonempty subject\"}","")
++
++def scope_error(scope: String, subject: String) -> String:
++  match scope:
++    case "worker": subject_error(subject)
++    case "group": subject_error(subject)
++    case "universal": ""
++    case "all": ""
++    case _: "{\"error\":\"knowledge-scope-invalid\",\"condition\":\"scope must be universal, worker, group or all\"}"
++
++def direction_error(direction: String) -> String:
++  match direction:
++    case "in": ""
++    case "out": ""
++    case "both": ""
++    case _: "{\"error\":\"knowledge-direction-invalid\",\"condition\":\"direction must be in, out or both\"}"
++
++def validate_read(+error: String) -> IO(Unit):
++  Bool.pick(IO(Unit),String.is_empty(error),IO.pure(Unit,Unit{}),IO.die(Unit,2,error))
++
+ def scope_holders_sql(scope: String, +subject: String) -> String:
+   match scope:
+     case "worker": "SELECT id FROM sessions WHERE id=" ++ C.q(subject)
+     case "group": "SELECT owner AS id FROM ensembles WHERE id=" ++ C.q(subject)
+     case "universal": "SELECT s.id FROM sessions s JOIN session_roles r ON r.session=s.id WHERE s.parent IS NULL AND r.role IN('principal-conductor','conductor') AND (" ++ C.q(subject) ++ "='' OR s.id=" ++ C.q(subject) ++ ")"
+-    case _: "SELECT id FROM sessions"
++    case "all": "SELECT id FROM sessions"
++    case _: "SELECT id FROM sessions WHERE 0"
+ 
+ def scope_findings_sql(+scope: String, +subject: String, +groups: Bool) -> String:
+   match scope:
+@@ -116,8 +139,9 @@ def relations_when_present(+db: String, reader: String, scope: String, subject:
+         typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+         IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject,groups,String.eq(typed,"1\n"))))
+ 
+-def relations_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
++def relations_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
+     relations_when_present(db,reader,scope,subject,String.eq(present,"1\n"))
+ 
+@@ -152,20 +176,23 @@ def scoped_detail_sql(+reader: String, +scope: String, +subject: String, +id: St
+ 
+ def index_value(+db: String, +reader: String, +scope: String, +subject: String, +scoped: Bool) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     groups : Bool <- promotion_groups_value(db)
+     IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups)))
+ 
+ def detail_value(+db: String, +reader: String, +scope: String, +subject: String, +id: String) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     groups : Bool <- promotion_groups_value(db)
+     IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
+ 
+ # A read of an older database retains its existing findings before any writer
+ # installs the new columns and relationship table.
+-def read_scope_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
++def read_scope_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     groups : Bool <- promotion_groups_value(db)
+     IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups)))
+@@ -213,7 +240,8 @@ def traversal_join(+direction: String) -> String:
+   match direction:
+     case "out": "e.source_ref=w.reference"
+     case "in": "e.target_ref=w.reference"
+-    case _: "(e.source_ref=w.reference OR e.target_ref=w.reference)"
++    case "both": "(e.source_ref=w.reference OR e.target_ref=w.reference)"
++    case _: "0"
+ 
+ def traversal_relation(+relation: String) -> String:
+   "(" ++ C.q(relation) ++ "='' OR lower(replace(replace(e.relation,'_',''),'-',''))=lower(replace(replace(" ++ C.q(relation) ++ ",'_',''),'-','')))"
+@@ -233,12 +261,18 @@ def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: St
+   +edges = String.eq(present,"1\n")
+   Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
+ 
+-def graph_read(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
+-  do IO<Unit>:
++def graph_value(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, +direction: String, relation: String, recursive: Bool) -> IO(String):
++  do IO<String>:
++    scope_checked : Unit <- validate_read(scope_error(scope,subject))
++    direction_checked : Unit <- validate_read(Bool.pick(String,search,"",direction_error(direction)))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     +groups : Bool <- promotion_groups_value(db)
+     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
+-    saved : String <- IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
++    IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
++
++def graph_read(db: String, reader: String, scope: String, subject: String, query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
++  do IO<Unit>:
++    saved : String <- graph_value(db,reader,scope,subject,query,search,direction,relation,recursive)
+     IO.write(saved)
+ 
+ # The stored finding, read back only when it is this invocation's own finding:
+@@ -377,7 +411,7 @@ def record_linked(+db: String, +id: String, author: String, kind: String, claim:
+       answered(delivery))
+ 
+ def tool_help() -> String:
+-  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
++  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Worker and group scopes require a nonempty subject; contextual commands default the subject to the current session. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
+ 
+ def relate(db: String, id: String, author: String, source: String, relation: String, target: String) -> IO(Unit):
+   do IO<Unit>:
+diff --git a/bend2/test/knowledge.py b/bend2/test/knowledge.py
+index 227120484..95a5ac0dd 100644
+--- a/bend2/test/knowledge.py
++++ b/bend2/test/knowledge.py
+@@ -70,6 +70,85 @@ class Knowledge(unittest.TestCase):
+     def scoped(self, scope, subject=''):
+         return self.call('knowledge-scope', 'root', scope, subject)
+ 
++    def discovery_commands(self, scope, subject):
++        commands = (
++            ('knowledge-scope', 'root', scope, subject),
++            ('knowledge-relations', 'root', scope, subject),
++            ('knowledge-scope', 'root', scope, subject, '--index'),
++            ('knowledge-scope', 'root', scope, subject, '--id', 'scope-finding'),
++            ('knowledge-search', 'root', scope, subject, 'scope'),
++            ('knowledge-traverse', 'root', scope, subject,
++             'finding:scope-finding', 'both', '', 'neighbors'),
++        )
++        return tuple(variant for command in commands
++                     for variant in (command, (*command, '--pretty')))
++
++    def test_unknown_scope_refuses_every_discovery_read(self):
++        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
++        for scope in ('wrker', '', 'ALL'):
++            for command in self.discovery_commands(scope, 'worker'):
++                with self.subTest(command=command):
++                    result = self.call(*command, success=False)
++                    self.assertEqual(result.returncode, 2)
++                    self.assertEqual(result.stdout, '')
++                    self.assertEqual(json.loads(result.stderr)['error'],
++                                     'knowledge-scope-invalid')
++
++    def test_worker_and_group_scopes_require_subjects_on_every_discovery_read(self):
++        for scope in ('worker', 'group'):
++            for command in self.discovery_commands(scope, ''):
++                with self.subTest(command=command):
++                    result = self.call(*command, success=False)
++                    self.assertEqual(result.returncode, 2)
++                    self.assertEqual(result.stdout, '')
++                    self.assertEqual(json.loads(result.stderr)['error'],
++                                     'knowledge-subject-required')
++        self.assertEqual(self.scoped('universal'), [])
++        self.assertEqual(self.scoped('all'), [])
++
++    def test_unknown_traversal_direction_refuses_neighbors_and_recursive_reads(self):
++        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
++        for direction in ('inout', '', 'OUT'):
++            for mode in ('neighbors', 'recursive'):
++                for flags in ((), ('--pretty',)):
++                    with self.subTest(direction=direction, mode=mode, flags=flags):
++                        result = self.call('knowledge-traverse', 'root', 'worker', 'worker',
++                                           'finding:scope-finding', direction, '', mode,
++                                           *flags, success=False)
++                        self.assertEqual(result.returncode, 2)
++                        self.assertEqual(result.stdout, '')
++                        self.assertEqual(json.loads(result.stderr)['error'],
++                                         'knowledge-direction-invalid')
++
++    def test_pretty_graph_reads_keep_the_selected_scope_and_direction(self):
++        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
++        for command in (
++                ('knowledge-search', 'root', 'worker', 'worker', 'scope'),
++                ('knowledge-traverse', 'root', 'worker', 'worker',
++                 'finding:scope-finding', 'out', '', 'neighbors')):
++            with self.subTest(command=command):
++                plain = self.call(*command)
++                self.assertEqual(self.call(*command, '--pretty'), plain)
++                self.assertEqual(plain['scope'], {'kind': 'worker', 'id': 'worker'})
++                self.assertEqual(plain['roots'], ['finding:scope-finding'])
++
++    def test_contextual_knowledge_commands_report_the_same_validation_errors(self):
++        for command, error in (
++                (('read', '--scope', 'wrker'), 'knowledge-scope-invalid'),
++                (('search', '--query', 'scope', '--scope', 'wrker'),
++                 'knowledge-scope-invalid'),
++                (('traverse', '--reference', 'finding:scope-finding',
++                  '--direction', 'inout'), 'knowledge-direction-invalid'),
++                (('read', '--scope', 'worker', '--subject', ''),
++                 'knowledge-subject-required')):
++            with self.subTest(command=command):
++                rows = self.call('as', 'root', 'knowledge', *command)
++                self.assertEqual(len(rows), 1)
++                self.assertEqual(rows[0]['status'], 'failed')
++                self.assertEqual(rows[0]['waitStatus'], 'exit 2')
++                self.assertEqual(rows[0]['stdout'], '')
++                self.assertEqual(json.loads(rows[0]['stderr'])['error'], error)
++
+     def test_typed_evidence_and_corrections_follow_explicit_shared_holdings(self):
+         self.call('role', 'worker', 'associate-conductor')
+         self.call('ensemble', 'review-group', 'worker', 'tight')
+-- 
+2.43.0
+
+
+From 2b1b6c6de786a7360e7f6fb50cddda73d29e90f6 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 15:00:48 -0700
+Subject: [PATCH 11/14] Permit reuse of graph read search selector
+
+---
+ bend2/src/coordinator/knowledge.bend | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bend2/src/coordinator/knowledge.bend b/bend2/src/coordinator/knowledge.bend
+index 59c448d85..ab4e2dff4 100644
+--- a/bend2/src/coordinator/knowledge.bend
++++ b/bend2/src/coordinator/knowledge.bend
+@@ -261,7 +261,7 @@ def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: St
+   +edges = String.eq(present,"1\n")
+   Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
+ 
+-def graph_value(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, +direction: String, relation: String, recursive: Bool) -> IO(String):
++def graph_value(+db: String, +reader: String, +scope: String, +subject: String, +query: String, +search: Bool, +direction: String, relation: String, recursive: Bool) -> IO(String):
+   do IO<String>:
+     scope_checked : Unit <- validate_read(scope_error(scope,subject))
+     direction_checked : Unit <- validate_read(Bool.pick(String,search,"",direction_error(direction)))
+-- 
+2.43.0
+
+
+From 5a5147ac2524bddbe4162aff5aca7f90fc6a968c Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 15:26:36 -0700
+Subject: [PATCH 12/14] Expose knowledge citation resolution in read results
+
+---
+ bend2/src/coordinator/knowledge.bend       |  23 +++-
+ bend2/test/knowledge.py                    | 129 +++++++++++++++++++++
+ docs/bend2/knowledge-context-2026-09-29.md |  14 ++-
+ 3 files changed, 160 insertions(+), 6 deletions(-)
+
+diff --git a/bend2/src/coordinator/knowledge.bend b/bend2/src/coordinator/knowledge.bend
+index ab4e2dff4..37340fbc5 100644
+--- a/bend2/src/coordinator/knowledge.bend
++++ b/bend2/src/coordinator/knowledge.bend
+@@ -62,6 +62,19 @@ def reference_kind(+reference: String, +typed: Bool) -> String:
+   +kind = Bool.pick(String,typed,"kind","'finding'")
+   "CASE WHEN substr(" ++ reference ++ ",1,8)='finding:' THEN coalesce((SELECT " ++ kind ++ " FROM knowledge WHERE id=substr(" ++ reference ++ ",9)),'finding') WHEN substr(" ++ reference ++ ",1,8)='message:' THEN 'message' ELSE coalesce((SELECT " ++ kind ++ " FROM knowledge WHERE id=" ++ reference ++ "),'external') END"
+ 
++# Retained references resolve against the current database snapshot.
++def reference_resolution(+reference: String) -> String:
++  "CASE WHEN substr(" ++ reference ++ ",1,8)='message:' THEN CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=substr(" ++ reference ++ ",9)) THEN 'retained' ELSE 'missing' END WHEN substr(" ++ reference ++ ",1,8)='finding:' THEN CASE WHEN EXISTS(SELECT 1 FROM knowledge WHERE id=substr(" ++ reference ++ ",9)) THEN 'retained' ELSE 'missing' END ELSE 'external' END"
++
++def evidence_citation(+evidence: String) -> String:
++  "(substr(" ++ evidence ++ ",1,8)='message:' OR substr(" ++ evidence ++ ",1,8)='finding:' OR substr(" ++ evidence ++ ",1,5)='file:' OR substr(" ++ evidence ++ ",1,7)='http://' OR substr(" ++ evidence ++ ",1,8)='https://' OR substr(" ++ evidence ++ ",1,9)='external:')"
++
++def evidence_kind(+evidence: String, typed: Bool) -> String:
++  "CASE WHEN substr(" ++ evidence ++ ",1,8) IN('message:','finding:') THEN " ++ reference_kind(evidence,typed) ++ " ELSE 'external' END"
++
++def evidence_reference(+evidence: String, typed: Bool) -> String:
++  "CASE WHEN " ++ evidence_citation(evidence) ++ " THEN json_object('reference'," ++ evidence ++ ",'kind'," ++ evidence_kind(evidence,typed) ++ ",'resolution'," ++ reference_resolution(evidence) ++ ") ELSE NULL END"
++
+ def relation_item(+typed: Bool) -> String:
+   "json_object('id',r.id,'author',r.author,'source',r.source,'sourceReference'," ++ reference_sql("r.source") ++ ",'sourceKind'," ++ reference_kind("r.source",typed) ++ ",'relation',r.relation,'target',r.target,'targetReference'," ++ reference_sql("r.target") ++ ",'targetKind'," ++ reference_kind("r.target",typed) ++ ")"
+ 
+@@ -69,7 +82,7 @@ def knowledge_relations() -> String:
+   "(SELECT coalesce(json_group_array(" ++ relation_item(True{}) ++ "),json('[]')) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))"
+ 
+ def knowledge_item_with_types(+typed: Bool, groups: Bool) -> String:
+-  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations() ++ ",'promotions'," ++ knowledge_promotions(groups) ++ ",'relations'," ++ Bool.pick(String,typed,knowledge_relations(),"json('[]')") ++ ")"
++  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'claim',k.claim,'evidence',k.evidence,'evidenceReference'," ++ evidence_reference("k.evidence",typed) ++ ",'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations() ++ ",'promotions'," ++ knowledge_promotions(groups) ++ ",'relations'," ++ Bool.pick(String,typed,knowledge_relations(),"json('[]')") ++ ")"
+ 
+ def knowledge_item() -> String:
+   knowledge_item_with_types(True{},True{})
+@@ -166,7 +179,7 @@ def detail_read(+reader: String, +scope: String, +subject: String, +scoped: Bool
+     "json_array('knowledge'," ++ C.q(reader) ++ ",'--id',k.id)")
+ 
+ def knowledge_index_item_with_types(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool) -> String:
+-  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'evidence',k.evidence,'claimBytes',length(CAST(k.claim AS BLOB)),'limitsBytes',length(CAST(k.limits AS BLOB)),'evidenceMessage'," ++ evidence_index() ++ ",'destinations'," ++ knowledge_destinations() ++ ",'promotionCount',(SELECT count(*) FROM knowledge_promotions p WHERE p.finding=k.id),'relationCount'," ++ Bool.pick(String,typed,"(SELECT count(*) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))","0") ++ ",'detailRead'," ++ detail_read(reader,scope,subject,scoped) ++ ")"
++  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'evidence',k.evidence,'evidenceReference'," ++ evidence_reference("k.evidence",typed) ++ ",'claimBytes',length(CAST(k.claim AS BLOB)),'limitsBytes',length(CAST(k.limits AS BLOB)),'evidenceMessage'," ++ evidence_index() ++ ",'destinations'," ++ knowledge_destinations() ++ ",'promotionCount',(SELECT count(*) FROM knowledge_promotions p WHERE p.finding=k.id),'relationCount'," ++ Bool.pick(String,typed,"(SELECT count(*) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))","0") ++ ",'detailRead'," ++ detail_read(reader,scope,subject,scoped) ++ ")"
+ 
+ def scoped_index_sql(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool, groups: Bool) -> String:
+   "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_index_item_with_types(reader,scope,subject,scoped,typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups) ++ " ORDER BY k.rowid);"
+@@ -204,13 +217,13 @@ def read_value(db: String, reader: String) -> IO(String):
+ # Knowledge references normalize bare stored IDs to finding:ID. Returned nodes
+ # retain their authored kind, complete content and literal detailRead argv.
+ def graph_nodes_sql(+reader: String, +scope: String, +subject: String, +typed: Bool, +groups: Bool) -> String:
+-  "SELECT k.id,'finding:'||k.id AS reference," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ " AS kind,k.claim,k.evidence,k.limits,json_patch(" ++ knowledge_index_item_with_types(reader,scope,subject,True{},typed) ++ ",json_patch(" ++ knowledge_item_with_types(typed,groups) ++ ",json_object('reference','finding:'||k.id))) AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups)
++  "SELECT k.id,'finding:'||k.id AS reference," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ " AS kind,k.claim,k.evidence,k.limits,json_set(json_patch(" ++ knowledge_index_item_with_types(reader,scope,subject,True{},typed) ++ ",json_patch(" ++ knowledge_item_with_types(typed,groups) ++ ",json_object('reference','finding:'||k.id))),'$.evidenceReference'," ++ evidence_reference("k.evidence",typed) ++ ") AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups)
+ 
+ def graph_edges_sql(+reader: String, scope: String, subject: String, groups: Bool, +typed: Bool, present: Bool) -> String:
+   Bool.pick(String,present,
+     "SELECT r.id,r.source,r.target,r.relation," ++ reference_sql("r.source") ++ " AS source_ref," ++ reference_sql("r.target") ++ " AS target_ref,json_patch(" ++ relation_item(typed) ++ ",json_object('source'," ++ reference_sql("r.source") ++ ",'target'," ++ reference_sql("r.target") ++ ",'provenance','authored')) AS item FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject,groups),
+     "SELECT '' AS id,'' AS source,'' AS target,'' AS relation,'' AS source_ref,'' AS target_ref,json('{}') AS item WHERE 0")
+-  ++ " UNION ALL SELECT 'citation:'||id,reference,evidence,'Cited',reference,evidence,json_object('id','citation:'||id,'author',json_extract(item,'$.author'),'source',reference,'sourceReference',reference,'sourceKind',kind,'relation','Cited','target',evidence,'targetReference',evidence,'targetKind'," ++ reference_kind("nodes.evidence",typed) ++ ",'provenance','recorded-evidence') FROM nodes WHERE substr(evidence,1,8)='message:' OR substr(evidence,1,8)='finding:' OR substr(evidence,1,5)='file:' OR substr(evidence,1,7)='http://' OR substr(evidence,1,8)='https://' OR substr(evidence,1,9)='external:'"
++  ++ " UNION ALL SELECT 'citation:'||id,reference,evidence,'Cited',reference,evidence,json_object('id','citation:'||id,'author',json_extract(item,'$.author'),'source',reference,'sourceReference',reference,'sourceKind',kind,'relation','Cited','target',evidence,'targetReference',evidence,'targetKind'," ++ evidence_kind("nodes.evidence",typed) ++ ",'targetResolution'," ++ reference_resolution("nodes.evidence") ++ ",'provenance','recorded-evidence') FROM nodes WHERE " ++ evidence_citation("nodes.evidence")
+ 
+ def graph_ctes(+reader: String, +scope: String, +subject: String, +typed: Bool, +groups: Bool, present: Bool) -> String:
+   "WITH RECURSIVE nodes AS (" ++ graph_nodes_sql(reader,scope,subject,typed,groups) ++ "), edges AS (" ++ graph_edges_sql(reader,scope,subject,groups,typed,present) ++ ")"
+@@ -229,7 +242,7 @@ def search_score(+query: String) -> String:
+   "CASE WHEN lower(id)=lower(" ++ C.q(query) ++ ") THEN 100 ELSE 0 END + CASE WHEN instr(lower(claim),lower(" ++ C.q(query) ++ "))>0 THEN 30 ELSE 0 END + CASE WHEN lower(kind)=lower(" ++ C.q(query) ++ ") THEN 10 ELSE 0 END + (SELECT count(*) FROM edges e WHERE e.source_ref=nodes.reference OR e.target_ref=nodes.reference)"
+ 
+ def graph_answer(reader: String, +scope: String, +subject: String, +selected: String, +edge_filter: String) -> String:
+-  ", selected_edges AS (SELECT * FROM edges e WHERE " ++ edge_filter ++ "), references_in_view AS (SELECT reference FROM selected UNION SELECT source_ref FROM selected_edges UNION SELECT target_ref FROM selected_edges) SELECT json_object('scope',json_object('kind'," ++ C.q(scope) ++ ",'id'," ++ C.q(subject) ++ "),'roots',(SELECT coalesce(json_group_array(reference),json('[]')) FROM selected),'nodes',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM nodes WHERE reference IN(SELECT reference FROM references_in_view)),'edges',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM selected_edges),'references',(SELECT coalesce(json_group_array(json_object('reference',reference,'kind',coalesce((SELECT json_extract(e.item,'$.sourceKind') FROM selected_edges e WHERE e.source_ref=reference LIMIT 1),(SELECT json_extract(e.item,'$.targetKind') FROM selected_edges e WHERE e.target_ref=reference LIMIT 1),CASE WHEN substr(reference,1,8)='message:' THEN 'message' WHEN substr(reference,1,8)='finding:' THEN 'finding' ELSE 'external' END),'detailRead',CASE WHEN substr(reference,1,8)='finding:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,9)) ELSE NULL END,'deliveryRead',CASE WHEN substr(reference,1,8)='message:' THEN json_array('delivery',substr(reference,9)) ELSE NULL END)),json('[]')) FROM references_in_view WHERE reference NOT IN(SELECT reference FROM nodes))" ++ selected ++ ");"
++  ", selected_edges AS (SELECT * FROM edges e WHERE " ++ edge_filter ++ "), references_in_view AS (SELECT reference FROM selected UNION SELECT source_ref FROM selected_edges UNION SELECT target_ref FROM selected_edges) SELECT json_object('scope',json_object('kind'," ++ C.q(scope) ++ ",'id'," ++ C.q(subject) ++ "),'roots',(SELECT coalesce(json_group_array(reference),json('[]')) FROM selected),'nodes',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM nodes WHERE reference IN(SELECT reference FROM references_in_view)),'edges',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM selected_edges),'references',(SELECT coalesce(json_group_array(json_object('reference',reference,'resolution'," ++ reference_resolution("reference") ++ ",'kind',coalesce((SELECT json_extract(e.item,'$.sourceKind') FROM selected_edges e WHERE e.source_ref=reference LIMIT 1),(SELECT json_extract(e.item,'$.targetKind') FROM selected_edges e WHERE e.target_ref=reference LIMIT 1),CASE WHEN substr(reference,1,8)='message:' THEN 'message' WHEN substr(reference,1,8)='finding:' THEN 'finding' ELSE 'external' END),'detailRead',CASE WHEN substr(reference,1,8)='finding:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,9)) ELSE NULL END,'deliveryRead',CASE WHEN substr(reference,1,8)='message:' THEN json_array('delivery',substr(reference,9)) ELSE NULL END)),json('[]')) FROM references_in_view WHERE reference NOT IN(SELECT reference FROM nodes))" ++ selected ++ ");"
+ 
+ def search_sql(+reader: String, +scope: String, +subject: String, +query: String, +typed: Bool, groups: Bool, present: Bool) -> String:
+   graph_ctes(reader,scope,subject,typed,groups,present)
+diff --git a/bend2/test/knowledge.py b/bend2/test/knowledge.py
+index 95a5ac0dd..5da520cb6 100644
+--- a/bend2/test/knowledge.py
++++ b/bend2/test/knowledge.py
+@@ -514,6 +514,135 @@ class Knowledge(unittest.TestCase):
+                                success=False)
+         self.assertIn('No knowledge row was written', fabricated.stderr)
+ 
++    def test_missing_message_citation_resolves_when_the_message_is_retained(self):
++        message = "evidence λ ' pending"
++        reference = 'message:' + message
++        self.call('record-typed', 'pending-message', 'grand', 'observation',
++                  'Pending citation', reference, 'Before the report is stored')
++        missing = {'reference': reference, 'kind': 'message', 'resolution': 'missing'}
++        complete = self.call('knowledge', 'root', '--id', 'pending-message')[0]
++        index = self.call('knowledge', 'root', '--index')[0]
++        self.assertEqual(complete['evidenceReference'], missing)
++        self.assertIsNone(complete['evidenceMessage'])
++        self.assertEqual(index['evidenceReference'], missing)
++        graph = self.call('knowledge-traverse', 'root', 'all', '',
++                          'finding:pending-message', 'out', '', 'neighbors')
++        citation = next(edge for edge in graph['edges'] if edge['id'] == 'citation:pending-message')
++        self.assertEqual((citation['target'], citation['targetResolution']),
++                         (reference, 'missing'))
++        target = next(row for row in graph['references'] if row['reference'] == reference)
++        self.assertEqual(target['resolution'], 'missing')
++        self.assertEqual(target['deliveryRead'], ['delivery', message])
++        self.call('report', message, 'worker', 'Retained after the finding')
++        complete = self.call('knowledge', 'root', '--id', 'pending-message')[0]
++        self.assertEqual(complete['evidenceReference'], {**missing, 'resolution': 'retained'})
++        self.assertEqual(complete['evidenceMessage']['body'], 'Retained after the finding')
++        self.assertEqual(complete['evidence'], reference)
++        index = self.call('knowledge', 'root', '--index')[0]
++        self.assertEqual(index['evidenceReference'], complete['evidenceReference'])
++        graph = self.call('knowledge-traverse', 'root', 'all', '',
++                          'finding:pending-message', 'out', '', 'neighbors')
++        self.assertEqual(graph['edges'][0]['targetResolution'], 'retained')
++        self.assertEqual(graph['references'][0]['resolution'], 'retained')
++
++    def test_finding_citation_resolution_uses_the_retained_row_outside_the_scope(self):
++        self.call('record', 'citing', 'grand', 'Cites another finding',
++                  'finding:source', 'Before the source is stored')
++        self.call('promote', 'share-citing', 'root', 'grand', 'root', 'citing')
++        before = self.call('knowledge-search', 'root', 'universal', '', 'another finding')
++        target = next(row for row in before['references'] if row['reference'] == 'finding:source')
++        self.assertEqual(target['resolution'], 'missing')
++        self.call('record-typed', 'source', 'grand', 'measurement',
++                  'Retained source', 'run:source', 'One run')
++        after = self.call('knowledge-search', 'root', 'universal', '', 'another finding')
++        self.assertEqual(self.ids(after['nodes']), ['citing'])
++        target = next(row for row in after['references'] if row['reference'] == 'finding:source')
++        self.assertEqual((target['kind'], target['resolution']), ('measurement', 'retained'))
++        self.assertEqual(self.call(*target['detailRead'])[0]['id'], 'source')
++        self.assertEqual(after['nodes'][0]['evidenceReference'], {
++            'reference': 'finding:source', 'kind': 'measurement', 'resolution': 'retained'})
++
++    def test_legacy_citations_resolve_without_migrating_the_knowledge_table(self):
++        self.call('report', 'legacy-message', 'worker', 'Retained message body')
++        with sqlite3.connect(self.db) as db:
++            db.execute('DROP TABLE knowledge')
++            db.execute('DROP TABLE knowledge_relations')
++            db.execute('CREATE TABLE knowledge (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,'
++                       'claim TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL)')
++            db.executemany('INSERT INTO knowledge VALUES (?, ?, ?, ?, ?)', [
++                ('message-citation', 'root', 'Message citation', 'message:legacy-message', ''),
++                ('finding-citation', 'root', 'Finding citation', 'finding:message-citation', ''),
++                ('missing-citation', 'root', 'Missing citation', 'finding:absent', '')])
++        expected = {
++            'message-citation': {'reference': 'message:legacy-message', 'kind': 'message',
++                                 'resolution': 'retained'},
++            'finding-citation': {'reference': 'finding:message-citation', 'kind': 'finding',
++                                 'resolution': 'retained'},
++            'missing-citation': {'reference': 'finding:absent', 'kind': 'finding',
++                                 'resolution': 'missing'}}
++        complete = {row['id']: row for row in self.read('root')}
++        index = {row['id']: row for row in self.call('knowledge', 'root', '--index')}
++        for identity, reference in expected.items():
++            self.assertEqual(complete[identity]['evidenceReference'], reference)
++            self.assertEqual(index[identity]['evidenceReference'], reference)
++        graph = self.call('knowledge-search', 'root', 'all', '', 'citation')
++        self.assertEqual({edge['id']: edge['targetResolution'] for edge in graph['edges']},
++                         {'citation:' + identity: reference['resolution']
++                          for identity, reference in expected.items()})
++        with sqlite3.connect(self.db) as db:
++            self.assertNotIn('kind', {row[1] for row in db.execute('PRAGMA table_info(knowledge)')})
++            self.assertIsNone(db.execute(
++                "SELECT name FROM sqlite_master WHERE name='knowledge_relations'").fetchone())
++
++    def test_external_citation_prefixes_and_opaque_evidence_have_explicit_metadata(self):
++        external = ['file:source λ', 'http://example.invalid/source',
++                    'https://example.invalid/source', 'external:archive']
++        opaque = ['run:probe', 'git:' + self.base, 'the run said so', 'Message:absent', '']
++        for number, reference in enumerate(external + opaque):
++            with self.subTest(reference=reference):
++                identity = 'citation-' + str(number)
++                if reference in external:
++                    self.call('record-typed', reference, 'grand', 'measurement',
++                              'A finding with the same literal ID', 'run:collision', '')
++                self.call('record', identity, 'grand', identity, reference, 'Recorded text')
++                complete = self.call('knowledge', 'root', '--id', identity)[0]
++                index = next(row for row in self.call('knowledge', 'root', '--index')
++                             if row['id'] == identity)
++                graph = self.call('knowledge-traverse', 'root', 'all', '',
++                                  'finding:' + identity, 'out', '', 'neighbors')
++                if reference in external:
++                    expected = {'reference': reference, 'kind': 'external',
++                                'resolution': 'external'}
++                    self.assertEqual(complete['evidenceReference'], expected)
++                    self.assertEqual(index['evidenceReference'], expected)
++                    self.assertEqual(len(graph['edges']), 1)
++                    self.assertEqual(graph['edges'][0]['targetKind'], 'external')
++                    self.assertEqual(graph['edges'][0]['targetResolution'], 'external')
++                    target = next(row for row in graph['references'] if row['reference'] == reference)
++                    self.assertEqual((target['kind'], target['resolution']), ('external', 'external'))
++                else:
++                    self.assertIsNone(complete['evidenceReference'])
++                    self.assertIsNone(index['evidenceReference'])
++                    self.assertEqual(graph['edges'], [])
++                    self.assertEqual(graph['references'], [])
++                node = next(row for row in graph['nodes'] if row['id'] == identity)
++                self.assertEqual(node['evidenceReference'], complete['evidenceReference'])
++                search = self.call('knowledge-search', 'root', 'all', '', identity)
++                match = next(row for row in search['matches'] if row['id'] == identity)
++                self.assertEqual(match['evidenceReference'], complete['evidenceReference'])
++                self.assertEqual(complete['evidence'], reference)
++
++    def test_opaque_evidence_can_be_connected_by_an_authored_relation(self):
++        self.call('record', 'run-observation', 'grand', 'Observed a run', 'run:probe', '')
++        self.call('relate', 'run-link', 'grand', 'finding:run-observation', 'DerivedFrom',
++                  'run:probe')
++        graph = self.call('knowledge-traverse', 'root', 'all', '',
++                          'finding:run-observation', 'out', '', 'neighbors')
++        self.assertEqual([row['id'] for row in graph['edges']], ['run-link'])
++        self.assertEqual(graph['edges'][0]['provenance'], 'authored')
++        target = next(row for row in graph['references'] if row['reference'] == 'run:probe')
++        self.assertEqual((target['kind'], target['resolution']), ('external', 'external'))
++
+     def test_findings_accept_source_references_and_include_message_content(self):
+         shared = self.evidence('shared-report', 'sibling')
+         references = ['the run said so', 'git:' + self.base,
+diff --git a/docs/bend2/knowledge-context-2026-09-29.md b/docs/bend2/knowledge-context-2026-09-29.md
+index 0123d3e99..ddae835fe 100644
+--- a/docs/bend2/knowledge-context-2026-09-29.md
++++ b/docs/bend2/knowledge-context-2026-09-29.md
+@@ -17,7 +17,19 @@ baton2 DATABASE promote-scoped PROMOTION_ID PROMOTER SOURCE_KIND SOURCE DESTINAT
+ 
+ `AUTHOR`, `READER` and `PROMOTER` are session IDs. `promote` uses session IDs for `SOURCE` and `DESTINATION`. `promote-scoped` identifies each endpoint as `session` or `group`; a group ID names a recorded Ensemble. `FINDING` names a stored finding. The finding ID identifies its author, claim, evidence reference, and limits. Repeating the same ID with those same values returns the stored finding; reusing it with different values fails.
+ 
+-`EVIDENCE` is stored as supplied reference text. If it has the form `message:ID` and that message exists, a read includes the message ID, sender, recipient, and body in `evidenceMessage`. Otherwise `evidenceMessage` is null. The finding row also contains `id`, `author`, `kind`, `claim`, `evidence`, `limits`, `destinations`, `promotions`, and `relations`. Existing records have kind `finding`.
++`EVIDENCE` is stored as supplied text. A registered author can record a reference before its target is retained. If the text has the form `message:ID` and that message exists, a read includes the message ID, sender, recipient, and body in `evidenceMessage`. Otherwise `evidenceMessage` is null. The finding row also contains `id`, `author`, `kind`, `claim`, `evidence`, `evidenceReference`, `limits`, `destinations`, `promotions`, and `relations`. Existing records have kind `finding`.
++
++The prefixes `message:`, `finding:`, `file:`, `http://`, `https://`, and `external:` identify evidence citations. Prefix matching is case-sensitive. Complete reads, metadata indexes, search results, and traversal nodes expose each citation as `evidenceReference`, with its exact `reference`, node `kind`, and current `resolution`:
++
++| Reference | Resolution |
++|---|---|
++| `message:ID` or `finding:ID` whose row exists | `retained` |
++| `message:ID` or `finding:ID` whose row is absent | `missing` |
++| `file:`, `http://`, `https://`, or `external:` | `external` |
++
++Resolution describes the current database snapshot. A retained message's delivery state is reported separately by its delivery record. External references expose their authored location for consumer retrieval. Other evidence text, including `run:ID`, has `evidenceReference: null` and remains available in complete reads and search. An author can connect that text through `relate` when it should participate in the graph.
++
++Search and traversal derive a `Cited` edge for each evidence citation. Its `provenance` is `recorded-evidence`, and `targetResolution` reports the target's resolution. References outside the returned nodes include the same `resolution` and their literal retrieval arguments. A `missing` target retains its identity and can resolve on a later read after its row is stored.
+ 
+ `KIND` and `RELATION` are descriptive strings chosen by the author. Examples include `observation`, `hypothesis`, `decision`, `correction`, `Supports`, `Causes`, `DerivedFrom`, and `Supersedes`. A relationship retains its ID, author, source, relationship name and target. References can name `finding:ID`, `message:ID`, a source file, a run or another external source. A correction can be recorded separately and linked to its earlier finding.
+ 
+-- 
+2.43.0
+
+
+From f712b00eb42737c69485a02e0cc534002003edbe Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 15:02:52 -0700
+Subject: [PATCH 13/14] Preserve knowledge relation identities and refuse
+ conflicting links
+
+---
+ bend2/src/coordinator/knowledge.bend |  72 +++++++++----
+ bend2/src/coordinator/store.bend     |   9 +-
+ bend2/test/knowledge.py              | 149 +++++++++++++++++++++++++++
+ 3 files changed, 205 insertions(+), 25 deletions(-)
+
+diff --git a/bend2/src/coordinator/knowledge.bend b/bend2/src/coordinator/knowledge.bend
+index 37340fbc5..d732a1e28 100644
+--- a/bend2/src/coordinator/knowledge.bend
++++ b/bend2/src/coordinator/knowledge.bend
+@@ -310,37 +310,67 @@ def knowledge_conflict_sql(+name: String, +table: String, +id: String, +guards:
+ # The notice rides the existing question kind, so a parent already handed off or
+ # stopped still receives it under the dispatch family it already serves. It is
+ # written only for this invocation's own finding coordinates.
+-def notice_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
++def notice_statement_when(+id: String, +author: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
+   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_target(author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL"
+-  ++ " ON CONFLICT(id) DO NOTHING;"
+-  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
++  ++ " AND (" ++ allowed ++ ") ON CONFLICT(id) DO NOTHING;"
++  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),"(" ++ allowed ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
++
++def notice_statement(id: String, author: String, claim: String, evidence: String, limits: String) -> String:
++  notice_statement_when(id,author,claim,evidence,limits,"1")
+ 
+-def finding_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
++def finding_statement_when(+id: String, +author: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
+   "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
+-  ++ " ON CONFLICT(id) DO NOTHING;"
+-  ++ knowledge_conflict_sql("finding-id-conflict","knowledge",C.q(id),"EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")","author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits),"'author',author")
++  ++ " AND (" ++ allowed ++ ") ON CONFLICT(id) DO NOTHING;"
++  ++ knowledge_conflict_sql("finding-id-conflict","knowledge",C.q(id),"(" ++ allowed ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")","author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits),"'author',author")
++
++def finding_statement(id: String, author: String, claim: String, evidence: String, limits: String) -> String:
++  finding_statement_when(id,author,claim,evidence,limits,"1")
+ 
+ def record_statements(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
+   finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author,claim,evidence,limits) ++ knowledge_answer(id,author,claim,evidence,limits)
+ 
+-def typed_record_statements(+id: String, +author: String, kind: String, +claim: String, +evidence: String, +limits: String) -> String:
+-  finding_statement(id,author,claim,evidence,limits)
+-  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
+-  ++ notice_statement(id,author,claim,evidence,limits)
+-  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
++def typed_record_statements_when(+id: String, +author: String, kind: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
++  finding_statement_when(id,author,claim,evidence,limits,allowed)
++  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ " AND (" ++ allowed ++ ");"
++  ++ notice_statement_when(id,author,claim,evidence,limits,allowed)
++  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ " AND (" ++ allowed ++ ");"
++
++def typed_record_statements(id: String, author: String, kind: String, claim: String, evidence: String, limits: String) -> String:
++  typed_record_statements_when(id,author,kind,claim,evidence,limits,"1")
++
++def relation_coordinates(+author: String, source: String, relation: String, target: String) -> String:
++  "author=" ++ C.q(author) ++ " AND source=" ++ C.q(source) ++ " AND relation=" ++ C.q(relation) ++ " AND target=" ++ C.q(target)
++
++# A relation identity binds its author, source, relationship and target.
++# An identical retry returns the stored row.
++def relation_statements(+id: String, +author: String, +source: String, +relation: String, +target: String) -> String:
++  +same = relation_coordinates(author,source,relation,target)
++  +registered = "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
++  "INSERT INTO knowledge_relations(id,author,source,relation,target) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(source) ++ "," ++ C.q(relation) ++ "," ++ C.q(target) ++ " WHERE " ++ registered ++ " ON CONFLICT(id) DO NOTHING;"
++  ++ knowledge_conflict_sql("relation-id-conflict","knowledge_relations",C.q(id),registered,same,"'author',author,'source',source,'relation',relation,'target',target")
++  ++ "SELECT json_object('id',id,'author',author,'source',source,'relation',relation,'target',target) FROM knowledge_relations WHERE id=" ++ C.q(id) ++ " AND " ++ registered ++ " AND " ++ same ++ ";"
++
++# Preflight covers stored identities and conflicting duplicates in this input.
++# Every write in the linked record shares this transaction's admission result.
++def link_text(value: String, field: String) -> String:
++  "CAST(json_extract(" ++ value ++ ",'$." ++ field ++ "') AS TEXT)"
++
++def link_collisions_sql(+author: String, +links: String) -> String:
++  "SELECT r.id,r.author,r.source,r.relation,r.target FROM knowledge_relations r JOIN json_each(" ++ C.q(links) ++ ") j ON r.id=" ++ link_text("j.value","id") ++ " WHERE NOT (r.author=" ++ C.q(author) ++ " AND r.source IS " ++ link_text("j.value","source") ++ " AND r.relation IS " ++ link_text("j.value","relation") ++ " AND r.target IS " ++ link_text("j.value","target") ++ ")"
++  ++ " UNION ALL SELECT " ++ link_text("j.value","id") ++ " AS id," ++ C.q(author) ++ " AS author," ++ link_text("j.value","source") ++ " AS source," ++ link_text("j.value","relation") ++ " AS relation," ++ link_text("j.value","target") ++ " AS target FROM json_each(" ++ C.q(links) ++ ") j WHERE j.key IN (SELECT MIN(k.key) FROM json_each(" ++ C.q(links) ++ ") k GROUP BY " ++ link_text("k.value","id") ++ " HAVING COUNT(DISTINCT json_array(" ++ link_text("k.value","source") ++ "," ++ link_text("k.value","relation") ++ "," ++ link_text("k.value","target") ++ "))>1)"
+ 
+-# Source and target are ordinary reference strings. An agent can link findings,
+-# retained messages or external evidence and choose the relationship's name.
+-def relation_statements(+id: String, author: String, source: String, relation: String, target: String) -> String:
+-  "INSERT INTO knowledge_relations(id,author,source,relation,target) VALUES(" ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(source) ++ "," ++ C.q(relation) ++ "," ++ C.q(target) ++ ") ON CONFLICT(id) DO UPDATE SET author=excluded.author,source=excluded.source,relation=excluded.relation,target=excluded.target;"
+-  ++ "SELECT json_object('id',id,'author',author,'source',source,'relation',relation,'target',target) FROM knowledge_relations WHERE id=" ++ C.q(id) ++ ";"
++def link_conflict_answer(author: String, collisions: String) -> String:
++  "SELECT json_object('error','relation-id-conflict','id',id,'stored',json_object('author',author,'source',source,'relation',relation,'target',target),'condition','This relation identity is already supplied with different content.','next','Retain the existing relation and retry the new input under a different ID.') FROM (" ++ collisions ++ ") WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") ORDER BY id LIMIT 1;"
+ 
+ # A producer can commit a typed record and its authored relationships together.
+ # Each JSON link names id, source, relation and target. The notice is delivered
+ # after the complete record and links have committed.
+-def linked_record_statements(+id: String, +author: String, +kind: String, +claim: String, +evidence: String, +limits: String, links: String) -> String:
+-  typed_record_statements(id,author,kind,claim,evidence,limits)
+-  ++ "INSERT INTO knowledge_relations(id,author,source,relation,target) SELECT json_extract(j.value,'$.id')," ++ C.q(author) ++ ",json_extract(j.value,'$.source'),json_extract(j.value,'$.relation'),json_extract(j.value,'$.target') FROM json_each(" ++ C.q(links) ++ ") j WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND kind=" ++ C.q(kind) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") ON CONFLICT(id) DO UPDATE SET author=excluded.author,source=excluded.source,relation=excluded.relation,target=excluded.target;"
++def linked_record_statements(+id: String, +author: String, +kind: String, +claim: String, +evidence: String, +limits: String, +links: String) -> String:
++  +collisions = link_collisions_sql(author,links)
++  +allowed = "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") AND NOT EXISTS(" ++ collisions ++ ")"
++  link_conflict_answer(author,collisions)
++  ++ typed_record_statements_when(id,author,kind,claim,evidence,limits,allowed)
++  ++ "INSERT INTO knowledge_relations(id,author,source,relation,target) SELECT " ++ link_text("j.value","id") ++ "," ++ C.q(author) ++ "," ++ link_text("j.value","source") ++ "," ++ link_text("j.value","relation") ++ "," ++ link_text("j.value","target") ++ " FROM json_each(" ++ C.q(links) ++ ") j WHERE (" ++ allowed ++ ") AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND kind=" ++ C.q(kind) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") ON CONFLICT(id) DO NOTHING;"
+ 
+ # Session destinations notify that session; group destinations notify the
+ # recorded Ensemble owner.
+@@ -428,8 +458,8 @@ def tool_help() -> String:
+ 
+ def relate(db: String, id: String, author: String, source: String, relation: String, target: String) -> IO(Unit):
+   do IO<Unit>:
+-    saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(relation_statements(id,author,source,relation,target))))
+-    write_answer(saved)
++    +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(relation_statements(id,author,source,relation,target))))
++    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),write_answer(saved))
+ 
+ # Read: the shared findings as a JSON array. An unregistered reader receives the
+ # empty array.
+diff --git a/bend2/src/coordinator/store.bend b/bend2/src/coordinator/store.bend
+index 7f51dbe90..c9505da40 100644
+--- a/bend2/src/coordinator/store.bend
++++ b/bend2/src/coordinator/store.bend
+@@ -31,10 +31,11 @@ def refused(+saved: String) -> Bool:
+       Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),
+         Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),
+           Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),
+-            Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
+-              Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),
+-                Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),
+-                  Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\"")))))))))
++            Bool.or(Tx.starts_with(saved,"{\"error\":\"relation-id-conflict\""),
++              Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
++                Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),
++                  Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),
++                    Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""))))))))))
+ 
+ # Change-publication contract for the coordinator queue. The projection
+ # installer runs before the writer's own transaction begins; the committed
+diff --git a/bend2/test/knowledge.py b/bend2/test/knowledge.py
+index 5da520cb6..5cd17929a 100644
+--- a/bend2/test/knowledge.py
++++ b/bend2/test/knowledge.py
+@@ -299,6 +299,155 @@ class Knowledge(unittest.TestCase):
+         self.assertEqual(self.call('knowledge-relations', 'root', 'all', ''), [])
+         self.assertEqual(self.call('inbox', 'worker'), [])
+ 
++    def relation_rows(self):
++        return self.call('knowledge-relations', 'root', 'all', '')
++
++    def test_identical_relation_retry_preserves_its_identity(self):
++        args = ('relate', 'relation-λ', 'grand', 'file:source λ', 'Supports',
++                'finding:target')
++        stored = self.call(*args)
++        self.assertEqual(self.call(*args), stored)
++        self.assertEqual(len(self.relation_rows()), 1)
++
++    def test_relation_identity_conflicts_preserve_every_stored_coordinate(self):
++        original = ('grand', 'file:source λ', 'Supports', 'finding:target')
++        stored = self.call('relate', 'fixed-relation', *original)
++        before = self.relation_rows()
++        for index, replacement in enumerate(('sibling', 'file:changed', 'Supersedes',
++                                             'finding:changed')):
++            changed = list(original)
++            changed[index] = replacement
++            with self.subTest(index=index):
++                refused = self.call('relate', 'fixed-relation', *changed, success=False)
++                self.assertEqual(refused.returncode, 2)
++                self.assertEqual(refused.stdout, '')
++                error = json.loads(refused.stderr)
++                self.assertEqual(error['error'], 'relation-id-conflict')
++                self.assertEqual(error['id'], 'fixed-relation')
++                self.assertEqual(error['stored'], {key: stored[key] for key in
++                                                   ('author', 'source', 'relation', 'target')})
++                self.assertEqual(self.relation_rows(), before)
++
++    def test_relation_author_must_be_registered(self):
++        refused = self.call('relate', 'unregistered-relation', 'absent',
++                            'file:source', 'Supports', 'finding:target', success=False)
++        self.assertEqual(refused.stdout, '')
++        self.assertEqual(self.relation_rows(), [])
++
++    def test_linked_relation_collision_preserves_record_links_and_notice_tables(self):
++        self.call('relate', 'occupied', 'worker', 'file:original', 'Supports',
++                  'finding:original')
++        before = self.relation_rows()
++        occupied = {'id': 'occupied', 'source': 'finding:new',
++                    'relation': 'Supersedes', 'target': 'finding:original'}
++        fresh = {'id': 'fresh', 'source': 'finding:new',
++                 'relation': 'Supports', 'target': 'file:other'}
++        for links in ([fresh, occupied], [occupied, fresh]):
++            with self.subTest(links=links):
++                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
++                                    'Proposed explanation', 'run:observation', '',
++                                    json.dumps(links), success=False)
++                self.assertEqual(refused.returncode, 2)
++                self.assertEqual(refused.stdout, '')
++                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++                self.assertEqual(self.read('root'), [])
++                self.assertEqual(self.relation_rows(), before)
++                self.assertEqual(self.call('inbox', 'worker'), [])
++
++    def test_linked_collision_preserves_an_existing_records_kind_and_notice(self):
++        evidence = self.evidence('kind-evidence', 'grand')
++        self.call('record-typed', 'existing', 'grand', 'observation',
++                  'Existing claim', evidence, '')
++        self.call('relate', 'occupied', 'worker', 'file:original', 'Supports',
++                  'finding:original')
++        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
++        links = [{'id': 'occupied', 'source': 'finding:existing',
++                  'relation': 'Supersedes', 'target': 'finding:original'}]
++        refused = self.call('record-linked', 'existing', 'grand', 'decision',
++                            'Existing claim', evidence, '', json.dumps(links), success=False)
++        self.assertEqual(refused.returncode, 2)
++        self.assertEqual(refused.stdout, '')
++        self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++        self.assertEqual((self.read('root'), self.relation_rows(),
++                          self.call('inbox', 'worker')), before)
++
++    def test_conflicting_duplicate_link_ids_refuse_the_complete_record(self):
++        first = {'id': 'duplicate', 'source': 'finding:new',
++                 'relation': 'Supports', 'target': 'file:first'}
++        for coordinate, value in (('source', 'finding:other'),
++                                  ('relation', 'Supersedes'), ('target', 'file:second')):
++            with self.subTest(coordinate=coordinate):
++                second = {**first, coordinate: value}
++                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
++                                    'Proposed explanation', 'run:observation', '',
++                                    json.dumps([first, second]), success=False)
++                self.assertEqual(refused.returncode, 2)
++                self.assertEqual(refused.stdout, '')
++                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++                self.assertEqual(self.read('root'), [])
++                self.assertEqual(self.relation_rows(), [])
++                self.assertEqual(self.call('inbox', 'worker'), [])
++
++    def test_identical_link_duplicates_and_record_retries_are_idempotent(self):
++        link = {'id': 'duplicate', 'source': 'finding:new',
++                'relation': 'Supports', 'target': 'file:source'}
++        args = ('record-linked', 'new', 'grand', 'hypothesis', 'Proposed explanation',
++                'run:observation', '', json.dumps([link, link]))
++        stored = self.call(*args)
++        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
++        self.assertEqual(self.call(*args), stored)
++        self.assertEqual((self.read('root'), self.relation_rows(),
++                          self.call('inbox', 'worker')), before)
++        self.assertEqual(len(before[1]), 1)
++        self.assertEqual([row['id'] for row in before[2]], ['new:notice'])
++
++    def test_link_id_text_affinity_detects_conflicting_payload_duplicates(self):
++        first = {'id': 1, 'source': 'finding:new',
++                 'relation': 'Supports', 'target': 'file:first'}
++        second = {**first, 'id': '1', 'target': 'file:second'}
++        for links in ([first, second], [second, first]):
++            with self.subTest(links=links):
++                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
++                                    'Proposed explanation', 'run:observation', '',
++                                    json.dumps(links), success=False)
++                self.assertEqual(refused.returncode, 2)
++                self.assertEqual(refused.stdout, '')
++                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++                self.assertEqual(self.read('root'), [])
++                self.assertEqual(self.relation_rows(), [])
++                self.assertEqual(self.call('inbox', 'worker'), [])
++
++    def test_link_coordinates_use_the_stored_text_affinity_for_retries(self):
++        stored = self.call('relate', '1', 'grand', '2', '3', '4')
++        relations = self.relation_rows()
++        numeric = {'id': 1, 'source': 2, 'relation': 3, 'target': 4}
++        text = {key: str(value) for key, value in numeric.items()}
++        args = ('record-linked', 'new', 'grand', 'hypothesis', 'Proposed explanation',
++                'run:observation', '', json.dumps([numeric, text]))
++        record = self.call(*args)
++        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
++        self.assertEqual(self.call(*args), record)
++        self.assertEqual((self.read('root'), self.relation_rows(),
++                          self.call('inbox', 'worker')), before)
++        self.assertEqual(before[1], relations)
++        self.assertEqual({key: relations[0][key] for key in stored}, stored)
++        self.assertEqual([row['id'] for row in before[2]], ['new:notice'])
++
++    def test_numeric_link_id_conflict_preserves_a_stored_text_identity(self):
++        self.call('relate', '1', 'grand', 'file:original', 'Supports', 'file:target')
++        before = self.relation_rows()
++        changed = {'id': 1, 'source': 'file:original',
++                   'relation': 'Supports', 'target': 'file:changed'}
++        refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
++                            'Proposed explanation', 'run:observation', '',
++                            json.dumps([changed]), success=False)
++        self.assertEqual(refused.returncode, 2)
++        self.assertEqual(refused.stdout, '')
++        self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++        self.assertEqual(self.read('root'), [])
++        self.assertEqual(self.relation_rows(), before)
++        self.assertEqual(self.call('inbox', 'worker'), [])
++
+     def test_legacy_promotions_remain_session_holdings_before_and_after_migration(self):
+         self.call('ensemble', 'review-group', 'worker')
+         self.call('record', 'legacy-share', 'grand', 'Legacy finding', 'run:legacy', 'One run')
+-- 
+2.43.0
+
+
+From 4f6ed7e407812a8d344c70eada78110bf12609f1 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 17:16:00 -0700
+Subject: [PATCH 14/14] Include relation identity refusal in the
+ committed-route law
+
+The merged store refuses {"error":"relation-id-conflict"} for #791 relation
+identities; the refreshed law list from #788 omitted the term and its position.
+The term now matches store.refused order.
+---
+ bend2/src/coordinator/messaging-laws.bend | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bend2/src/coordinator/messaging-laws.bend b/bend2/src/coordinator/messaging-laws.bend
+index cf2a74f9f..c41457cc0 100644
+--- a/bend2/src/coordinator/messaging-laws.bend
++++ b/bend2/src/coordinator/messaging-laws.bend
+@@ -170,7 +170,7 @@ law committed_message_routes_refuse_before_endpoint_delivery:
+   for db: String
+   for command: C.Command
+   for +saved: String
+-  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\"")))))))))) : IO(Result<&1,&1,U32 & String,String>)}
++  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"relation-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""))))))))))) : IO(Result<&1,&1,U32 & String,String>)}
+ 
+ def committed_message_routes_refuse_before_endpoint_delivery(db,command,saved):
+   {==}
+-- 
+2.43.0
+

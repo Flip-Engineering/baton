@@ -1,0 +1,203 @@
+diff --git a/bend2/src/coordinator/agent-input.bend b/bend2/src/coordinator/agent-input.bend
+index cb8b0acc4..63e95b211 100644
+--- a/bend2/src/coordinator/agent-input.bend
++++ b/bend2/src/coordinator/agent-input.bend
+@@ -404,6 +404,14 @@ def settle_if(+db: String, session: String, attempt: String, success: Bool) -> I
+     known : Bool <- present(db)
+     settle_reads(db,session,attempt,success,known)
+ 
++# Completion consumes the admitted prompt and forwarded guidance only while its
++# exited attempt and native identity remain current. The transaction records the
++# matching read rows as handled; a stop or identity change keeps input owed.
++def consume_delivered(+db: String, +session: String, +attempt: String, +native: String, +initial_cursor: String, +delivered_cursor: String) -> IO(Unit):
++  do IO<Unit>:
++    stored : String <- IO.try(String,Store.transact_sql(db,Status.consume_delivered_sql(session,attempt,native,initial_cursor,delivered_cursor)))
++    IO.pure(Unit,Unit{})
++
+ def initial_observed(+db: String, +session: String, +attempt: String, +event: String) -> IO(Unit):
+   do IO<Unit>:
+     identity : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ C.q(event) ++ ",'$.thread_id') END,json_extract(" ++ C.q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1 THEN json_extract(" ++ C.q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ C.q(event) ++ ",'$.stream.id') END,'')<>'' ELSE 0 END;"))
+diff --git a/bend2/src/coordinator/message-status.bend b/bend2/src/coordinator/message-status.bend
+index 002e6df7a..bfee543ec 100644
+--- a/bend2/src/coordinator/message-status.bend
++++ b/bend2/src/coordinator/message-status.bend
+@@ -49,6 +49,19 @@ def settle_sql(+session: String, +attempt: String, +identity: String) -> String:
+   ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");"
+   ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND id IN(SELECT r.message FROM message_reads r JOIN executions e ON e.id=r.attempt AND e.session=r.recipient JOIN sessions s ON s.id=r.recipient WHERE r.recipient=" ++ q(session) ++ " AND r.attempt=" ++ q(attempt) ++ " AND r.identity=" ++ q(identity) ++ " AND s.native=r.native AND r.handled IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");COMMIT;"
+ 
++# A successfully completed turn consumes every input carried by its admitted
++# prompt and every guidance frame forwarded to the native attempt before it
++# stopped. Input after the prompt that was not forwarded stays owed. The
++# initial cursor covers the prompt; the delivered cursor covers live guidance.
++def consume_delivered_sql(+session: String, +attempt: String, +native: String, +initial_cursor: String, +delivered_cursor: String) -> String:
++  +receipt = "native-turn:" ++ attempt
++  +eligible = "recipient=" ++ q(session) ++ " AND receipt IS NULL AND (seq<=CAST(" ++ q(initial_cursor) ++ " AS INTEGER) OR (kind='guidance' AND seq<=CAST(" ++ q(delivered_cursor) ++ " AS INTEGER)))"
++  +current = "EXISTS(SELECT 1 FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=" ++ q(session) ++ " AND e.id=" ++ q(attempt) ++ " AND e.phase='exited' AND s.native=" ++ q(native) ++ ")"
++  +unstopped = "NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ")"
++  "BEGIN IMMEDIATE;UPDATE message_reads SET handled=coalesce(handled," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND attempt=" ++ q(attempt) ++ " AND native=" ++ q(native)
++  ++ " AND message IN(SELECT id FROM messages WHERE " ++ eligible ++ ") AND " ++ current ++ " AND " ++ unstopped ++ ";"
++  ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE " ++ eligible ++ " AND " ++ current ++ " AND " ++ unstopped ++ ";COMMIT;"
++
+ # The admitted complete prompt supplies the exact stored header and body.
+ def prompt_record_sql(+session: String, +attempt: String, +native: String, identity: String, +input: String) -> String:
+   "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT " ++ q(attempt) ++ ",m.id,m.recipient," ++ q(native) ++ "," ++ q(identity)
+diff --git a/bend2/src/coordinator/receive-laws.bend b/bend2/src/coordinator/receive-laws.bend
+index 3b07c6c8c..a918eb9de 100644
+--- a/bend2/src/coordinator/receive-laws.bend
++++ b/bend2/src/coordinator/receive-laws.bend
+@@ -208,7 +208,7 @@ law m17_not_refused_conversation_completes_the_attempt:
+   for +outcome: Turn.Outcome
+   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+   for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+-  {Receive.complete_or_restart(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,False{},False{}) == Receive.completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
++  {Receive.complete_or_restart(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,False{},False{}) == Receive.completed(db,session,id,log,attempt,native,stderr,cursor,handle,lock,outcome,deliveries,again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
+ 
+ def m17_not_refused_conversation_completes_the_attempt(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again):
+   {==}
+diff --git a/bend2/src/coordinator/receive.bend b/bend2/src/coordinator/receive.bend
+index 680e5952e..d604dd57b 100644
+--- a/bend2/src/coordinator/receive.bend
++++ b/bend2/src/coordinator/receive.bend
+@@ -23,6 +23,8 @@ import ../host/control.bend as Host
+ import ../git/text.bend as Tx
+ import ../host/text.bend as Text
+ import ../context/request.bend as Req
++import ./observer-checkpoint.bend as Observer
++import ./agent-input.bend as AgentInput
+ 
+ def field(+db: String, session: String, name: String, +supplied: String) -> IO(String):
+   do IO<String>:
+@@ -446,6 +448,21 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool,
+     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
+     case False{}: completed_wake(db,session,cursor,finished)
+ 
++def completion_cursor(db: String, handle: U32, fallback: String) -> IO(String):
++  do IO<String>:
++    +checkpoint_state : Observer.State <- Observer.restore(db,handle,False{})
++    value : String <- IO.pure(String,Observer.cursor(checkpoint_state))
++    +trimmed : String <- IO.pure(String,Tx.trim_nl(value))
++    IO.pure(String,Bool.pick(String,String.is_empty(trimmed),fallback,trimmed))
++
++def consume_completed(+db: String, session: String, attempt: String, native: String, +initial_cursor: String, success: Bool, handle: U32) -> IO(Unit):
++  match success:
++    case False{}: IO.pure(Unit,Unit{})
++    case True{}: do IO<Unit>:
++      delivered : String <- completion_cursor(db,handle,initial_cursor)
++      consumed : Unit <- AgentInput.consume_delivered(db,session,attempt,native,initial_cursor,delivered)
++      IO.pure(Unit,Unit{})
++
+ # Successful observations and complete recoverable provider errors resume all owed
+ # input. Other failures retain the attempt cursor. A recorded profile advance runs
+ # its own continuation, and completion operations preserve their results.
+@@ -456,11 +473,13 @@ def release_native(db: String, +handle: U32) -> IO(Unit):
+     +monitor : Bool <- Observer.monitor_handle(db,handle)
+     Bool.pick(IO(Unit),monitor,IO.pure(Unit,Unit{}),IO.try(Unit,P.ProcessChild.release(handle)))
+ 
+-def completed(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
++def completed(+db: String, +session: String, +id: String, +log: String, +attempt: String, native: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+   do IO<Result<&1,&1,U32 & String,Unit>>:
+     failed : Bool <- outcome_failed(db,outcome)
+     transient : Bool <- transient_provider_error(db,outcome)
+     +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,observation_clear(outcome)))),cursor,"0"))
++    success : Bool <- Turn.settlement_success(db,outcome)
++    consumed : Unit <- consume_completed(db,session,id,native,cursor,Bool.and(success,Bool.not(String.is_empty(attempt))),handle)
+     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
+     observer_released : Unit <- release_observer(lock)
+     native_released : Unit <- release_native(db,handle)
+@@ -501,7 +520,7 @@ def restart_pending(+db: String, +session: String, +id: String, attempt: String,
+ 
+ def complete_or_restart(db: String, session: String, id: String, log: String, stderr: String, attempt: String, cursor: String, native: String, cwd: String, handle: U32, lock: Maybe<U32>, outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), gone: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+   match gone:
+-    case False{}: completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
++    case False{}: completed(db,session,id,log,attempt,native,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
+     case True{}: restart_pending(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again)
+ 
+ def observed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+diff --git a/bend2/test/receive.py b/bend2/test/receive.py
+index 46aed120b..b4d2045b4 100644
+--- a/bend2/test/receive.py
++++ b/bend2/test/receive.py
+@@ -4445,6 +4445,83 @@ class Receive(unittest.TestCase):
+                 self.assertTrue((directory / 'acknowledged').exists())
+                 self.assert_no_start()
+ 
++    def test_text_only_completion_consumes_delivered_guidance_and_delivers_follow_up(self):
++        """A completed text-only turn consumes the guidance it already received.
++        The first unread guidance is not replayed; the later distinct follow-up is
++        delivered next.
++        """
++        self.player(harness='omp')
++        self.prepare_input('original', 'parent', 'Original task.', kind='task')
++        observer = self.spawn(*self.receive_args('parent'))
++        control, started = self.accept('parent')
++        self.assertIn('[id: original]', started['prompt'])
++        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
++            attempt, = database.execute(
++                "SELECT id FROM executions WHERE session='parent'").fetchone()
++        guidance = 'g' * 922
++        self.message('first-guidance', 'parent', guidance)
++        self.action(control, read_steer=True, complete_task=False, ack=False)
++        self.action(control, body='Text-only native stop.', complete_task=False, ack=False)
++        self.finish(observer)
++        self.assertEqual(self.coord('delivery', 'first-guidance')['receipt'],
++                         'native-turn:' + attempt)
++        with sqlite3.connect(self.db.as_uri() + '?mode=ro', uri=True) as database:
++            reads = database.execute(
++                "SELECT handled FROM message_reads WHERE message='original' AND attempt=?",
++                (attempt,)).fetchall()
++        self.assertTrue(reads)
++        self.assertTrue(all(row[0] == 'native-turn:' + attempt for row in reads), reads)
++        self.message('follow-up', 'parent', 'The distinct follow-up after the text-only stop.')
++        second = self.spawn(*self.receive_args('parent'))
++        stream, resumed = self.accept('parent')
++        self.assertIn('[id: follow-up]', resumed['prompt'])
++        self.assertNotIn('[id: first-guidance]', resumed['prompt'])
++        self.assertIsNone(self.coord('delivery', 'follow-up')['receipt'])
++        self.action(stream, body='Follow-up complete.', complete_task=False)
++        self.finish(second)
++        self.assertEqual(self.coord('inbox', 'parent'), [])
++
++    def test_text_only_completion_does_not_consume_after_native_identity_changes(self):
++        """Completion from an old native cannot settle messages after handoff."""
++        self.player(harness='omp')
++        self.prepare_input('original', 'parent', 'Original task.', kind='task')
++        observer = self.spawn(*self.receive_args('parent'))
++        control, started = self.accept('parent')
++        self.message('first-guidance', 'parent', 'Guidance delivered to the original native.')
++        self.action(control, read_steer=True, complete_task=False, ack=False)
++        with sqlite3.connect(self.db) as database:
++            recorded_native, = database.execute(
++                "SELECT native FROM sessions WHERE id='parent'").fetchone()
++            database.execute(
++                "UPDATE sessions SET native='superseding-native' WHERE id='parent'")
++        self.action(control, body='Old native completed after handoff.', complete_task=False, ack=False)
++        self.finish(observer)
++        self.assertTrue(recorded_native)
++        self.assertIsNone(self.coord('delivery', 'first-guidance')['receipt'])
++        self.assertIn('first-guidance', [message['id'] for message in self.coord('inbox', 'parent')])
++        with sqlite3.connect(self.db.as_uri() + '?mode=ro', uri=True) as database:
++            reads = database.execute(
++                "SELECT handled FROM message_reads WHERE message='original'").fetchall()
++        self.assertTrue(reads)
++        self.assertTrue(all(row[0] is None for row in reads), reads)
++
++    def test_text_only_completion_preserves_owed_follow_up_when_stopped(self):
++        """A follow-up that arrives without being delivered remains owed when the
++        session stops; completion does not consume undelivered input.
++        """
++        self.player(harness='omp')
++        self.prepare_input('original', 'parent', 'Original task.', kind='task')
++        observer = self.spawn(*self.receive_args('parent'))
++        control, started = self.accept('parent')
++        self.message('first-guidance', 'parent', 'Delivered guidance.')
++        self.action(control, read_steer=True, complete_task=False, ack=False)
++        self.action(control, body='Text-only native stop.', complete_task=False, ack=False)
++        self.finish(observer)
++        self.message('follow-up', 'parent', 'Owed follow-up after the stop.')
++        self.coord('stop', 'parent', 'fframes-stop', 'Preserve the owed follow-up.')
++        self.assertIsNone(self.coord('delivery', 'follow-up')['receipt'])
++        self.assertIn('follow-up', [message['id'] for message in self.coord('inbox', 'parent')])
++
+     def test_failed_continuation_retains_queued_guidance_for_retry(self):
+         """Accepted steering remains owed through a provider failure, and the
+         same actor handles it during an explicit retry.

@@ -1,0 +1,316 @@
+From a11d0cc042de41d1930e48b78296133463e6bbb1 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 18:07:22 -0700
+Subject: [PATCH] Guard packaged compiler against unadmitted Main generation
+
+Refuse coordinator Main C generation from the pinned Bend launcher unless the
+entry is canonical, the executing process is in the stated finite cgroup with
+swap disabled and unlimited RLIMIT_AS, and an exact admitted full receipt
+matches. Focused entries, version queries and --check-only calls pass.
+
+The default build script refuses an unadmitted Main entry and requires the
+resolved guarded compiler. Tests use stub compilers only.
+---
+ bend2/scripts/bend-launch-guard.sh | 109 +++++++++++++++++++++++
+ bend2/scripts/build-native.sh      |  19 +++-
+ bend2/test/bend-launch-guard.sh    | 138 +++++++++++++++++++++++++++++
+ 3 files changed, 265 insertions(+), 1 deletion(-)
+ create mode 100755 bend2/scripts/bend-launch-guard.sh
+ create mode 100755 bend2/test/bend-launch-guard.sh
+
+diff --git a/bend2/scripts/bend-launch-guard.sh b/bend2/scripts/bend-launch-guard.sh
+new file mode 100755
+index 00000000..48c4db19
+--- /dev/null
++++ b/bend2/scripts/bend-launch-guard.sh
+@@ -0,0 +1,109 @@
++#!/bin/sh
++# Narrow bootstrap launch guard for the packaged Bend compiler.
++#
++# The product admission policy remains the native Bend2 design in
++# docs/bend2/build-admission.md. This wrapper refuses a coordinator Main C
++# generation unless the invoking process carries an admitted bounded cgroup and
++# a matching decision receipt. Focused entries, version queries and
++# --check-only calls pass through unchanged.
++#
++# The canonical path is a delegated cgroup under /sys/fs/cgroup with a finite
++# memory.max. There is no opt-out variable.
++set -eu
++
++root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
++
++entry=
++output=
++check_only=0
++query=0
++expect_output=0
++for argument in "$@"; do
++  if [ "$expect_output" = 1 ]; then
++    output=$argument
++    expect_output=0
++    continue
++  fi
++  case "$argument" in
++    -o|--output)
++      expect_output=1
++      ;;
++    --check-only|version|--version)
++      check_only=1
++      ;;
++    -)
++      ;;
++    -*)
++      ;;
++    *)
++      if [ -z "$entry" ]; then
++        entry=$argument
++      fi
++      ;;
++  esac
++done
++
++entry_path=
++if [ -n "$entry" ]; then
++  entry_path=$(readlink -f -- "$entry" 2>/dev/null || true)
++  [ -n "$entry_path" ] || entry_path=$entry
++fi
++
++full=0
++case "$entry_path" in
++  */bend2/src/coordinator/main.bend|bend2/src/coordinator/main.bend)
++    full=1
++    ;;
++esac
++
++refuse() {
++  printf '{"error":"build-admission-required","condition":"%s","entry":"%s","output":"%s","cgroup":"%s","receipt":"%s","next":"Run the build through the admitted cgroup and receipt, or use a focused entry."}\n' \
++    "$1" "$entry" "$output" "${BATON2_ADMISSION_CGROUP:-}" "${BATON2_ADMISSION_RECEIPT:-}" >&2
++  exit 78
++}
++
++if [ "$full" = 1 ] && [ "$check_only" = 0 ]; then
++  cgroup=${BATON2_ADMISSION_CGROUP:-}
++  receipt=${BATON2_ADMISSION_RECEIPT:-}
++  [ -n "$cgroup" ] || refuse "missing-cgroup"
++  cgroup_path=$(readlink -f -- "$cgroup" 2>/dev/null || true)
++  [ -n "$cgroup_path" ] || refuse "missing-cgroup-directory"
++  [ -d "$cgroup_path" ] || refuse "missing-cgroup-directory"
++  case "$cgroup_path" in
++    /sys/fs/cgroup/*) ;;
++    *) refuse "cgroup-outside-canonical-root" ;;
++  esac
++  maximum=
++  if [ -r "$cgroup_path/memory.max" ]; then
++    maximum=$(cat "$cgroup_path/memory.max")
++  fi
++  [ -n "$maximum" ] || refuse "missing-memory-max"
++  [ "$maximum" != max ] || refuse "unbounded-cgroup"
++  case "$maximum" in
++    ''|*[!0-9]*) refuse "invalid-memory-max" ;;
++  esac
++  [ "$maximum" -gt 0 ] || refuse "invalid-memory-max"
++  swap_maximum=
++  if [ -r "$cgroup_path/memory.swap.max" ]; then
++    swap_maximum=$(cat "$cgroup_path/memory.swap.max")
++  fi
++  [ "$swap_maximum" = 0 ] || refuse "swap-not-disabled"
++  [ "$(ulimit -v)" = unlimited ] || refuse "rlimit-as-capped"
++  relative_cgroup=${cgroup_path#/sys/fs/cgroup}
++  grep -Fxq "0::$relative_cgroup" /proc/self/cgroup || refuse "cgroup-membership-mismatch"
++  [ -f "$receipt" ] || refuse "missing-receipt"
++  command -v jq >/dev/null 2>&1 || refuse "receipt-parser-unavailable"
++  if [ -n "$output" ]; then
++    jq -e --arg entry "$entry" --arg output "$output" --arg cgroup "$cgroup_path" \
++      'type=="object" and .decision=="admitted" and .class=="full" and
++       .entry==$entry and .output==$output and .cgroup==$cgroup' \
++      "$receipt" >/dev/null 2>&1 || refuse "receipt-mismatch"
++  else
++    jq -e --arg entry "$entry" --arg cgroup "$cgroup_path" \
++      'type=="object" and .decision=="admitted" and .class=="full" and
++       .entry==$entry and .cgroup==$cgroup' \
++      "$receipt" >/dev/null 2>&1 || refuse "receipt-mismatch"
++  fi
++fi
++
++exec "$root/bin/bun" --smol "$root/bend2/main.ts" "$@"
+diff --git a/bend2/scripts/build-native.sh b/bend2/scripts/build-native.sh
+index 9000eee0..1d0cd25b 100644
+--- a/bend2/scripts/build-native.sh
++++ b/bend2/scripts/build-native.sh
+@@ -5,11 +5,28 @@ cd "$root"
+ entry=${1:-bend2/src/coordinator/main.bend}
+ output=${2:-.scratch/bend2/baton2}
+ mkdir -p "$(dirname -- "$output")"
+-entry_path=$(CDPATH= cd -- "$(dirname -- "$entry")" && pwd -P)/$(basename -- "$entry")
++entry_path=$(readlink -f -- "$entry" 2>/dev/null || printf '%s' "$entry")
+ compiler=${BEND:-"$root/.bend/bin/bend"}
+ if [ ! -x "$compiler" ]; then
+   compiler="$root/node_modules/.bend/bin/bend"
+ fi
++if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ] &&
++   { [ -z "${BATON2_ADMISSION_CGROUP:-}" ] || [ -z "${BATON2_ADMISSION_RECEIPT:-}" ]; }; then
++  printf '{"error":"build-admission-required","condition":"default-full-main-without-admission","entry":"%s","output":"%s","cgroup":"%s","receipt":"%s"}\n' \
++    "$entry_path" "$output" "${BATON2_ADMISSION_CGROUP:-}" "${BATON2_ADMISSION_RECEIPT:-}" >&2
++  exit 78
++fi
++if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
++  compiler_path=$(readlink -f -- "$compiler" 2>/dev/null || printf '%s' "$compiler")
++  case "$compiler_path" in
++    */bin/bend) ;;
++    *) printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2; exit 78 ;;
++  esac
++  grep -q 'build-admission-required' "$compiler_path" 2>/dev/null || {
++    printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2
++    exit 78
++  }
++fi
+ generated=${BEND_GENERATED_C:-}
+ if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
+    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
+diff --git a/bend2/test/bend-launch-guard.sh b/bend2/test/bend-launch-guard.sh
+new file mode 100755
+index 00000000..6cb4256f
+--- /dev/null
++++ b/bend2/test/bend-launch-guard.sh
+@@ -0,0 +1,138 @@
++#!/bin/sh
++# Focused fixture for bend2/scripts/bend-launch-guard.sh.
++# The compiler is a stub. The admitted case uses an actual host cgroup with a
++# finite memory.max as the bounded probe; no Main generation runs.
++set -eu
++
++here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
++guard="$here/../scripts/bend-launch-guard.sh"
++temp=$(mktemp -d)
++trap 'rm -rf "$temp"' EXIT HUP INT TERM
++
++mkdir -p "$temp/bin" "$temp/bend2"
++cp "$guard" "$temp/bin/bend"
++chmod 0755 "$temp/bin/bend"
++cat > "$temp/bin/bun" <<'STUB'
++#!/bin/sh
++printf '%s\n' "$*" >> "$BUN_STUB_LOG"
++exit 0
++STUB
++chmod 0755 "$temp/bin/bun"
++printf '// stub compiler entry\n' > "$temp/bend2/main.ts"
++export BUN_STUB_LOG="$temp/calls.log"
++
++probe=
++for candidate in /sys/fs/cgroup/*; do
++  [ -r "$candidate/memory.max" ] || continue
++  maximum=$(cat "$candidate/memory.max" 2>/dev/null || true)
++  case "$maximum" in
++    ''|max|*[!0-9]*) continue ;;
++  esac
++  if [ "$maximum" -gt 0 ]; then
++    probe=$candidate
++    break
++  fi
++done
++[ -n "$probe" ] || { echo "FAIL no bounded cgroup probe"; exit 1; }
++echo "bounded_probe=$probe memory.max=$(cat "$probe/memory.max")"
++
++calls() { if [ -f "$BUN_STUB_LOG" ]; then wc -l < "$BUN_STUB_LOG"; else echo 0; fi; }
++
++"$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/refused.out" 2>"$temp/refused.err" && status=0 || status=$?
++[ "$status" = 78 ] || { echo "FAIL unadmitted status=$status"; cat "$temp/refused.err"; exit 1; }
++grep -q 'build-admission-required' "$temp/refused.err" || { echo "FAIL refusal body"; exit 1; }
++[ "$(calls)" = 0 ] || { echo "FAIL stub ran on refusal"; exit 1; }
++echo "PASS unadmitted_full_refused=78 stub_calls=0"
++
++BATON2_ADMISSION_OPT_OUT=1 "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/opt.out" 2>"$temp/opt.err" && status=0 || status=$?
++[ "$status" = 78 ] || { echo "FAIL opt-out accepted status=$status"; exit 1; }
++[ "$(calls)" = 0 ] || { echo "FAIL opt-out reached stub"; exit 1; }
++echo "PASS unknown_opt_out_ignored"
++
++unbounded=/sys/fs/cgroup/system.slice/baton2-native-homelab.service
++if [ -r "$unbounded/memory.max" ] && [ "$(cat "$unbounded/memory.max")" = max ]; then
++  cat > "$temp/unbounded.json" <<RECEIPT
++{"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "out.c"}
++RECEIPT
++  status=0
++  BATON2_ADMISSION_CGROUP="$unbounded" BATON2_ADMISSION_RECEIPT="$temp/unbounded.json" \
++    "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/unbounded.out" 2>"$temp/unbounded.err" || status=$?
++  [ "$status" = 78 ] || { echo "FAIL unbounded accepted status=$status"; exit 1; }
++  grep -q 'unbounded-cgroup' "$temp/unbounded.err" || { echo "FAIL unbounded cause"; exit 1; }
++  [ "$(calls)" = 0 ] || { echo "FAIL unbounded reached stub"; exit 1; }
++  echo "PASS unbounded_cgroup_refused"
++
++status=0
++"$temp/bin/bend" bend2/src/coordinator/./main.bend -o out.c >"$temp/alias.out" 2>"$temp/alias.err" || status=$?
++[ "$status" = 78 ] || { echo "FAIL canonical alias status=$status"; cat "$temp/alias.err"; exit 1; }
++echo "PASS canonical_entry_alias_refused"
++fi
++
++status=0; "$temp/bin/bend" bend2/test/tiny.bend -o out.c >"$temp/focused.out" 2>"$temp/focused.err" || status=$?
++[ "${status:-0}" = 0 ] || { echo "FAIL focused status=$status"; cat "$temp/focused.err"; exit 1; }
++[ "$(calls)" = 1 ] || { echo "FAIL focused stub_calls=$(calls)"; exit 1; }
++echo "PASS focused_entry_allowed"
++
++status=0; "$temp/bin/bend" --check-only bend2/src/coordinator/main.bend >"$temp/check.out" 2>"$temp/check.err" || status=$?
++[ "${status:-0}" = 0 ] || { echo "FAIL check-only status=$status"; cat "$temp/check.err"; exit 1; }
++[ "$(calls)" = 2 ] || { echo "FAIL check-only stub_calls=$(calls)"; exit 1; }
++echo "PASS check_only_allowed"
++
++cat > "$temp/receipt.json" <<RECEIPT
++{"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "out.c", "cgroup": "$probe"}
++RECEIPT
++status=0
++(
++  ulimit -v 262144
++  BATON2_ADMISSION_CGROUP="$probe" BATON2_ADMISSION_RECEIPT="$temp/receipt.json" \
++    "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/capped.out" 2>"$temp/capped.err"
++) || status=$?
++[ "$status" = 78 ] || { echo "FAIL capped rlimit status=$status"; cat "$temp/capped.err"; exit 1; }
++grep -q 'rlimit-as-capped' "$temp/capped.err" || { echo "FAIL capped cause"; exit 1; }
++[ "$(calls)" = 2 ] || { echo "FAIL capped stub_calls=$(calls)"; exit 1; }
++echo "PASS capped_rlimit_refused"
++
++status=0
++BATON2_ADMISSION_CGROUP="$probe" BATON2_ADMISSION_RECEIPT="$temp/receipt.json" \
++  "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/member.out" 2>"$temp/member.err" || status=$?
++[ "$status" = 78 ] || { echo "FAIL membership status=$status"; cat "$temp/member.err"; exit 1; }
++grep -q 'cgroup-membership-mismatch' "$temp/member.err" || { echo "FAIL membership cause"; exit 1; }
++[ "$(calls)" = 2 ] || { echo "FAIL membership stub_calls=$(calls)"; exit 1; }
++echo "PASS cgroup_membership_mismatch_refused"
++
++echo "PASS all launch-guard fixtures"
++
++cat > "$temp/fake-bend" <<'BEND'
++#!/bin/sh
++if [ "$1" = version ]; then printf 'bend 2.0.25\n'; exit 0; fi
++out=
++while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; *) shift;; esac; done
++[ -n "$out" ] || exit 2
++printf '/* stub */\n' > "$out"
++BEND
++cat > "$temp/fake-cc" <<'CC'
++#!/bin/sh
++out=
++prev=
++for a in "$@"; do if [ "$prev" = -o ]; then out=$a; fi; prev=$a; done
++[ -n "$out" ] || exit 2
++: > "$out"
++CC
++chmod 0755 "$temp/fake-bend" "$temp/fake-cc"
++status=0
++BEND="$temp/fake-bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" >"$temp/default.out" 2>"$temp/default.err" || status=$?
++[ "$status" = 78 ] || { echo "FAIL default build status=$status"; cat "$temp/default.err"; exit 1; }
++grep -q 'default-full-main-without-admission' "$temp/default.err" || { echo "FAIL default refusal cause"; exit 1; }
++echo "PASS default_build_full_main_refused"
++status=0
++BEND="$temp/fake-bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" bend2/tests/land.bend "$temp/focused-build" >"$temp/default-focused.out" 2>"$temp/default-focused.err" || status=$?
++[ "$status" = 0 ] || { echo "FAIL default focused status=$status"; cat "$temp/default-focused.err"; exit 1; }
++[ -f "$temp/focused-build" ] || { echo "FAIL default focused output"; exit 1; }
++echo "PASS default_build_focused_allowed"
++
++status=0
++BATON2_ADMISSION_CGROUP="$probe" BATON2_ADMISSION_RECEIPT="$temp/receipt.json" \
++  BEND="$temp/fake-bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" >"$temp/default-unbound.out" 2>"$temp/default-unbound.err" || status=$?
++[ "$status" = 78 ] || { echo "FAIL unguarded compiler status=$status"; cat "$temp/default-unbound.err"; exit 1; }
++grep -q 'compiler-not-guarded' "$temp/default-unbound.err" || { echo "FAIL unguarded compiler cause"; exit 1; }
++echo "PASS default_build_unguarded_compiler_refused"
+-- 
+2.43.0
+

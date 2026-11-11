@@ -1,0 +1,42 @@
+From 3131a9a987c6838b7beb85012b78e249d00931b2 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sun, 18 Oct 2026 00:28:22 -0700
+Subject: [PATCH 13/19] Order the operator zone parser for Bend 2.0.25 (#797,
+ #823)
+
+The reviewed commits 0b31537f and b5501a788 called fractional_digits_zone before its definition and reused the recursive tail without a duplicable marker; Bend 2.0.25 refuses both. The definition order and binder are corrected; the parser rules and the provider-message parser are unchanged.
+---
+ bend2/src/coordinator/usage-windows.bend | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/bend2/src/coordinator/usage-windows.bend b/bend2/src/coordinator/usage-windows.bend
+index 827b7e5c4..fea083e62 100644
+--- a/bend2/src/coordinator/usage-windows.bend
++++ b/bend2/src/coordinator/usage-windows.bend
+@@ -166,17 +166,17 @@ def explicit_zone(rest: String) -> Bool:
+       Bool.and(digit(h1),Bool.and(digit(h2),Bool.and(digit(m1),digit(m2))))
+     case other: False{}
+ 
+-def fractional_zone(rest: String) -> Bool:
+-  match rest:
+-    case SCon{'.',SCon{+head,tail}}: Bool.and(digit(head),fractional_digits_zone(tail))
+-    case other: explicit_zone(rest)
+-
+ def fractional_digits_zone(rest: String) -> Bool:
+   match rest:
+-    case SCon{+head,tail}:
++    case SCon{+head,+tail}:
+       Bool.pick(Bool,digit(head),Bool.pick(Bool,String.is_empty(tail),False{},fractional_digits_zone(tail)),explicit_zone(rest))
+     case other: False{}
+ 
++def fractional_zone(rest: String) -> Bool:
++  match rest:
++    case SCon{'.',SCon{+head,tail}}: Bool.and(digit(head),fractional_digits_zone(tail))
++    case other: explicit_zone(rest)
++
+ def seconds_zone(rest: String) -> Bool:
+   match rest:
+     case SCon{':',SCon{+s1,SCon{+s2,tail}}}:
+-- 
+2.43.0
+

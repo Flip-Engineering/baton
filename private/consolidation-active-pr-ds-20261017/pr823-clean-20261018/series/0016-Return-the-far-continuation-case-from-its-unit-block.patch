@@ -1,0 +1,25 @@
+From 58d75c9f8967a314e6308fb56e8a318729234514 Mon Sep 17 00:00:00 2001
+From: batonci <batonci@localhost>
+Date: Sun, 18 Oct 2026 00:41:53 -0700
+Subject: [PATCH 16/19] Return the far continuation case from its unit block
+ (#797, #823)
+
+---
+ bend2/test/usage-windows-wake.bend | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/bend2/test/usage-windows-wake.bend b/bend2/test/usage-windows-wake.bend
+index 3818daa89..95dbc3de9 100644
+--- a/bend2/test/usage-windows-wake.bend
++++ b/bend2/test/usage-windows-wake.bend
+@@ -110,6 +110,7 @@ def far_case(+db: String, +self: String) -> IO(Unit):
+     checked : Unit <- expect_read(db,"SELECT count(*) FROM wake_held_checks WHERE id='m-far2';","1\n","far-continuation-held-check")
+     blocked : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-far2';","0\n","far-continuation-no-delivery")
+     next_segment : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-continuation-next-segment")
++    IO.pure(Unit,Unit{})
+ 
+ def cap_case(+db: String) -> IO(Unit):
+   do IO<Unit>:
+-- 
+2.43.0
+

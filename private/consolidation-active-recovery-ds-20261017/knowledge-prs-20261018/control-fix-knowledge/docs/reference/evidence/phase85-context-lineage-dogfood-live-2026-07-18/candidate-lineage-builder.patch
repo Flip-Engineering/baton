@@ -1,0 +1,203 @@
+diff --git a/impl/src/context-program.mjs b/impl/src/context-program.mjs
+index 180ca43..dfd1a34 100644
+--- a/impl/src/context-program.mjs
++++ b/impl/src/context-program.mjs
+@@ -1089,7 +1089,10 @@ export class ContextSession {
+     const cell = this.cell(cellId);
+     if (!cell) return null;
+     return deepFreeze({
+-      schemaVersion: 2,
++      // Preserve the compact Phase 81 facade projection. The addressed v2 record is the
++      // immutable evidence artifact reached through evidenceRef/readEvidence; changing this
++      // summary would make an otherwise replay-readable v1 client depend on the new schema.
++      schemaVersion: 1,
+       kind: 'baton.context_cell_evidence',
+       cellId: cell.cellId,
+       manifestDigest: cell.manifestDigest,
+@@ -1103,8 +1106,6 @@ export class ContextSession {
+       evidenceRef: cell.evidenceRef,
+       sourceCoordinateCount: cell.sourceCoordinateCount,
+       coordinateDigest: cell.coordinateDigest,
+-      outputLineages: cell.outputLineages,
+-      outputLineageDigest: cell.outputLineageDigest,
+       providerEffects: cell.providerEffects,
+     });
+   }
+diff --git a/impl/test/phase85-context-lineage-red.test.mjs b/impl/test/phase85-context-lineage-red.test.mjs
+new file mode 100644
+index 0000000..88cc00f
+--- /dev/null
++++ b/impl/test/phase85-context-lineage-red.test.mjs
+@@ -0,0 +1,172 @@
++import assert from 'node:assert/strict';
++import { mkdtempSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import test from 'node:test';
++
++import {
++  DEFAULT_CONTEXT_PROGRAM_POLICY, StatelessContextBench, contextValueDigest,
++  normalizeContextManifest,
++} from '../src/context-program.mjs';
++import {
++  contextLineageDigest, validatePureContextOutputLineage,
++} from '../src/context-lineage.mjs';
++
++const environmentV1 = '4'.repeat(64);
++const environmentV2 = '5'.repeat(64);
++
++function fixture(t) {
++  const artifactRoot = mkdtempSync(join(tmpdir(), 'baton-phase85-context-lineage-'));
++  t.after(() => rmSync(artifactRoot, { recursive: true, force: true }));
++  const source = [
++    { label: 'beta', rank: 2, ignored: 'first source item' },
++    { label: 'alpha', rank: 1, ignored: 'second source item' },
++    { label: 'gamma', rank: 3, ignored: 'third source item' },
++  ];
++  const sourceDigest = contextValueDigest(source);
++  const sourceRef = `ctx:sha256:${sourceDigest}`;
++  const manifest = normalizeContextManifest({
++    schemaVersion: 1,
++    kind: 'baton.context_manifest',
++    repoId: 'repo-phase85-context-lineage',
++    tree: { sha: '1'.repeat(40), source: 'deployment_snapshot' },
++    workflow: {
++      runId: 'run-phase85-context-lineage',
++      definitionDigest: '2'.repeat(64),
++      goal: { goalId: 'goal-phase85', version: 1, digest: '3'.repeat(64) },
++      plan: { planId: `plan:${'4'.repeat(64)}`, version: 1, digest: '5'.repeat(64) },
++      node: { key: 'attempt:lineage', digest: '6'.repeat(64) },
++      task: { taskId: 'task-phase85-lineage', version: 2, createdEvent: 7, claimedEvent: 8 },
++    },
++    branches: [{
++      name: 'repository', ref: sourceRef, digest: sourceDigest,
++      mediaType: 'application/json', itemCount: source.length,
++      summary: 'Phase 85 exact source-coordinate fixture',
++    }],
++    policyDigest: DEFAULT_CONTEXT_PROGRAM_POLICY.policyDigest,
++  });
++  const bench = new StatelessContextBench({
++    artifactRoot, sources: { [sourceRef]: source }, environmentDigest: environmentV1,
++    policy: DEFAULT_CONTEXT_PROGRAM_POLICY,
++  });
++  return { artifactRoot, bench, manifest, source };
++}
++
++const project = (input) => ({ op: 'project', input, fields: ['label'] });
++const program = (expression) => ({
++  schemaVersion: 1, kind: 'baton.context_program', expression,
++});
++
++test('CL85-1: project preserves coordinates and sort moves each exact lineage with its item', (t) => {
++  const f = fixture(t);
++  const projected = f.bench.execute({
++    manifest: f.manifest,
++    program: program(project({ op: 'source', branch: 'repository' })),
++  });
++  const sorted = f.bench.execute({
++    manifest: f.manifest,
++    program: program(project({
++      op: 'sort', input: { op: 'source', branch: 'repository' }, keys: ['rank'],
++    })),
++  });
++  const evidence = f.bench.readEvidence(sorted.evidenceRef);
++
++  assert.equal(evidence.schemaVersion, 2);
++  assert.equal(evidence.providerEffects, 0);
++  assert.deepEqual(sorted.output.items, [
++    { label: 'alpha' }, { label: 'beta' }, { label: 'gamma' },
++  ]);
++  assert.deepEqual(evidence.outputLineages.map((lineage) => (
++    lineage.sourceCoordinates.map(({ itemIndex }) => itemIndex)
++  )), [[1], [0], [2]]);
++  for (const [index, lineage] of evidence.outputLineages.entries()) {
++    assert.equal(lineage.index, index);
++    assert.equal(lineage.itemDigest, contextValueDigest(sorted.output.items[index]));
++    assert.equal(lineage.coordinateDigest, contextLineageDigest(lineage.sourceCoordinates));
++    assert.equal(lineage.sourceCoordinates[0].itemDigest,
++      contextValueDigest(f.source[lineage.sourceCoordinates[0].itemIndex]));
++  }
++
++  const projectedByLabel = new Map(projected.output.items.map((item, index) => [
++    item.label, projected.outputLineages[index],
++  ]));
++  for (const lineage of sorted.outputLineages) {
++    const label = sorted.output.items[lineage.index].label;
++    assert.equal(lineage.lineageDigest, projectedByLabel.get(label).lineageDigest,
++      'index-free semantic lineage must survive deterministic movement');
++  }
++  assert.notEqual(sorted.outputLineageDigest, projected.outputLineageDigest,
++    'the aggregate digest must still bind exact output order');
++  assert.deepEqual(f.bench.execute({
++    manifest: f.manifest,
++    program: program(project({
++      op: 'sort', input: { op: 'source', branch: 'repository' }, keys: ['rank'],
++    })),
++  }), sorted);
++});
++
++test('CL85-2: v2 item, coordinate, order, and closed-lineage tampering is refused', (t) => {
++  const f = fixture(t);
++  const cell = f.bench.execute({
++    manifest: f.manifest,
++    program: program(project({
++      op: 'sort', input: { op: 'source', branch: 'repository' }, keys: ['rank'],
++    })),
++  });
++  const evidence = f.bench.readEvidence(cell.evidenceRef);
++  const validate = (candidate) => validatePureContextOutputLineage({
++    items: cell.output.items,
++    outputLineages: candidate.outputLineages,
++    outputLineageDigest: candidate.outputLineageDigest,
++    sourceCoordinates: candidate.sourceCoordinates,
++    coordinateDigest: candidate.coordinateDigest,
++  });
++  assert.deepEqual(validate(evidence).outputLineages, evidence.outputLineages);
++
++  const mutations = [
++    (value) => { value.outputLineages[0].itemDigest = '0'.repeat(64); },
++    (value) => { value.outputLineages[0].sourceCoordinates[0].itemIndex = 0; },
++    (value) => { value.outputLineages.reverse(); },
++    (value) => { value.outputLineages[0].lineageDigest = '0'.repeat(64); },
++    (value) => { value.outputLineages[0].parents.push({ forged: true }); },
++    (value) => { value.sourceCoordinates.pop(); },
++  ];
++  for (const mutate of mutations) {
++    const changed = structuredClone(evidence);
++    mutate(changed);
++    assert.throws(() => validate(changed),
++      (error) => error?.code === 'context_output_lineage_invalid');
++  }
++});
++
++test('CL85-3: persisted v1 evidence remains readable while a new environment emits v2', (t) => {
++  const f = fixture(t);
++  const first = f.bench.execute({
++    manifest: f.manifest,
++    program: program(project({ op: 'source', branch: 'repository' })),
++  });
++  const currentEvidence = f.bench.readEvidence(first.evidenceRef);
++  const legacyEvidence = structuredClone(currentEvidence);
++  legacyEvidence.schemaVersion = 1;
++  delete legacyEvidence.outputLineages;
++  delete legacyEvidence.outputLineageDigest;
++  const legacyRef = f.bench._writeArtifact(
++    legacyEvidence, 'context_evidence', 'application/vnd.baton.context-cell-evidence+json',
++  );
++
++  const reopened = new StatelessContextBench({
++    artifactRoot: f.artifactRoot, sources: {}, environmentDigest: environmentV2,
++    policy: DEFAULT_CONTEXT_PROGRAM_POLICY,
++  });
++  assert.deepEqual(reopened.readEvidence(legacyRef), legacyEvidence);
++  const next = reopened.execute({
++    manifest: f.manifest,
++    program: program(project({ op: 'source', branch: 'repository' })),
++  });
++  const nextEvidence = reopened.readEvidence(next.evidenceRef);
++  assert.notEqual(next.cellId, first.cellId);
++  assert.equal(next.environmentDigest, environmentV2);
++  assert.equal(nextEvidence.schemaVersion, 2);
++  assert.equal(nextEvidence.outputLineages.length, next.output.items.length);
++  assert.equal(next.providerEffects, 0);
++});

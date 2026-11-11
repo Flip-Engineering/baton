@@ -1,0 +1,2152 @@
+diff --git a/bend2/src/coordinator/agent-guidance.bend b/bend2/src/coordinator/agent-guidance.bend
+new file mode 100644
+index 000000000..356660732
+--- /dev/null
++++ b/bend2/src/coordinator/agent-guidance.bend
+@@ -0,0 +1,7 @@
++import Base
++
++def actions() -> String:
++  "Use baton inbox to read complete input, baton report \"text\" to report progress, and baton ask \"question\" to reach your coordinator. Use baton send PLAYER \"text\" to send a report and baton guide PLAYER \"text\" to send guidance. Use baton finish \"summary\" when the assignment is ready; your coordinator confirms it with baton confirm PLAYER. Baton resolves your project and session and records handling of complete owned reads after a successful native turn. Direct operator instructions and explicit stops remain effective.\n"
++
++def pending() -> String:
++  "Baton input is pending. Run baton inbox and handle the complete input. Baton records handling after a successful turn. Continue the assignment until your coordinator confirms completion. Explicit stops remain effective."
+diff --git a/bend2/src/coordinator/codex-inbox-proxy.bend b/bend2/src/coordinator/codex-inbox-proxy.bend
+new file mode 100644
+index 000000000..11e765f74
+--- /dev/null
++++ b/bend2/src/coordinator/codex-inbox-proxy.bend
+@@ -0,0 +1,208 @@
++import Base
++import ./codex-inbox-result.bend as Outcome
++import ../host/codex-proxy.bend as Native
++import ../host/instance.bend as Custody
++import ../host/sqlite.bend as DB
++import ../coordinator/commands.bend as C
++import ../git/text.bend as Tx
++import ../context/request.bend as Req
++import ../json/canonical.bend as J
++
++# One event consumer owns RPC correlation and the complete notification queue.
++type CodexEvent is Type:
++  Frame{value: Result<&1,&1,U32 & String,String>}
++  Changed{value: Result<&1,&1,U32 & String,String>}
++
++type Link is Data:
++  Link{proxy: U32, subscription: U32, events: Chan(CodexEvent)}
++
++type Pending is Data:
++  Pending{sequence: U32, frames: String}
++
++def proxy(+link: Link) -> U32:
++  match link:
++    case Link{handle,subscription,events}: handle
++
++def events(+link: Link) -> Chan(CodexEvent):
++  match link:
++    case Link{handle,subscription,value}: value
++
++def subscription(+link: Link) -> U32:
++  match link:
++    case Link{handle,value,events}: value
++
++def sequence(+pending: Pending) -> U32:
++  match pending:
++    case Pending{value,frames}: value
++
++def frames(+pending: Pending) -> String:
++  match pending:
++    case Pending{sequence,value}: value
++
++def empty() -> Pending:
++  Pending{0,"[]"}
++
++def json(+sql: String) -> Outcome.Checked(String):
++  do Outcome.Checked<String>:
++    +output : String <- DB.Sql.query(":memory:",sql)
++    Outcome.Checked.pure(String,Tx.trim_nl(output))
++
++def value(+document: String, +path: String) -> Outcome.Checked(String):
++  json("SELECT coalesce(" ++ C.q(document) ++ " -> " ++ C.q(path) ++ ",'null');")
++
++def text_decoded(value: Req.Scalar) -> String:
++  match value:
++    case Req.ScalarText{text}: text
++    case other: ""
++
++def text(+document: String, +path: String) -> Outcome.Checked(String):
++  do Outcome.Checked<String>:
++    +encoded : String <- json("SELECT hex(coalesce(json_extract(" ++ C.q(document) ++ "," ++ C.q(path) ++ "),''));")
++    Outcome.Checked.pure(String,text_decoded(Req.decode_scalar_utf8(Tx.hex_decode(encoded))))
++
++def truth(+document: String, +expression: String) -> Outcome.Checked(Bool):
++  do Outcome.Checked<Bool>:
++    +answer : String <- json("WITH item(value) AS (SELECT " ++ C.q(document) ++ ") SELECT coalesce((" ++ expression ++ "),0) FROM item;")
++    Outcome.Checked.pure(Bool,String.eq(answer,"1"))
++
++def record(+value: String) -> Outcome.Checked(Unit):
++  Outcome.Checked.lift(Unit,IO.write(value ++ "\n"))
++
++def queued(+pending: Pending, +frame: String) -> Outcome.Checked(Pending):
++  match pending:
++    case Pending{sequence,frames}: do Outcome.Checked<Pending>:
++      +updated : String <- json("SELECT json_insert(" ++ C.q(frames) ++ ",'$[#]',json(" ++ C.q(frame) ++ "));")
++      Outcome.Checked.pure(Pending,Pending{sequence,updated})
++
++def relay(chan: Chan(CodexEvent), event: CodexEvent) -> IO(Unit):
++  do IO<Unit>:
++    +sent : Bool <- Chan.send(CodexEvent,chan,event)
++    IO.pure(Unit,Unit{})
++
++@unsafe
++def native_wait(+link: Link) -> IO(Unit):
++  do IO<Unit>:
++    frame : Result<&1,&1,U32 & String,String> <- Native.CodexProxy.next(proxy(link))
++    relay(events(link),Frame{frame})
++
++@unsafe
++def notice_wait(+link: Link) -> IO(Unit):
++  do IO<Unit>:
++    change : Result<&1,&1,U32 & String,String> <- Custody.Instance.notice(subscription(link))
++    relay(events(link),Changed{change})
++
++def discard(task: Chan(Unit)) -> IO(Unit):
++  IO.pure(Unit,Unit{})
++
++def arm_native(+link: Link) -> IO(Unit):
++  do IO<Unit>:
++    task : Chan(Unit) <- IO.fork(Unit,native_wait(link))
++    discard(task)
++
++def arm_notice(+link: Link, +enabled: Bool) -> IO(Unit):
++  match enabled:
++    case False{}: IO.pure(Unit,Unit{})
++    case True{}: do IO<Unit>:
++      task : Chan(Unit) <- IO.fork(Unit,notice_wait(link))
++      discard(task)
++
++def receive_event(+link: Link, event: CodexEvent) -> Outcome.Checked(String):
++  match event:
++    case Frame{result}: do Outcome.Checked<String>:
++      +frame : String <- Outcome.Checked.from_result(String,result)
++      armed : Unit <- Outcome.Checked.lift(Unit,arm_native(link))
++      Outcome.Checked.pure(String,frame)
++    case Changed{result}: do Outcome.Checked<String>:
++      +notice : String <- Outcome.Checked.from_result(String,result)
++      armed : Unit <- Outcome.Checked.lift(Unit,arm_notice(link,True{}))
++      Outcome.Checked.pure(String,"{\"change\":" ++ notice ++ "}")
++
++def receive_maybe(+link: Link, event: Maybe<&1,CodexEvent>) -> Outcome.Checked(String):
++  match event:
++    case None{}: Outcome.Checked.fail(String,1,"The Codex inbox event channel closed.")
++    case Some{value}: receive_event(link,value)
++
++def receive(+link: Link) -> Outcome.Checked(String):
++  do Outcome.Checked<String>:
++    event : Maybe<&1,CodexEvent> <- Outcome.Checked.lift(Maybe<&1,CodexEvent>,Chan.recv(CodexEvent,events(link)))
++    receive_maybe(link,event)
++
++def rpc_checked(+method: String, +frame: String, +refused: Bool, +has_result: Bool) -> Outcome.Checked(Result<&1,&1,U32 & String,String>):
++  match refused:
++    case True{}: Outcome.Checked.pure(Result<&1,&1,U32 & String,String>,Fail{(1,"Public Codex " ++ method ++ " refused input: " ++ frame)})
++    case False{}:
++      Bool.pick(Outcome.Checked(Result<&1,&1,U32 & String,String>),has_result,
++        (do Outcome.Checked<Result<&1,&1,U32 & String,String>>:
++          result : String <- value(frame,"$.result")
++          Outcome.Checked.pure(Result<&1,&1,U32 & String,String>,Done{result})),
++        Outcome.Checked.pure(Result<&1,&1,U32 & String,String>,Fail{(1,"Public Codex " ++ method ++ " returned no result: " ++ frame)}))
++
++def rpc_response(+method: String, +frame: String) -> Outcome.Checked(Result<&1,&1,U32 & String,String>):
++  do Outcome.Checked<Result<&1,&1,U32 & String,String>>:
++    +refused : Bool <- truth(frame,"json_type(value,'$.error') IS NOT NULL AND json_type(value,'$.error')<>'null'")
++    +present : Bool <- truth(frame,"json_type(value,'$.result') IS NOT NULL")
++    rpc_checked(method,frame,refused,present)
++
++def rpc_dispatch(+link: Link, +pending: Pending, +id: U32, +method: String, +frame: String, +response: Bool, again: Pending -> Outcome.Checked(Pending & Result<&1,&1,U32 & String,String>)) -> Outcome.Checked(Pending & Result<&1,&1,U32 & String,String>):
++  match response:
++    case True{}: do Outcome.Checked<Pending & Result<&1,&1,U32 & String,String>>:
++      result : Result<&1,&1,U32 & String,String> <- rpc_response(method,frame)
++      Outcome.Checked.pure(Pending & Result<&1,&1,U32 & String,String>,(pending,result))
++    case False{}: do Outcome.Checked<Pending & Result<&1,&1,U32 & String,String>>:
++      updated : Pending <- queued(pending,frame)
++      again(updated)
++
++@unsafe
++def rpc_wait(+link: Link, +pending: Pending, +id: U32, +method: String) -> Outcome.Checked(Pending & Result<&1,&1,U32 & String,String>):
++  do Outcome.Checked<Pending & Result<&1,&1,U32 & String,String>>:
++    +frame : String <- receive(link)
++    +response : Bool <- truth(frame,"json_type(value,'$.method') IS NULL AND json_extract(value,'$.id')=" ++ U32.show(id))
++    rpc_dispatch(link,pending,id,method,frame,response,next => rpc_wait(link,next,id,method))
++
++def rpc_result(+link: Link, +pending: Pending, +method: String, +params: String) -> Outcome.Checked(Pending & Result<&1,&1,U32 & String,String>):
++  match pending:
++    case Pending{previous,frames}: do Outcome.Checked<Pending & Result<&1,&1,U32 & String,String>>:
++      +id : U32 = U32.add(previous,1)
++      sent : Unit <- Native.CodexProxy.send(proxy(link),"{\"id\":" ++ U32.show(id) ++ ",\"method\":" ++ J.string_literal(method) ++ ",\"params\":" ++ params ++ "}")
++      rpc_wait(link,Pending{id,frames},id,method)
++
++def rpc_pass(result: Pending & Result<&1,&1,U32 & String,String>) -> Outcome.Checked(Pending & String):
++  match result:
++    case (pending,result): do Outcome.Checked<Pending & String>:
++      response : String <- Outcome.Checked.from_result(String,result)
++      Outcome.Checked.pure(Pending & String,(pending,response))
++
++def rpc(+link: Link, +pending: Pending, +method: String, +params: String) -> Outcome.Checked(Pending & String):
++  do Outcome.Checked<Pending & String>:
++    result : Pending & Result<&1,&1,U32 & String,String> <- rpc_result(link,pending,method,params)
++    rpc_pass(result)
++
++def initialize_result(+link: Link, result: Pending & String) -> Outcome.Checked(Pending):
++  match result:
++    case (pending,response): do Outcome.Checked<Pending>:
++      sent : Unit <- Native.CodexProxy.send(proxy(link),"{\"method\":\"initialized\",\"params\":{}}")
++      Outcome.Checked.pure(Pending,pending)
++
++def initialize(+link: Link) -> Outcome.Checked(Pending):
++  do Outcome.Checked<Pending>:
++    result : Pending & String <- rpc(link,empty(),"initialize","{\"clientInfo\":{\"name\":\"baton_inbox_wake\",\"title\":\"Baton inbox wake\",\"version\":\"1\"},\"capabilities\":{\"experimentalApi\":true,\"optOutNotificationMethods\":[\"item/started\",\"item/agentMessage/delta\",\"item/plan/delta\",\"item/reasoning/summaryTextDelta\",\"item/reasoning/summaryPartAdded\",\"item/reasoning/textDelta\",\"item/commandExecution/outputDelta\",\"turn/diff/updated\",\"turn/plan/updated\",\"thread/tokenUsage/updated\"]}}")
++    initialize_result(link,result)
++
++def pop(+pending: Pending) -> Outcome.Checked(Pending & String):
++  match pending:
++    case Pending{sequence,frames}: do Outcome.Checked<Pending & String>:
++      +first : String <- value(frames,"$[0]")
++      +tail : String <- json("SELECT json_remove(" ++ C.q(frames) ++ ",'$[0]');")
++      Outcome.Checked.pure(Pending & String,(Pending{sequence,tail},first))
++
++def next_selected(+link: Link, +pending: Pending, +queued: Bool) -> Outcome.Checked(Pending & String):
++  match queued:
++    case True{}: pop(pending)
++    case False{}: do Outcome.Checked<Pending & String>:
++      +frame : String <- receive(link)
++      Outcome.Checked.pure(Pending & String,(pending,frame))
++
++def next(+link: Link, +pending: Pending) -> Outcome.Checked(Pending & String):
++  do Outcome.Checked<Pending & String>:
++    +queued : Bool <- truth(frames(pending),"json_array_length(value)>0")
++    next_selected(link,pending,queued)
+diff --git a/bend2/src/coordinator/codex-inbox-result.bend b/bend2/src/coordinator/codex-inbox-result.bend
+new file mode 100644
+index 000000000..bd442874b
+--- /dev/null
++++ b/bend2/src/coordinator/codex-inbox-result.bend
+@@ -0,0 +1,29 @@
++import Base
++
++# Foreign effects return through IO before their Result is inspected.
++def Checked(-A: Type) -> Type:
++  IO(Result<&1,&1,U32 & String,A>)
++
++def Checked.pure(-A: Type, value: A) -> Checked(A):
++  IO.pure(Result<&1,&1,U32 & String,A>,Done{value})
++
++def Checked.fail(-A: Type, code: U32, cause: String) -> Checked(A):
++  IO.pure(Result<&1,&1,U32 & String,A>,Fail{(code,cause)})
++
++def Checked.from_result(-A: Type, result: Result<&1,&1,U32 & String,A>) -> Checked(A):
++  IO.pure(Result<&1,&1,U32 & String,A>,result)
++
++def Checked.continue(-A: Type, -B: Type, result: Result<&1,&1,U32 & String,A>, next: A -> Checked(B)) -> Checked(B):
++  match result:
++    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,B>,Fail{error})
++    case Done{value}: next(value)
++
++def Checked.bind(-A: Type, -B: Type, action: Checked(A), next: A -> Checked(B)) -> Checked(B):
++  do IO<Result<&1,&1,U32 & String,B>>:
++    result : Result<&1,&1,U32 & String,A> <- action
++    Checked.continue(A,B,result,next)
++
++def Checked.lift(-A: Type, action: IO(A)) -> Checked(A):
++  do IO<Result<&1,&1,U32 & String,A>>:
++    value : A <- action
++    Checked.pure(A,value)
+diff --git a/bend2/src/coordinator/codex-inbox-store.bend b/bend2/src/coordinator/codex-inbox-store.bend
+new file mode 100644
+index 000000000..c4ff04554
+--- /dev/null
++++ b/bend2/src/coordinator/codex-inbox-store.bend
+@@ -0,0 +1,143 @@
++import Base
++import ./codex-inbox-result.bend as Outcome
++import ./agent-guidance.bend as Guidance
++import ../coordinator/commands.bend as C
++import ../host/sqlite.bend as DB
++import ../context/request.bend as Req
++import ../git/text.bend as Tx
++import ../json/canonical.bend as J
++
++# Wake metadata is fenced by the recorded session, native conversation and token.
++# SQLite's host busy handler waits for the real writer to release each operation.
++type Snapshot is Data:
++  Inbox{native: String, parent: String, stopped: Bool, pending: String,input_seq: String, handled: String, control_seq: String, message: String}
++
++def native(row: Snapshot) -> String:
++  match row:
++    case Inbox{value,parent,stopped,pending,input_seq,handled,control_seq,message}: value
++
++def stopped(row: Snapshot) -> Bool:
++  match row:
++    case Inbox{native,parent,value,pending,input_seq,handled,control_seq,message}: value
++
++def pending(row: Snapshot) -> String:
++  match row:
++    case Inbox{native,parent,stopped,value,input_seq,handled,control_seq,message}: value
++
++def input_seq(row: Snapshot) -> String:
++  match row:
++    case Inbox{native,parent,stopped,pending,value,handled,control_seq,message}: value
++
++def handled(row: Snapshot) -> String:
++  match row:
++    case Inbox{native,parent,stopped,pending,input_seq,value,control_seq,message}: value
++
++def control_seq(row: Snapshot) -> String:
++  match row:
++    case Inbox{native,parent,stopped,pending,input_seq,handled,value,message}: value
++
++def message(row: Snapshot) -> String:
++  match row:
++    case Inbox{native,parent,stopped,pending,input_seq,handled,control_seq,value}: value
++
++def has_pending(row: Snapshot) -> Bool:
++  Bool.not(String.eq(pending(row),"0"))
++
++def schema_sql() -> String:
++  "CREATE TABLE IF NOT EXISTS codex_inbox_wakes(session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id),native TEXT NOT NULL,token TEXT NOT NULL,cause TEXT NOT NULL DEFAULT '');"
++  ++ "CREATE TRIGGER IF NOT EXISTS codex_inbox_wake_receipt AFTER UPDATE OF receipt ON messages WHEN OLD.receipt IS NULL AND NEW.receipt IS NOT NULL BEGIN DELETE FROM codex_inbox_wakes WHERE session=NEW.recipient;END;"
++
++def input_sql() -> String:
++  "coalesce((SELECT max(seq) FROM messages WHERE recipient=s.id),0)"
++
++def control_sql() -> String:
++  "coalesce((SELECT max(m.seq) FROM messages m WHERE m.recipient=s.id AND (m.kind IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed','question') OR EXISTS(SELECT 1 FROM session_roles r WHERE r.session=m.sender AND r.role='operator'))),0)"
++
++def row_sql() -> String:
++  "hex(s.native)||char(9)||hex(s.parent)||char(9)||EXISTS(SELECT 1 FROM session_stops WHERE session=s.id)||char(9)||(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL)||char(9)||"
++  ++ input_sql() ++ "||char(9)||(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NOT NULL)||char(9)||" ++ control_sql()
++  ++ "||char(9)||hex(coalesce((SELECT id FROM messages WHERE recipient=s.id AND receipt IS NULL ORDER BY seq LIMIT 1),''))||char(9)"
++
++def text_decoded(value: Req.Scalar) -> Outcome.Checked(String):
++  match value:
++    case Req.ScalarText{text}: Outcome.Checked.pure(String,text)
++    case other: Outcome.Checked.fail(String,22,"Recorded Codex input text is invalid: " ++ Req.scalar_reason(other))
++
++def text(+value: String) -> Outcome.Checked(String):
++  text_decoded(Req.decode_scalar_utf8(Tx.hex_decode(value)))
++
++def row_fields(fields: List<String>) -> Outcome.Checked(Snapshot):
++  match fields:
++    case native_hex <> parent_hex <> stopped <> pending <> input_seq <> handled <> control_seq <> message_hex <> Nil{}: do Outcome.Checked<Snapshot>:
++      +native : String <- text(native_hex)
++      +parent : String <- text(parent_hex)
++      +message : String <- text(message_hex)
++      Outcome.Checked.pure(Snapshot,Inbox{native,parent,String.eq(stopped,"1"),pending,input_seq,handled,control_seq,message})
++    case other: Outcome.Checked.fail(Snapshot,2,"The recorded Codex inbox snapshot is absent or invalid.")
++
++def checked_native(row: Snapshot, +session: String, +thread: String, +same: Bool) -> Outcome.Checked(Snapshot):
++  match same:
++    case True{}: Outcome.Checked.pure(Snapshot,row)
++    case False{}: Outcome.Checked.fail(Snapshot,1,"Baton session now records another native conversation: {\"session\":" ++ J.string_literal(session) ++ ",\"native\":" ++ J.string_literal(native(row)) ++ "}")
++
++def read(+db: String, +session: String, +thread: String) -> Outcome.Checked(Snapshot):
++  do Outcome.Checked<Snapshot>:
++    value : String <- DB.Sql.read(db,"SELECT " ++ row_sql() ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ ";")
++    +row : Snapshot <- row_fields(Tx.split_tabs(Tx.trim_nl(value)))
++    checked_native(row,session,thread,String.eq(native(row),thread))
++
++def metadata_sql(+value: String) -> String:
++  "CASE WHEN json_valid(" ++ value ++ ") THEN json_type(" ++ value ++ ")='object' AND json_type(" ++ value ++ ",'$.inputSeq') IN ('integer','real') AND json_extract(" ++ value ++ ",'$.inputSeq')=CAST(json_extract(" ++ value ++ ",'$.inputSeq') AS INTEGER) ELSE 0 END"
++
++def claimed_sql(+thread: String) -> String:
++  "EXISTS(SELECT 1 FROM codex_inbox_wakes w WHERE w.session=s.id AND w.native=" ++ C.q(thread)
++  ++ " AND CASE WHEN " ++ metadata_sql("w.cause") ++ " THEN json_extract(w.cause,'$.inputSeq')>=" ++ input_sql() ++ " ELSE 1 END)"
++
++def claimed(+db: String, +session: String, +thread: String) -> Outcome.Checked(Bool):
++  do Outcome.Checked<Bool>:
++    +ensured : String <- DB.Sql.query(db,schema_sql())
++    +result : String <- DB.Sql.read(db,"SELECT " ++ claimed_sql(thread) ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ ";")
++    Outcome.Checked.pure(Bool,String.eq(result,"1\n"))
++
++def active_sql(+session: String, +thread: String) -> String:
++  "s.id=" ++ C.q(session) ++ " AND s.native=" ++ C.q(thread) ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AND EXISTS(SELECT 1 FROM messages WHERE recipient=s.id AND receipt IS NULL)"
++
++def claim_sql(+session: String, +thread: String) -> String:
++  "BEGIN IMMEDIATE;" ++ schema_sql()
++  ++ "INSERT INTO codex_inbox_wakes(session,native,token,cause) SELECT s.id,s.native,lower(hex(randomblob(16))),json_object('inputSeq'," ++ input_sql() ++ ") FROM sessions s WHERE " ++ active_sql(session,thread) ++ " AND NOT " ++ claimed_sql(thread)
++  ++ " ON CONFLICT(session) DO UPDATE SET native=excluded.native,token=excluded.token,cause=excluded.cause;"
++  ++ "SELECT token FROM codex_inbox_wakes WHERE session=" ++ C.q(session) ++ " AND changes()=1;COMMIT;"
++
++def claim(+db: String, +session: String, +thread: String) -> Outcome.Checked(String):
++  do Outcome.Checked<String>:
++    +token : String <- DB.Sql.query(db,claim_sql(session,thread))
++    Outcome.Checked.pure(String,Tx.trim_nl(token))
++
++def refresh_condition(+session: String, +thread: String, +token: String, +status: String) -> String:
++  active_sql(session,thread)
++  ++ " AND (" ++ C.q(token) ++ "='' OR EXISTS(SELECT 1 FROM codex_inbox_wakes w WHERE w.session=s.id AND w.native=s.native AND w.token=" ++ C.q(token) ++ "))"
++  ++ " AND NOT EXISTS(SELECT 1 FROM codex_inbox_wakes w WHERE w.session=s.id AND CASE WHEN json_valid(w.cause) THEN json_extract(w.cause,'$.turnId') IS NOT NULL AND (" ++ input_sql() ++ "<=json_extract(w.cause,'$.inputSeq') OR (" ++ C.q(status) ++ "='active' AND " ++ control_sql() ++ "<=json_extract(w.cause,'$.inputSeq') AND json_extract(w.cause,'$.cause') IS NULL)) ELSE 0 END)"
++
++def refresh_sql(+session: String, +thread: String, +token: String, +status: String) -> String:
++  "BEGIN IMMEDIATE;" ++ schema_sql()
++  ++ "SELECT coalesce((SELECT token FROM codex_inbox_wakes WHERE session=s.id),'')||char(9)||" ++ row_sql() ++ " FROM sessions s WHERE " ++ refresh_condition(session,thread,token,status) ++ ";"
++  ++ "UPDATE codex_inbox_wakes SET cause=json_remove(json_set(cause,'$.inputSeq',(SELECT " ++ input_sql() ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ ")), '$.cause') WHERE session=" ++ C.q(session) ++ " AND " ++ metadata_sql("cause")
++  ++ " AND EXISTS(SELECT 1 FROM sessions s WHERE " ++ refresh_condition(session,thread,token,status) ++ ");COMMIT;"
++
++def refresh(+db: String, +session: String, +thread: String, +token: String, +status: String) -> Outcome.Checked(String):
++  do Outcome.Checked<String>:
++    +result : String <- DB.Sql.query(db,refresh_sql(session,thread,token,status))
++    Outcome.Checked.pure(String,Tx.trim_nl(result))
++
++def admitted(+db: String, +session: String, +thread: String, +token: String, +turn: String) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    +stored : String <- DB.Sql.query(db,"UPDATE codex_inbox_wakes SET cause=json_set(cause,'$.turnId'," ++ C.q(turn) ++ ") WHERE session=" ++ C.q(session) ++ " AND native=" ++ C.q(thread) ++ " AND token=" ++ C.q(token) ++ " AND " ++ C.q(token) ++ "<>'' AND " ++ C.q(turn) ++ "<>'' AND json_valid(cause);")
++    Outcome.Checked.pure(Unit,Unit{})
++
++def failed(+db: String, +session: String, +thread: String, +input_seq: String, +cause: String, +turn: String) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    +stored : String <- DB.Sql.query(db,"UPDATE codex_inbox_wakes SET cause=CASE WHEN json_valid(cause) THEN json_set(cause,'$.cause'," ++ C.q(cause) ++ ") ELSE json_object('inputSeq',CAST(" ++ C.q(input_seq) ++ " AS INTEGER),'cause'," ++ C.q(cause) ++ ") END WHERE session=" ++ C.q(session) ++ " AND native=" ++ C.q(thread) ++ " AND (" ++ C.q(turn) ++ "='' OR CASE WHEN json_valid(cause) THEN json_extract(cause,'$.turnId') IS NULL OR json_extract(cause,'$.turnId')=" ++ C.q(turn) ++ " ELSE 1 END);")
++    Outcome.Checked.pure(Unit,Unit{})
++
++def pointer(+executable: String, +db: String, +session: String, +row: Snapshot) -> String:
++  Guidance.pending()
+diff --git a/bend2/src/coordinator/codex-inbox.bend b/bend2/src/coordinator/codex-inbox.bend
+new file mode 100644
+index 000000000..4cbff06f0
+--- /dev/null
++++ b/bend2/src/coordinator/codex-inbox.bend
+@@ -0,0 +1,661 @@
++import Base
++import ./codex-inbox-result.bend as Outcome
++import ../coordinator/commands.bend as C
++import ./store.bend as Store
++import ./wake.bend as Wake
++import ./agent-input.bend as Input
++import ./agent-guidance.bend as Guidance
++import ./native-initial-input.bend as InitialInput
++import ./codex-inbox-store.bend as Inbox
++import ./codex-inbox-proxy.bend as Proxy
++import ../host/codex-proxy.bend as Native
++import ../host/instance.bend as Custody
++import ../host/sqlite.bend as DB
++import ../host/session-lock.bend as Lock
++import ../json/canonical.bend as J
++import ../git/text.bend as Tx
++
++# The live reducer is reconstructed from the provider and committed inbox after
++# restart. Complete items remain until the corresponding terminal report commits.
++type State is Data:
++  State{pending: Proxy.Pending, items: String, reported: String, observed: String}
++
++type Notice is Data:
++  Managed{executable: String, database: String, session: String, thread: String, token: String}
++  Pointer{database: String, session: String, thread: String, token: String, notice: String, suffix: String}
++  Literal{text: String}
++
++def initial(+pending: Proxy.Pending) -> State:
++  State{pending,"[]","[]","[]"}
++
++def state_pending(+state: State) -> Proxy.Pending:
++  match state:
++    case State{value,items,reported,observed}: value
++
++def items(+state: State) -> String:
++  match state:
++    case State{pending,value,reported,observed}: value
++
++def reported(+state: State) -> String:
++  match state:
++    case State{pending,items,value,observed}: value
++
++def observed(+state: State) -> String:
++  match state:
++    case State{pending,items,reported,value}: value
++
++def replace_pending(+state: State, +pending: Proxy.Pending) -> State:
++  match state:
++    case State{old,items,reported,observed}: State{pending,items,reported,observed}
++
++def synced(+state: State, +thread: String) -> Outcome.Checked(State):
++  do Outcome.Checked<State>:
++    +queue : String = Proxy.frames(state_pending(state))
++    +updated : String <- Proxy.json("SELECT coalesce(json_group_array(turn),'[]') FROM (SELECT value AS turn FROM json_each(" ++ C.q(observed(state)) ++ ") UNION SELECT coalesce(json_extract(value,'$.params.turn.id'),json_extract(value,'$.params.turnId')) AS turn FROM json_each(" ++ C.q(queue) ++ ") WHERE json_extract(value,'$.params.threadId')=" ++ C.q(thread) ++ " AND json_extract(value,'$.method') IN ('item/completed','turn/completed','turn/started')) WHERE turn IS NOT NULL AND turn NOT IN (SELECT value FROM json_each(" ++ C.q(reported(state)) ++ "));")
++    Outcome.Checked.pure(State,State{state_pending(state),items(state),reported(state),updated})
++
++def request_result(result: Proxy.Pending & String, +state: State, +thread: String) -> Outcome.Checked(State & String):
++  match result:
++    case (pending,response): do Outcome.Checked<State & String>:
++      +next : State <- synced(replace_pending(state,pending),thread)
++      Outcome.Checked.pure(State & String,(next,response))
++
++def request(+link: Proxy.Link, +state: State, +thread: String, +method: String, +params: String) -> Outcome.Checked(State & String):
++  do Outcome.Checked<State & String>:
++    result : Proxy.Pending & String <- Proxy.rpc(link,state_pending(state),method,params)
++    request_result(result,state,thread)
++
++type Admission is Type:
++  Accepted{state: State}
++  Refused{state: State, code: U32, cause: String}
++
++def admission_response(+state: State, result: Result<&1,&1,U32 & String,String>, next: State -> String -> Outcome.Checked(Admission)) -> Outcome.Checked(Admission):
++  match result:
++    case Fail{(code,cause)}: Outcome.Checked.pure(Admission,Refused{state,code,cause})
++    case Done{response}: next(state,response)
++
++def admission_received(+state: State, +thread: String, result: Proxy.Pending & Result<&1,&1,U32 & String,String>, next: State -> String -> Outcome.Checked(Admission)) -> Outcome.Checked(Admission):
++  match result:
++    case (pending,result): do Outcome.Checked<Admission>:
++      +updated : State <- synced(replace_pending(state,pending),thread)
++      admission_response(updated,result,next)
++
++def admission_rpc(+link: Proxy.Link, +state: State, +thread: String, +method: String, +params: String, next: State -> String -> Outcome.Checked(Admission)) -> Outcome.Checked(Admission):
++  do Outcome.Checked<Admission>:
++    result : Proxy.Pending & Result<&1,&1,U32 & String,String> <- Proxy.rpc_result(link,state_pending(state),method,params)
++    admission_received(state,thread,result,next)
++
++def thread_params(+thread: String) -> String:
++  "{\"threadId\":" ++ J.string_literal(thread) ++ ",\"includeTurns\":false}"
++
++def turn_params(+thread: String, +cursor: String) -> String:
++  "{\"threadId\":" ++ J.string_literal(thread) ++ ",\"sortDirection\":\"desc\",\"itemsView\":\"notLoaded\""
++  ++ Bool.pick(String,String.is_empty(cursor),"",",\"cursor\":" ++ J.string_literal(cursor)) ++ "}"
++
++def turn_page_selected(+link: Proxy.Link, +state: State, +thread: String, +page: String, +turn: String, +cursor: String, +found: Bool, again: State -> String -> Outcome.Checked(State & String)) -> Outcome.Checked(State & String):
++  match found:
++    case True{}: Outcome.Checked.pure(State & String,(state,turn))
++    case False{}: Bool.pick(Outcome.Checked(State & String),String.is_empty(cursor),Outcome.Checked.fail(State & String,1,"Public Codex active thread " ++ thread ++ " returned no in-progress turn identity after cursor exhaustion: " ++ page),again(state,cursor))
++
++def turn_page(+link: Proxy.Link, +thread: String, result: State & String, again: State -> String -> Outcome.Checked(State & String)) -> Outcome.Checked(State & String):
++  match result:
++    case (state,+page): do Outcome.Checked<State & String>:
++      +turn : String <- Proxy.json("SELECT coalesce((SELECT value FROM json_each(" ++ C.q(page) ++ ",'$.data') WHERE json_extract(value,'$.status')='inProgress' LIMIT 1),'null');")
++      +cursor : String <- Proxy.text(page,"$.nextCursor")
++      turn_page_selected(link,state,thread,page,turn,cursor,Bool.not(String.eq(turn,"null")),again)
++
++@unsafe
++def current_turn(+link: Proxy.Link, +state: State, +thread: String, +cursor: String) -> Outcome.Checked(State & String):
++  do Outcome.Checked<State & String>:
++    result : State & String <- request(link,state,thread,"thread/turns/list",turn_params(thread,cursor))
++    turn_page(link,thread,result,next => more => current_turn(link,next,thread,more))
++
++def refreshed_fields(fields: List<String>, +executable: String, +db: String, +session: String) -> Outcome.Checked(String & String):
++  match fields:
++    case token <> rest: do Outcome.Checked<String & String>:
++      +row : Inbox.Snapshot <- Inbox.row_fields(rest)
++      prompt : String <- InitialInput.managed(db,session,Inbox.native(row),Inbox.input_seq(row),Inbox.pointer(executable,db,session,row))
++      Outcome.Checked.pure(String & String,(token,prompt))
++    case Nil{}: Outcome.Checked.pure(String & String,("",""))
++
++def refreshed_managed(+current: String, +executable: String, +db: String, +session: String, +empty: Bool) -> Outcome.Checked(String & String):
++  match empty:
++    case True{}: Outcome.Checked.pure(String & String,("",""))
++    case False{}: refreshed_fields(Tx.split_tabs(current),executable,db,session)
++
++def refreshed_pointer(fields: List<String>, +db: String, +session: String, +notice: String, +suffix: String) -> Outcome.Checked(String & String):
++  match fields:
++    case token <> rest: do Outcome.Checked<String & String>:
++      +row : Inbox.Snapshot <- Inbox.row_fields(rest)
++      prompt : String <- InitialInput.managed(db,session,Inbox.native(row),Inbox.input_seq(row),Guidance.pending() ++ suffix)
++      Outcome.Checked.pure(String & String,(token,prompt))
++    case Nil{}: Outcome.Checked.pure(String & String,("",""))
++
++def refreshed_pointer_present(+current: String, +db: String, +session: String, +notice: String, +suffix: String, +empty: Bool) -> Outcome.Checked(String & String):
++  match empty:
++    case True{}: Outcome.Checked.pure(String & String,("",""))
++    case False{}: refreshed_pointer(Tx.split_tabs(current),db,session,notice,suffix)
++
++def refresh(+notice: Notice, +status: String) -> Outcome.Checked(String & String):
++  match notice:
++    case Literal{text}: Outcome.Checked.pure(String & String,("",text))
++    case Managed{executable,+db,+session,thread,token}: do Outcome.Checked<String & String>:
++      +current : String <- Inbox.refresh(db,session,thread,token,status)
++      refreshed_managed(current,executable,db,session,String.is_empty(current))
++    case Pointer{+db,+session,thread,token,notice,suffix}: do Outcome.Checked<String & String>:
++      +current : String <- Inbox.refresh(db,session,thread,token,status)
++      refreshed_pointer_present(current,db,session,notice,suffix,String.is_empty(current))
++
++def admission_stored(+notice: Notice, +token: String, +turn: String) -> Outcome.Checked(Unit):
++  match notice:
++    case Literal{text}: Outcome.Checked.pure(Unit,Unit{})
++    case Managed{executable,db,session,thread,saved}: Inbox.admitted(db,session,thread,token,turn)
++    case Pointer{db,session,thread,saved,document,suffix}: Inbox.admitted(db,session,thread,token,turn)
++
++def observed_add(+state: State, +turn: String) -> Outcome.Checked(State):
++  do Outcome.Checked<State>:
++    +next : String <- Proxy.json("SELECT json_group_array(value) FROM (SELECT value FROM json_each(" ++ C.q(observed(state)) ++ ") UNION SELECT " ++ C.q(turn) ++ ") WHERE value<>'' AND value NOT IN (SELECT value FROM json_each(" ++ C.q(reported(state)) ++ "));")
++    Outcome.Checked.pure(State,State{state_pending(state),items(state),reported(state),next})
++
++def admission_result(+notice: Notice, +token: String, +thread: String, +method: String, +state: State, +response: String) -> Outcome.Checked(Admission):
++  do Outcome.Checked<Admission>:
++    recorded : Unit <- Proxy.record("{\"type\":\"codexInboxAdmission\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"method\":" ++ J.string_literal(method) ++ ",\"result\":" ++ response ++ "}")
++    +turn : String <- Proxy.text(response,"$.turnId")
++    +nested : String <- Proxy.text(response,"$.turn.id")
++    +id : String = Bool.pick(String,String.is_empty(turn),nested,turn)
++    stored : Unit <- admission_stored(notice,token,id)
++    next : State <- observed_add(state,id)
++    Outcome.Checked.pure(Admission,Accepted{next})
++
++def coalesced_row(+session: String, +thread: String, +row: Inbox.Snapshot) -> Outcome.Checked(Unit):
++  Proxy.record("{\"type\":\"codexInboxCoalesced\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"stopped\":" ++ Bool.pick(String,Inbox.stopped(row),"true","false") ++ ",\"pendingCount\":" ++ Inbox.pending(row) ++ "}")
++
++def coalesced(+notice: Notice) -> Outcome.Checked(Unit):
++  match notice:
++    case Literal{text}: Outcome.Checked.pure(Unit,Unit{})
++    case Managed{executable,+db,+session,+thread,token}: do Outcome.Checked<Unit>:
++      row : Inbox.Snapshot <- Inbox.read(db,session,thread)
++      coalesced_row(session,thread,row)
++    case Pointer{+db,+session,+thread,token,document,suffix}: do Outcome.Checked<Unit>:
++      row : Inbox.Snapshot <- Inbox.read(db,session,thread)
++      coalesced_row(session,thread,row)
++
++def send_refreshed(+link: Proxy.Link, +state: State, +thread: String, +method: String, +turn: String, +notice: Notice, +token: String, +pointer: String, +empty: Bool) -> Outcome.Checked(Admission):
++  match empty:
++    case True{}: do Outcome.Checked<Admission>:
++      logged : Unit <- coalesced(notice)
++      Outcome.Checked.pure(Admission,Accepted{state})
++    case False{}:
++      admission_rpc(link,state,thread,method,"{\"threadId\":" ++ J.string_literal(thread) ++ ",\"input\":[{\"type\":\"text\",\"text\":" ++ J.string_literal(pointer) ++ "}]" ++ Bool.pick(String,String.is_empty(turn),"",",\"expectedTurnId\":" ++ J.string_literal(turn)) ++ "}",next => response => admission_result(notice,token,thread,method,next,response))
++
++def send_admission(+link: Proxy.Link, +state: State, +thread: String, +method: String, +turn: String, +notice: Notice, refreshed: String & String) -> Outcome.Checked(Admission):
++  match refreshed:
++    case (token,+pointer): send_refreshed(link,state,thread,method,turn,notice,token,pointer,String.is_empty(pointer))
++
++def steer_selected(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +page: String, +turn: String, +cursor: String, +found: Bool, again: State -> String -> Outcome.Checked(Admission)) -> Outcome.Checked(Admission):
++  match found:
++    case True{}: do Outcome.Checked<Admission>:
++      +id : String <- Proxy.text(turn,"$.id")
++      refreshed : String & String <- refresh(notice,"active")
++      send_admission(link,state,thread,"turn/steer",id,notice,refreshed)
++    case False{}:
++      Bool.pick(Outcome.Checked(Admission),String.is_empty(cursor),Outcome.Checked.pure(Admission,Refused{state,1,"Public Codex active thread " ++ thread ++ " returned no in-progress turn identity after cursor exhaustion: " ++ page}),again(state,cursor))
++
++def steer_page(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +page: String, again: State -> String -> Outcome.Checked(Admission)) -> Outcome.Checked(Admission):
++  do Outcome.Checked<Admission>:
++    +turn : String <- Proxy.json("SELECT coalesce((SELECT value FROM json_each(" ++ C.q(page) ++ ",'$.data') WHERE json_extract(value,'$.status')='inProgress' LIMIT 1),'null');")
++    +cursor : String <- Proxy.text(page,"$.nextCursor")
++    steer_selected(link,thread,notice,state,page,turn,cursor,Bool.not(String.eq(turn,"null")),again)
++
++@unsafe
++def steer_current(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +cursor: String) -> Outcome.Checked(Admission):
++  admission_rpc(link,state,thread,"thread/turns/list",turn_params(thread,cursor),next => page => steer_page(link,thread,notice,next,page,later => cursor => steer_current(link,thread,notice,later,cursor)))
++
++def deliver_status(+link: Proxy.Link, +state: State, +thread: String, +notice: Notice, +status: String, +active: Bool) -> Outcome.Checked(Admission):
++  match active:
++    case True{}: steer_current(link,thread,notice,state,"")
++    case False{}: do Outcome.Checked<Admission>:
++      refreshed : String & String <- refresh(notice,status)
++      send_admission(link,state,thread,"turn/start","",notice,refreshed)
++
++def deliver_read(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +response: String) -> Outcome.Checked(Admission):
++  do Outcome.Checked<Admission>:
++    +status : String <- Proxy.text(response,"$.thread.status.type")
++    deliver_status(link,state,thread,notice,status,String.eq(status,"active"))
++
++def deliver_loaded(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +response: String, +unloaded: Bool) -> Outcome.Checked(Admission):
++  match unloaded:
++    case True{}: admission_rpc(link,state,thread,"thread/resume",thread_params(thread),next => resumed => deliver_read(link,thread,notice,next,resumed))
++    case False{}: deliver_read(link,thread,notice,state,response)
++
++def deliver_started(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +response: String) -> Outcome.Checked(Admission):
++  do Outcome.Checked<Admission>:
++    +unloaded : Bool <- Proxy.truth(response,"json_extract(value,'$.thread.status.type')='notLoaded'")
++    deliver_loaded(link,thread,notice,state,response,unloaded)
++
++def deliver_notice(+link: Proxy.Link, +state: State, +thread: String, +notice: Notice) -> Outcome.Checked(Admission):
++  admission_rpc(link,state,thread,"thread/read",thread_params(thread),next => response => deliver_started(link,thread,notice,next,response))
++
++def membership(+values: String, +value: String) -> Outcome.Checked(Bool):
++  Proxy.truth(values,"EXISTS(SELECT 1 FROM json_each(item.value) j WHERE j.value=" ++ C.q(value) ++ ")")
++
++def report(+db: String, +session: String, +id: String, +body: String) -> Outcome.Checked(String):
++  do Outcome.Checked<String>:
++    +command : C.Command = C.Report{id,session,body}
++    +saved : String <- Store.apply(db,command)
++    woken : Unit <- Wake.drive_command(db,command,Done{saved})
++    Outcome.Checked.pure(String,saved)
++
++def terminal_marked(+state: State, +turn: String) -> Outcome.Checked(State):
++  do Outcome.Checked<State>:
++    +reports : String <- Proxy.json("SELECT json_group_array(value) FROM (SELECT value FROM json_each(" ++ C.q(reported(state)) ++ ") UNION SELECT " ++ C.q(turn) ++ ");")
++    +remaining : String <- Proxy.json("SELECT coalesce(json_group_array(value),'[]') FROM json_each(" ++ C.q(observed(state)) ++ ") WHERE value<>" ++ C.q(turn) ++ ";")
++    +completed : String <- Proxy.json("SELECT coalesce(json_group_array(json(value)),'[]') FROM json_each(" ++ C.q(items(state)) ++ ") WHERE json_extract(value,'$.turnId')<>" ++ C.q(turn) ++ ";")
++    Outcome.Checked.pure(State,State{state_pending(state),completed,reports,remaining})
++
++def turn_retained(+session: String, +thread: String, +turn: String) -> Outcome.Checked(Unit):
++  Proxy.record("{\"type\":\"codexInboxTurnRetained\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"turn\":" ++ turn ++ "}")
++
++def terminal_body(+db: String, +session: String, +thread: String, +turn: String, +id: String, +body: String) -> Outcome.Checked(String):
++  do Outcome.Checked<String>:
++    +stored : String <- DB.Sql.read(db,"SELECT hex(body) FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(session) ++ " AND kind='report' AND CASE WHEN json_valid(body) THEN json_extract(body,'$.type')='codex-inbox-turn-settled' AND json_extract(body,'$.session')=" ++ C.q(session) ++ " AND json_extract(body,'$.threadId')=" ++ C.q(thread) ++ " AND json_extract(body,'$.turn.id')=" ++ C.q(turn) ++ " ELSE 0 END;")
++    Bool.pick(Outcome.Checked(String),String.is_empty(stored),Outcome.Checked.pure(String,body),Inbox.text(Tx.trim_nl(stored)))
++
++def terminal_report(+db: String, +session: String, +thread: String, +state: State, +turn: String, +turn_id: String, +status: String, +already: Bool) -> Outcome.Checked(State):
++  match already:
++    case True{}: terminal_marked(state,turn_id)
++    case False{}: do Outcome.Checked<State>:
++      +completed : String <- Proxy.json("SELECT coalesce(json_group_array(json(json_extract(value,'$.item'))),'[]') FROM json_each(" ++ C.q(items(state)) ++ ") WHERE json_extract(value,'$.turnId')=" ++ C.q(turn_id) ++ ";")
++      +id : String = "codex-inbox-turn:" ++ session ++ ":" ++ thread ++ ":" ++ turn_id
++      +candidate : String = "{\"type\":\"codex-inbox-turn-settled\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"turn\":" ++ turn ++ ",\"completedItems\":" ++ completed ++ "}"
++      +body : String <- terminal_body(db,session,thread,turn_id,id,candidate)
++      +saved : String <- report(db,session,id,body)
++      logged : Unit <- Proxy.record("{\"type\":\"codexInboxTurnReport\",\"id\":" ++ J.string_literal(id) ++ ",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"code\":0,\"signal\":null,\"output\":" ++ J.string_literal(saved) ++ "}")
++      settled : Unit <- Input.settle_codex_result(db,session,thread,turn_id,status)
++      kept : Unit <- Bool.pick(Outcome.Checked(Unit),String.eq(status,"completed"),Outcome.Checked.pure(Unit,Unit{}),turn_retained(session,thread,turn))
++      terminal_marked(state,turn_id)
++
++def terminal(+db: String, +session: String, +thread: String, +state: State, +frame: String) -> Outcome.Checked(State):
++  do Outcome.Checked<State>:
++    +turn : String <- Proxy.value(frame,"$.params.turn")
++    +id : String <- Proxy.text(turn,"$.id")
++    +status : String <- Proxy.text(turn,"$.status")
++    logged : Unit <- Proxy.record("{\"type\":\"codexInboxTurnSettled\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"turnId\":" ++ J.string_literal(id) ++ ",\"status\":" ++ J.string_literal(status) ++ ",\"turn\":" ++ turn ++ "}")
++    +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
++    retained : Unit <- Bool.pick(Outcome.Checked(Unit),String.eq(status,"completed"),Outcome.Checked.pure(Unit,Unit{}),Inbox.failed(db,session,thread,Inbox.input_seq(row),turn,id))
++    +done : Bool <- membership(reported(state),id)
++    terminal_report(db,session,thread,state,turn,id,status,done)
++
++def completed_item(+session: String, +state: State, +frame: String) -> Outcome.Checked(State):
++  do Outcome.Checked<State>:
++    +turn : String <- Proxy.text(frame,"$.params.turnId")
++    +item : String <- Proxy.value(frame,"$.params.item")
++    +id : String <- Proxy.text(item,"$.id")
++    +updated : String <- Proxy.json("SELECT json_insert(coalesce(json_group_array(json(value)),'[]'),'$[#]',json_object('turnId'," ++ C.q(turn) ++ ",'item',json(" ++ C.q(item) ++ "))) FROM json_each(" ++ C.q(items(state)) ++ ") WHERE NOT(json_extract(value,'$.turnId')=" ++ C.q(turn) ++ " AND json_extract(value,'$.item.id')=" ++ C.q(id) ++ ");")
++    +params : String <- Proxy.value(frame,"$.params")
++    +logged_frame : String <- Proxy.json("SELECT json_set(" ++ C.q(params) ++ ",'$.type','codexInboxItemCompleted','$.session'," ++ C.q(session) ++ ");")
++    logged : Unit <- Proxy.record(logged_frame)
++    observed_add(State{state_pending(state),updated,reported(state),observed(state)},turn)
++
++def notification_method(+db: String, +session: String, +thread: String, +state: State, +frame: String, +method: String) -> Outcome.Checked(State):
++  match method:
++    case "turn/completed": terminal(db,session,thread,state,frame)
++    case "item/completed": completed_item(session,state,frame)
++    case "turn/started": do Outcome.Checked<State>:
++      +turn : String <- Proxy.text(frame,"$.params.turn.id")
++      observed_add(state,turn)
++    case other: Outcome.Checked.pure(State,state)
++
++def notification_selected(+db: String, +session: String, +thread: String, +state: State, +frame: String, +method: String, +selected: Bool) -> Outcome.Checked(State):
++  match selected:
++    case False{}: Outcome.Checked.pure(State,state)
++    case True{}: notification_method(db,session,thread,state,frame,method)
++
++def notification_error(+db: String, +session: String, +thread: String, +state: State, +frame: String, +failed: Bool) -> Outcome.Checked(State):
++  match failed:
++    case True{}: Outcome.Checked.fail(State,1,"Public Codex notification failed: " ++ frame)
++    case False{}: do Outcome.Checked<State>:
++      +method : String <- Proxy.text(frame,"$.method")
++      +source : String <- Proxy.text(frame,"$.params.threadId")
++      notification_selected(db,session,thread,state,frame,method,String.eq(source,thread))
++
++def notification(+db: String, +session: String, +thread: String, +state: State, +frame: String) -> Outcome.Checked(State):
++  do Outcome.Checked<State>:
++    failed : Bool <- Proxy.truth(frame,"json_type(value,'$.error') IS NOT NULL AND json_type(value,'$.error')<>'null'")
++    notification_error(db,session,thread,state,frame,failed)
++
++def released(+session: String, +thread: String, +row: Inbox.Snapshot) -> Outcome.Checked(Unit):
++  Proxy.record("{\"type\":\"codexInboxReleased\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"stopped\":" ++ Bool.pick(String,Inbox.stopped(row),"true","false") ++ ",\"pendingCount\":" ++ Inbox.pending(row) ++ "}")
++
++def notify_failure(+db: String, +session: String, +thread: String, +cause: String) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    +nonce : String <- Proxy.json("SELECT lower(hex(randomblob(16)));")
++    +id : String = "codex-inbox-failure:" ++ session ++ ":" ++ nonce
++    +body : String = "{\"type\":\"codex-inbox-continuation-failed\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"cause\":" ++ J.string_literal(cause) ++ "}"
++    +output : String <- report(db,session,id,body)
++    Proxy.record("{\"type\":\"codexInboxFailureReport\",\"id\":" ++ J.string_literal(id) ++ ",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"code\":0,\"signal\":null,\"output\":" ++ J.string_literal(output) ++ "}")
++
++def retained_failure(+db: String, +session: String, +thread: String, +cause: String) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
++    Inbox.failed(db,session,thread,Inbox.input_seq(row),cause,"")
++
++def admission_caught(+db: String, +session: String, +thread: String, result: Admission) -> Outcome.Checked(State):
++  match result:
++    case Accepted{state}: Outcome.Checked.pure(State,state)
++    case Refused{state,code,+cause}: do Outcome.Checked<State>:
++      retained : Unit <- retained_failure(db,session,thread,cause)
++      notified : Unit <- notify_failure(db,session,thread,cause)
++      Outcome.Checked.pure(State,state)
++
++def admission_claimed(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +token: String, +empty: Bool) -> Outcome.Checked(Admission):
++  match empty:
++    case True{}: Outcome.Checked.pure(Admission,Accepted{state})
++    case False{}: deliver_notice(link,state,thread,Managed{executable,db,session,thread,token})
++
++def admit_current(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +ready: Bool) -> Outcome.Checked(Admission):
++  match ready:
++    case False{}: Outcome.Checked.pure(Admission,Accepted{state})
++    case True{}: do Outcome.Checked<Admission>:
++      +token : String <- Inbox.claim(db,session,thread)
++      admission_claimed(link,executable,db,session,thread,state,token,String.is_empty(token))
++
++def admit_row(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +claimed: Bool) -> Outcome.Checked(Admission):
++  admit_current(link,executable,db,session,thread,state,Bool.and(Bool.not(Inbox.stopped(row)),Bool.and(Inbox.has_pending(row),Bool.not(claimed))))
++
++def admit(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State) -> Outcome.Checked(State):
++  do Outcome.Checked<State>:
++    +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
++    +claimed : Bool <- Inbox.claimed(db,session,thread)
++    admission : Admission <- admit_row(link,executable,db,session,thread,state,row,claimed)
++    admission_caught(db,session,thread,admission)
++
++type Step is Type:
++  Finished{}
++  Waiting{state: State, row: Inbox.Snapshot}
++
++def active_turn(result: State & String) -> Outcome.Checked(State):
++  match result:
++    case (next,turn): do Outcome.Checked<State>:
++      id : String <- Proxy.text(turn,"$.id")
++      observed_add(next,id)
++
++def active_observed(link: Proxy.Link, thread: String, state: State, needed: Bool) -> Outcome.Checked(State):
++  match needed:
++    case False{}: Outcome.Checked.pure(State,state)
++    case True{}: do Outcome.Checked<State>:
++      result : State & String <- current_turn(link,state,thread,"")
++      active_turn(result)
++
++def continue_admission(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +status: String, +allowed: Bool) -> Outcome.Checked(Step):
++  match allowed:
++    case True{}: do Outcome.Checked<Step>:
++      +next : State <- admit(link,executable,db,session,thread,state)
++      Outcome.Checked.pure(Step,Waiting{next,row})
++    case False{}:
++      Bool.pick(Outcome.Checked(Step),Bool.or(String.eq(status,"systemError"),String.eq(status,"notLoaded")),Outcome.Checked.fail(Step,1,"Managed Codex inbox continuation cannot run: " ++ status),Outcome.Checked.pure(Step,Waiting{state,row}))
++
++def retained_turn_page(+session: String, +thread: String, result: State & String) -> Outcome.Checked(State):
++  match result:
++    case (state,page): do Outcome.Checked<State>:
++      turn : String <- Proxy.value(page,"$.data[0]")
++      logged : Unit <- turn_retained(session,thread,turn)
++      Outcome.Checked.pure(State,state)
++
++def retain_existing(+link: Proxy.Link, +session: String, +thread: String, +state: State, +needed: Bool) -> Outcome.Checked(State):
++  match needed:
++    case False{}: Outcome.Checked.pure(State,state)
++    case True{}: do Outcome.Checked<State>:
++      result : State & String <- request(link,state,thread,"thread/turns/list",turn_params(thread,""))
++      retained_turn_page(session,thread,result)
++
++def continue_open(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +previous: Inbox.Snapshot, +status: String) -> Outcome.Checked(Step):
++  do Outcome.Checked<Step>:
++    +claimed : Bool <- Inbox.claimed(db,session,thread)
++    +progress : Bool = Bool.not(String.eq(Inbox.handled(row),Inbox.handled(previous)))
++    +control : Bool = Bool.not(String.eq(Inbox.control_seq(row),Inbox.control_seq(previous)))
++    +next : State <- retain_existing(link,session,thread,state,Bool.and(claimed,Bool.and(String.eq(status,"idle"),Inbox.has_pending(row))))
++    continue_admission(link,executable,db,session,thread,next,row,status,Bool.and(Inbox.has_pending(row),Bool.or(progress,Bool.or(control,Bool.and(String.eq(status,"idle"),Bool.not(claimed))))))
++
++def continue_status(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +previous: Inbox.Snapshot, +status: String, +done: Bool) -> Outcome.Checked(Step):
++  match done:
++    case True{}: do Outcome.Checked<Step>:
++      logged : Unit <- released(session,thread,row)
++      Outcome.Checked.pure(Step,Finished{})
++    case False{}: continue_open(link,executable,db,session,thread,state,row,previous,status)
++
++def continue_observed(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +previous: Inbox.Snapshot, +status: String) -> Outcome.Checked(Step):
++  do Outcome.Checked<Step>:
++    +empty : Bool <- Proxy.truth(observed(state),"json_array_length(value)=0")
++    continue_status(link,executable,db,session,thread,state,row,previous,status,Bool.and(Bool.not(Inbox.has_pending(row)),Bool.and(Bool.not(String.eq(status,"active")),empty)))
++
++def continue_read(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +row: Inbox.Snapshot, +previous: Inbox.Snapshot, result: State & String) -> Outcome.Checked(Step):
++  match result:
++    case (+state,+response): do Outcome.Checked<Step>:
++      +status : String <- Proxy.text(response,"$.thread.status.type")
++      +empty : Bool <- Proxy.truth(observed(state),"json_array_length(value)=0")
++      +next : State <- active_observed(link,thread,state,Bool.and(String.eq(status,"active"),empty))
++      continue_observed(link,executable,db,session,thread,next,row,previous,status)
++
++def step_open(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +previous: Inbox.Snapshot, +stopped: Bool) -> Outcome.Checked(Step):
++  match stopped:
++    case True{}: do Outcome.Checked<Step>:
++      logged : Unit <- released(session,thread,row)
++      Outcome.Checked.pure(Step,Finished{})
++    case False{}: do Outcome.Checked<Step>:
++      result : State & String <- request(link,state,thread,"thread/read",thread_params(thread))
++      continue_read(link,executable,db,session,thread,row,previous,result)
++
++def step(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +previous: Inbox.Snapshot, +frame: String) -> Outcome.Checked(Step):
++  do Outcome.Checked<Step>:
++    +next : State <- notification(db,session,thread,state,frame)
++    +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
++    step_open(link,executable,db,session,thread,next,row,previous,Inbox.stopped(row))
++
++def loop_incoming(state: State, row: Inbox.Snapshot, incoming: Proxy.Pending & String, again: State -> Inbox.Snapshot -> String -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
++  match incoming:
++    case (pending,frame): again(replace_pending(state,pending),row,frame)
++
++def loop_next(link: Proxy.Link, result: Step, again: State -> Inbox.Snapshot -> String -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
++  match result:
++    case Finished{}: Outcome.Checked.pure(Unit,Unit{})
++    case Waiting{+state,row}: do Outcome.Checked<Unit>:
++      incoming : Proxy.Pending & String <- Proxy.next(link,state_pending(state))
++      loop_incoming(state,row,incoming,again)
++
++@unsafe
++def follow_loop(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +frame: String) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    result : Step <- step(link,executable,db,session,thread,state,row,frame)
++    loop_next(link,result,next => previous => event => follow_loop(link,executable,db,session,thread,next,previous,event))
++
++def following(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +row: Inbox.Snapshot, result: State & String) -> Outcome.Checked(Unit):
++  match result:
++    case (next,resumed): do Outcome.Checked<Unit>:
++      logged : Unit <- Proxy.record("{\"type\":\"codexInboxSubscribed\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ "}")
++      follow_loop(link,executable,db,session,thread,next,row,"{\"initial\":true}")
++
++def follow_loaded(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +stopped: Bool) -> Outcome.Checked(Unit):
++  match stopped:
++    case True{}: released(session,thread,row)
++    case False{}: do Outcome.Checked<Unit>:
++      result : State & String <- request(link,state,thread,"thread/resume","{\"threadId\":" ++ J.string_literal(thread) ++ "}")
++      following(link,executable,db,session,thread,row,result)
++
++def follow_run(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +pending: Proxy.Pending) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
++    follow_loaded(link,executable,db,session,thread,initial(pending),row,Inbox.stopped(row))
++
++def cleanup_status(+status: String, stdout: Bool) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    +event : String <- Proxy.json("SELECT json_object('type','codexProxyExit','code',CASE WHEN " ++ C.q(status) ++ " LIKE 'exit %' THEN CAST(substr(" ++ C.q(status) ++ ",6) AS INTEGER) END,'signal',CASE WHEN " ++ C.q(status) ++ " LIKE 'signal %' THEN CAST(substr(" ++ C.q(status) ++ ",8) AS INTEGER) END,'status'," ++ C.q(status) ++ ");")
++    logged : Unit <- Bool.pick(Outcome.Checked(Unit),stdout,Proxy.record(event),Outcome.Checked.lift(Unit,IO.print_err(event)))
++    Bool.pick(Outcome.Checked(Unit),String.eq(status,"exit 0"),Outcome.Checked.pure(Unit,Unit{}),Outcome.Checked.fail(Unit,1,"Public Codex proxy exit: " ++ status))
++
++def combined(result: Result<&1,&1,U32 & String,Unit>, cleaned: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
++  match result:
++    case Done{value}: cleaned
++    case Fail{(code,+cause)}:
++      match cleaned:
++        case Done{value}: Fail{(code,cause)}
++        case Fail{(cleanup_code,detail)}: Fail{(code,cause ++ "\nCodex proxy cleanup: " ++ detail)}
++
++def cleanup_closed(result: Result<&1,&1,U32 & String,String>, stdout: Bool) -> Outcome.Checked(Unit):
++  match result:
++    case Fail{error}: Outcome.Checked.from_result(Unit,Fail{error})
++    case Done{status}: cleanup_status(status,stdout)
++
++def unsubscribe(+subscription: U32) -> Outcome.Checked(Unit):
++  Bool.pick(Outcome.Checked(Unit),U32.is_eq(subscription,0),Outcome.Checked.pure(Unit,Unit{}),Custody.Instance.unsubscribe(subscription))
++
++def cleanup(+link: Proxy.Link, stdout: Bool) -> Outcome.Checked(Unit):
++  do IO<Result<&1,&1,U32 & String,Unit>>:
++    closed : Unit <- Chan.close(Proxy.CodexEvent,Proxy.events(link))
++    removed : Result<&1,&1,U32 & String,Unit> <- unsubscribe(Proxy.subscription(link))
++    status : Result<&1,&1,U32 & String,String> <- Native.CodexProxy.close(Proxy.proxy(link))
++    cleaned : Result<&1,&1,U32 & String,Unit> <- cleanup_closed(status,stdout)
++    IO.pure(Result<&1,&1,U32 & String,Unit>,combined(removed,cleaned))
++
++def finished(+link: Proxy.Link, stdout: Bool, result: Result<&1,&1,U32 & String,Unit>) -> Outcome.Checked(Unit):
++  do IO<Result<&1,&1,U32 & String,Unit>>:
++    cleaned : Result<&1,&1,U32 & String,Unit> <- cleanup(link,stdout)
++    IO.pure(Result<&1,&1,U32 & String,Unit>,combined(result,cleaned))
++
++def failure_retained(+db: String, +session: String, +thread: String, original: U32 & String, retained: Result<&1,&1,U32 & String,Unit>) -> Outcome.Checked(Unit):
++  match original:
++    case (code,+cause):
++      match retained:
++        case Done{value}: notify_failure(db,session,thread,cause)
++        case Fail{(retention_code,detail)}: notify_failure(db,session,thread,cause ++ "\nAdmission failure custody could not be updated: " ++ detail)
++
++def follow_failed(+db: String, +session: String, +thread: String, result: Result<&1,&1,U32 & String,Unit>) -> Outcome.Checked(Unit):
++  match result:
++    case Done{value}: Outcome.Checked.pure(Unit,value)
++    case Fail{(+code,+cause)}: do IO<Result<&1,&1,U32 & String,Unit>>:
++      retained : Result<&1,&1,U32 & String,Unit> <- retained_failure(db,session,thread,cause)
++      notified : Result<&1,&1,U32 & String,Unit> <- failure_retained(db,session,thread,(code,cause),retained)
++      IO.pure(Result<&1,&1,U32 & String,Unit>,combined(Fail{(code,cause)},notified))
++
++def initialized_run(+link: Proxy.Link, action: Proxy.Pending -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    +pending : Proxy.Pending <- Proxy.initialize(link)
++    action(pending)
++
++def opened(+link: Proxy.Link, stdout: Bool, action: Proxy.Pending -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
++  do IO<Result<&1,&1,U32 & String,Unit>>:
++    armed : Unit <- Proxy.arm_native(link)
++    notices : Unit <- Proxy.arm_notice(link,Bool.not(U32.is_eq(Proxy.subscription(link),0)))
++    result : Result<&1,&1,U32 & String,Unit> <- initialized_run(link,action)
++    finished(link,stdout,result)
++
++def opened_native(+subscription: U32, action: Proxy.Link -> Outcome.Checked(Unit), result: Result<&1,&1,U32 & String,U32>) -> Outcome.Checked(Unit):
++  match result:
++    case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
++      removed : Result<&1,&1,U32 & String,Unit> <- unsubscribe(subscription)
++      IO.pure(Result<&1,&1,U32 & String,Unit>,combined(Fail{error},removed))
++    case Done{handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
++      events : Chan(Proxy.CodexEvent) <- Chan.new(Proxy.CodexEvent,1024)
++      action(Proxy.Link{handle,subscription,events})
++
++def open(+subscription: U32, action: Proxy.Link -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
++  do IO<Result<&1,&1,U32 & String,Unit>>:
++    result : Result<&1,&1,U32 & String,U32> <- Native.CodexProxy.open()
++    opened_native(subscription,action,result)
++
++def followed(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String) -> Outcome.Checked(Unit):
++  opened(link,True{},pending => follow_run(link,executable,db,session,thread,pending))
++
++def follow_subscribed(+executable: String, +db: String, +session: String, +thread: String, subscribed: U32 & String) -> Outcome.Checked(Unit):
++  match subscribed:
++    case (subscription,readiness): do IO<Result<&1,&1,U32 & String,Unit>>:
++      result : Result<&1,&1,U32 & String,Unit> <- open(subscription,link => followed(link,executable,db,session,thread))
++      follow_failed(db,session,thread,result)
++
++def follow(+db: String, +session: String, +thread: String) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    +executable : String <- Lock.SessionLock.executable()
++    subscribed : U32 & String <- Custody.Instance.subscribe(db,"0","0")
++    follow_subscribed(executable,db,session,thread,subscribed)
++
++def delivery_finished(result: Admission) -> Outcome.Checked(Unit):
++  match result:
++    case Accepted{state}: Outcome.Checked.pure(Unit,Unit{})
++    case Refused{state,code,cause}: Outcome.Checked.fail(Unit,code,cause)
++
++def delivery_run(+link: Proxy.Link, +thread: String, +notice: Notice, +pending: Proxy.Pending) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    result : Admission <- deliver_notice(link,initial(pending),thread,notice)
++    delivery_finished(result)
++
++def retained(+session: String, +thread: String, +row: Inbox.Snapshot) -> Outcome.Checked(Unit):
++  Proxy.record("{\"type\":\"codexInboxRetained\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"stopped\":" ++ Bool.pick(String,Inbox.stopped(row),"true","false") ++ ",\"pendingCount\":" ++ Inbox.pending(row) ++ "}")
++
++def session_row(+executable: String, +db: String, +session: String, +thread: String, +message: String, +token: String, +row: Inbox.Snapshot, +waiting: Bool) -> Outcome.Checked(Unit):
++  match waiting:
++    case False{}: retained(session,thread,row)
++    case True{}: open(0,+link => opened(link,True{},pending => delivery_run(link,thread,Managed{executable,db,session,thread,token},pending)))
++
++def session(+db: String, +session: String, +thread: String, +message: String, +token: String) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    +executable : String <- Lock.SessionLock.executable()
++    +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
++    session_row(executable,db,session,thread,message,token,row,Bool.and(Bool.not(Inbox.stopped(row)),Inbox.has_pending(row)))
++
++def suffix_text(parts: List<String>) -> String:
++  match parts:
++    case Nil{}: ""
++    case head <> rest: "\n" ++ Tx.join("\n",Con{head,rest})
++
++def pointer_document(thread: String, parts: List<String>) -> Outcome.Checked(Notice):
++  match parts:
++    case +notice <> suffix: do Outcome.Checked<Notice>:
++      db : String <- Proxy.text(notice,"$.database")
++      session : String <- Proxy.text(notice,"$.recipient")
++      token : String <- Proxy.text(notice,"$.claimToken")
++      Outcome.Checked.pure(Notice,Pointer{db,session,thread,token,notice,suffix_text(suffix)})
++    case Nil{}: Outcome.Checked.fail(Notice,2,"The Codex inbox pointer has no JSON notice.")
++
++def pointer_lines(thread: String, parts: List<String>) -> Outcome.Checked(Notice):
++  match parts:
++    case prefix <> rest: pointer_document(thread,rest)
++    case Nil{}: Outcome.Checked.fail(Notice,2,"The Codex inbox pointer is empty.")
++
++def pointer_segments(parts: List<&2,String>) -> List<String>:
++  match parts:
++    case Nil{}: Nil{}
++    case head <> rest: Con{head,pointer_segments(rest)}
++
++def pointer_parts(thread: String, pointer: String, managed: Bool) -> Outcome.Checked(Notice):
++  match managed:
++    case True{}: pointer_lines(thread,pointer_segments(String.split(pointer,Char.from_u32(10))))
++    case False{}: Outcome.Checked.pure(Notice,Literal{pointer})
++
++def pointer_notice(+thread: String, +pointer: String) -> Outcome.Checked(Notice):
++  pointer_parts(thread,pointer,Tx.starts_with(pointer,"Baton input is pending.\n"))
++
++def deliver(+db: String, +thread: String, +pointer: String) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    notice : Notice <- pointer_notice(thread,pointer)
++    open(0,+link => opened(link,True{},pending => delivery_run(link,thread,notice,pending)))
++
++def witnessed(+thread: String, +active: Bool, result: State & String) -> Outcome.Checked(Unit):
++  match result:
++    case (state,turn): do Outcome.Checked<Unit>:
++      +id : String <- Proxy.value(turn,"$.id")
++      Outcome.Checked.lift(Unit,IO.write("{\"threadId\":" ++ J.string_literal(thread) ++ ",\"turnId\":" ++ id ++ ",\"active\":" ++ Bool.pick(String,active,"true","false") ++ "}\n"))
++
++def witness_read(+link: Proxy.Link, +thread: String, result: State & String) -> Outcome.Checked(Unit):
++  match result:
++    case (+state,+response): do Outcome.Checked<Unit>:
++      +active : Bool <- Proxy.truth(response,"json_extract(value,'$.thread.status.type')='active'")
++      turn : State & String <- Bool.pick(Outcome.Checked(State & String),active,current_turn(link,state,thread,""),Outcome.Checked.pure(State & String,(state,"null")))
++      witnessed(thread,active,turn)
++
++def witness_run(+link: Proxy.Link, +thread: String, +pending: Proxy.Pending) -> Outcome.Checked(Unit):
++  do Outcome.Checked<Unit>:
++    result : State & String <- request(link,initial(pending),thread,"thread/read",thread_params(thread))
++    witness_read(link,thread,result)
++
++def witness(+db: String, +thread: String) -> Outcome.Checked(Unit):
++  open(0,+link => opened(link,False{},pending => witness_run(link,thread,pending)))
+diff --git a/bend2/src/coordinator/codex-route.bend b/bend2/src/coordinator/codex-route.bend
+new file mode 100644
+index 000000000..d55a3048c
+--- /dev/null
++++ b/bend2/src/coordinator/codex-route.bend
+@@ -0,0 +1,118 @@
++import Base
++import ../coordinator/commands.bend as C
++import ../host/sqlite.bend as DB
++import ../host/session-lock.bend as Lock
++import ../host/process.bend as Child
++import ../git/process.bend as Process
++import ../git/text.bend as Tx
++import ../context/request.bend as Req
++import ../json/canonical.bend as J
++
++# Recorded receiver argv carries the native client's credential environment.
++def managed_sql(+endpoint: String, +session: String, +native: String) -> String:
++  "CASE WHEN json_valid(" ++ endpoint ++ ") THEN json_type(" ++ endpoint ++ ")='array' AND (json_array_length(" ++ endpoint ++ ")=0 OR (json_extract(" ++ endpoint ++ ",'$[#-3]')='codex-inbox-session' AND json_extract(" ++ endpoint ++ ",'$[#-2]')=" ++ session ++ " AND json_extract(" ++ endpoint ++ ",'$[#-1]')=" ++ native ++ ") OR EXISTS(SELECT 1 FROM json_each(" ++ endpoint ++ ") old WHERE old.value LIKE '%/codex-inbox-wake.mjs' AND json_extract(" ++ endpoint ++ ",'$['||(old.key+1)||']')='--session' AND json_extract(" ++ endpoint ++ ",'$[#-2]')=" ++ session ++ " AND json_extract(" ++ endpoint ++ ",'$[#-1]')=" ++ native ++ ")) ELSE 0 END"
++
++def environment_value(result: Result<&1,&1,U32 & String,String>) -> IO(String):
++  match result:
++    case Done{value}: IO.pure(String,value)
++    case Fail{(+code,cause)}: Bool.pick(IO(String),U32.is_eq(code,2),IO.pure(String,""),IO.die(String,code,cause))
++
++def environment(+name: String) -> IO(String):
++  do IO<String>:
++    result : Result<&1,&1,U32 & String,String> <- IO.get_env(name)
++    environment_value(result)
++
++def decoded(value: Req.Scalar) -> IO(String):
++  match value:
++    case Req.ScalarText{value}: IO.pure(String,value)
++    case other: IO.die(String,22,"A Codex receiver argument is invalid UTF-8.")
++
++def query(+sql: String) -> IO(String):
++  do IO<String>:
++    +value : String <- IO.try(String,DB.Sql.query(":memory:",sql))
++    IO.pure(String,Tx.trim_nl(value))
++
++def prefix_sql(+endpoint: String) -> String:
++  "CASE WHEN json_extract(" ++ C.q(endpoint) ++ ",'$[#-3]')='codex-inbox-session' THEN json_array_length(" ++ C.q(endpoint) ++ ")-5 ELSE coalesce((SELECT old.key-1 FROM json_each(" ++ C.q(endpoint) ++ ") old WHERE old.value LIKE '%/codex-inbox-wake.mjs' AND json_extract(" ++ C.q(endpoint) ++ ",'$['||(old.key+1)||']')='--session' LIMIT 1),0) END"
++
++def explicit_environment(+endpoint: String, +name: String) -> IO(String):
++  do IO<String>:
++    +hex : String <- query("SELECT hex(coalesce((SELECT substr(value," ++ U32.show(U32.add(Tx.byte_len(name),2)) ++ ") FROM json_each(" ++ C.q(endpoint) ++ ") WHERE key<" ++ prefix_sql(endpoint) ++ " AND value LIKE " ++ C.q(name ++ "=%") ++ " ORDER BY key DESC LIMIT 1),''));")
++    decoded(Req.decode_scalar_utf8(Tx.hex_decode(hex)))
++
++def captured(+endpoint: String) -> IO(String):
++  do IO<String>:
++    +home : String <- environment("HOME")
++    +codex : String <- environment("CODEX_HOME")
++    +explicit_home : String <- explicit_environment(endpoint,"HOME")
++    +explicit_codex : String <- explicit_environment(endpoint,"CODEX_HOME")
++    +actual_home : String = Bool.pick(String,String.is_empty(explicit_home),home,explicit_home)
++    +default_codex : String = Bool.pick(String,String.is_empty(explicit_home),Bool.pick(String,String.is_empty(codex),actual_home ++ "/.codex",codex),actual_home ++ "/.codex")
++    +actual_codex : String = Bool.pick(String,String.is_empty(explicit_codex),default_codex,explicit_codex)
++    IO.pure(String,"[\"/usr/bin/env\"," ++ J.string_literal("HOME=" ++ actual_home) ++ "," ++ J.string_literal("CODEX_HOME=" ++ actual_codex) ++ "]")
++
++def endpoint_join(+executable: String, +db: String, +session: String, +native: String, +old: String, +binding: String) -> IO(String):
++  query("SELECT json_group_array(value) FROM (SELECT value FROM json_each(" ++ C.q(binding) ++ ") UNION ALL SELECT value FROM json_each(" ++ C.q(old) ++ ") WHERE key<" ++ prefix_sql(old) ++ " UNION ALL SELECT value FROM json_each(json_array(" ++ C.q(executable) ++ "," ++ C.q(db) ++ ",'codex-inbox-session'," ++ C.q(session) ++ "," ++ C.q(native) ++ "))); ")
++
++def endpoint_known(+executable: String, +db: String, +session: String, +native: String, +old: String, +compiled: Bool) -> IO(String):
++  match compiled:
++    case True{}: endpoint_join(executable,db,session,native,old,"[]")
++    case False{}: do IO<String>:
++      +binding : String <- captured(old)
++      endpoint_join(executable,db,session,native,old,binding)
++
++def endpoint_selected(+executable: String, +db: String, +session: String, +native: String, +old: String, +managed: Bool) -> IO(String):
++  match managed:
++    case False{}: IO.pure(String,old)
++    case True{}: do IO<String>:
++      +compiled : String <- query("SELECT json_extract(" ++ C.q(old) ++ ",'$[#-3]')='codex-inbox-session';")
++      endpoint_known(executable,db,session,native,old,String.eq(compiled,"1"))
++
++def endpoint(+executable: String, +db: String, +session: String, +native: String, +old: String) -> IO(String):
++  do IO<String>:
++    +array : String = Bool.pick(String,String.is_empty(old),"[]",old)
++    +managed : String <- query("SELECT " ++ Bool.pick(String,String.is_empty(old),"1",managed_sql(C.q(array),C.q(session),C.q(native))) ++ ";")
++    endpoint_selected(executable,db,session,native,array,String.eq(managed,"1"))
++
++def normalize(+db: String, +session: String) -> IO(String):
++  do IO<String>:
++    +executable : String <- IO.try(String,Lock.SessionLock.executable())
++    +native : String <- IO.try(String,DB.Sql.read(db,"SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
++    +old : String <- IO.try(String,DB.Sql.read(db,"SELECT endpoint FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
++    +current : String <- endpoint(executable,db,session,Tx.trim_nl(native),Tx.trim_nl(old))
++    +saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(current) ++ " WHERE id=" ++ C.q(session) ++ " AND native<>'' AND native=" ++ C.q(Tx.trim_nl(native)) ++ " AND endpoint=" ++ C.q(Tx.trim_nl(old)) ++ ";"))
++    IO.pure(String,current)
++
++def argument_fields(lines: List<String>) -> IO(List<String>):
++  match lines:
++    case Nil{}: IO.pure(List<String>,Nil{})
++    case line <> rest:
++      match line:
++        case SCon{marker,hex}: do IO<List<String>>:
++          +arg : String <- decoded(Req.decode_scalar_utf8(Tx.hex_decode(hex)))
++          args : List<String> <- argument_fields(rest)
++          IO.pure(List<String>,Con{arg,args})
++        case SNil{}: IO.die(List<String>,22,"A recorded Codex receiver argument is missing.")
++
++def arguments(+endpoint: String, suffix: List<String>) -> IO(List<String>):
++  do IO<List<String>>:
++    +encoded : String <- query("SELECT 'x'||hex(value) FROM json_each(" ++ C.q(endpoint) ++ ") WHERE key<CASE WHEN json_extract(" ++ C.q(endpoint) ++ ",'$[#-3]')='codex-inbox-session' THEN json_array_length(" ++ C.q(endpoint) ++ ")-5 ELSE 0 END ORDER BY key;")
++    prefix : List<String> <- argument_fields(Tx.split_lines(encoded))
++    IO.pure(List<String>,List.append(&1,String,prefix,suffix))
++
++def command(+db: String, +session: String, suffix: List<String>) -> IO(List<String>):
++  do IO<List<String>>:
++    +endpoint : String <- normalize(db,session)
++    arguments(endpoint,suffix)
++
++def admission(+db: String, +recipient: String, +native: String, +pointer: String, +stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
++  do IO<Result<&1,&1,U32 & String,U32>>:
++    +executable : String <- IO.try(String,Lock.SessionLock.executable())
++    args : List<String> <- command(db,recipient,[executable,db,"codex-inbox-deliver",native,pointer])
++    Child.ProcessChild.spawn(Child.argv(args),".",stderr)
++
++def follow(+db: String, +session: String, +native: String) -> IO(Result<&1,&1,U32 & String,String>):
++  do IO<Result<&1,&1,U32 & String,String>>:
++    +executable : String <- IO.try(String,Lock.SessionLock.executable())
++    args : List<String> <- command(db,session,[executable,db,"codex-inbox-follow",session,native])
++    Process.Process.run(Tx.enc_argv(args),".")
+diff --git a/bend2/src/host/codex-proxy.bend b/bend2/src/host/codex-proxy.bend
+new file mode 100644
+index 000000000..c218d44d4
+--- /dev/null
++++ b/bend2/src/host/codex-proxy.bend
+@@ -0,0 +1,20 @@
++import Base
++
++# The proxy inherits the receiver's current directory and recorded environment.
++def CodexProxy.open() -> IO(Result<&1,&1,U32 & String,U32>):
++  import "./codex-proxy.c"
++
++def CodexProxy.send(handle: U32, raw_json: String) -> IO(Result<&1,&1,U32 & String,Unit>):
++  import "./codex-proxy.c"
++
++# Returns one complete UTF-8 text message with its original JSON bytes.
++def CodexProxy.next(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
++  import "./codex-proxy.c"
++
++# Completes the close handshake, drains stdout, and waits for the actual child.
++# The result uses ProcessChild.wait's "exit N" or "signal N" representation.
++def CodexProxy.close(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
++  import "./codex-proxy.c"
++
++def CodexProxy.cancel(handle: U32, signal: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
++  import "./codex-proxy.c"
+diff --git a/bend2/src/host/codex-proxy.c b/bend2/src/host/codex-proxy.c
+new file mode 100644
+index 000000000..2ba78e05d
+--- /dev/null
++++ b/bend2/src/host/codex-proxy.c
+@@ -0,0 +1,526 @@
++#include <errno.h>
++#include <fcntl.h>
++#include <pthread.h>
++#include <poll.h>
++#include <sched.h>
++#include <signal.h>
++#include <spawn.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <strings.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++extern char **environ;
++
++typedef struct BatonCodexProxy {
++  uint32_t handle;
++  pid_t pid;
++  int input, output, closing, upgraded;
++  size_t references;
++  pthread_mutex_t reader, writer;
++  struct BatonCodexProxy *next;
++} BatonCodexProxy;
++
++typedef struct {
++  BatonCodexProxy *proxy;
++  char *text, *detail;
++  size_t length;
++  uint32_t handle, signal;
++  int kind, error;
++} BatonCodexCall;
++
++enum { BC_OPEN, BC_SEND, BC_NEXT, BC_CLOSE, BC_CANCEL };
++static pthread_mutex_t baton_codex_registry_lock=PTHREAD_MUTEX_INITIALIZER;
++static pthread_cond_t baton_codex_registry_changed=PTHREAD_COND_INITIALIZER;
++static pthread_mutex_t baton_codex_lifecycle_lock=PTHREAD_MUTEX_INITIALIZER;
++static BatonCodexProxy *baton_codex_proxies;
++static uint32_t baton_codex_serial;
++static int bc_pipe(int fds[2]);
++static int bc_signal_pipe[2]={-1,-1},bc_signal_started;
++static volatile sig_atomic_t bc_signal_writer=-1,bc_signal_handlers;
++static pthread_t bc_signal_thread;
++static struct sigaction bc_previous_interrupt,bc_previous_terminate;
++
++static void bc_forward_signal(int signal) {
++  int saved=errno;
++  __atomic_add_fetch(&bc_signal_handlers,1,__ATOMIC_SEQ_CST);
++  int fd=__atomic_load_n(&bc_signal_writer,__ATOMIC_SEQ_CST);
++  if(fd>=0){unsigned char value=(unsigned char)signal;ssize_t ignored=write(fd,&value,1);(void)ignored;}
++  __atomic_sub_fetch(&bc_signal_handlers,1,__ATOMIC_SEQ_CST);
++  errno=saved;
++}
++
++static void *bc_signal_worker(void *unused) {
++  (void)unused;
++  for(;;) {
++    unsigned char signal;ssize_t count=read(bc_signal_pipe[0],&signal,1);
++    if(count<0 && errno==EINTR)continue;
++    if(count!=1 || !signal)return NULL;
++    pthread_mutex_lock(&baton_codex_registry_lock);
++    for(BatonCodexProxy *proxy=baton_codex_proxies;proxy;proxy=proxy->next)
++      if(proxy->pid>0)kill(-proxy->pid,(int)signal);
++    pthread_mutex_unlock(&baton_codex_registry_lock);
++  }
++}
++
++static void bc_signal_stop(void) {
++  if(!bc_signal_started)return;
++  __atomic_store_n(&bc_signal_writer,-1,__ATOMIC_SEQ_CST);
++  sigaction(SIGINT,&bc_previous_interrupt,NULL);sigaction(SIGTERM,&bc_previous_terminate,NULL);
++  while(__atomic_load_n(&bc_signal_handlers,__ATOMIC_SEQ_CST))sched_yield();
++  unsigned char stop=0;
++  for(;;) {
++    ssize_t count=write(bc_signal_pipe[1],&stop,1);
++    if(count==1)break;
++    if(count<0 && errno==EINTR)continue;
++    if(count<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) {
++      struct pollfd ready={bc_signal_pipe[1],POLLOUT,0};
++      while(poll(&ready,1,-1)<0 && errno==EINTR){}
++      continue;
++    }
++    break;
++  }
++  pthread_join(bc_signal_thread,NULL);
++  close(bc_signal_pipe[0]);close(bc_signal_pipe[1]);
++  bc_signal_pipe[0]=bc_signal_pipe[1]=-1;bc_signal_started=0;
++}
++
++/* Called under lifecycle and registry locks before a child can be spawned. */
++static int bc_signal_start(void) {
++  if(bc_signal_started)return 0;
++  int error=bc_pipe(bc_signal_pipe);if(error)return error;
++  int flags=fcntl(bc_signal_pipe[1],F_GETFL);
++  if(flags<0 || fcntl(bc_signal_pipe[1],F_SETFL,flags|O_NONBLOCK)<0) {
++    error=errno;close(bc_signal_pipe[0]);close(bc_signal_pipe[1]);return error;
++  }
++  if(sigaction(SIGINT,NULL,&bc_previous_interrupt) || sigaction(SIGTERM,NULL,&bc_previous_terminate)) {
++    error=errno;close(bc_signal_pipe[0]);close(bc_signal_pipe[1]);return error;
++  }
++  error=pthread_create(&bc_signal_thread,NULL,bc_signal_worker,NULL);
++  if(error){close(bc_signal_pipe[0]);close(bc_signal_pipe[1]);return error;}
++  bc_signal_started=1;
++  struct sigaction action={0};action.sa_handler=bc_forward_signal;sigemptyset(&action.sa_mask);
++  sigaddset(&action.sa_mask,SIGINT);sigaddset(&action.sa_mask,SIGTERM);
++  __atomic_store_n(&bc_signal_writer,bc_signal_pipe[1],__ATOMIC_SEQ_CST);
++  if(sigaction(SIGINT,&action,NULL) || sigaction(SIGTERM,&action,NULL))error=errno;
++  return error;
++}
++
++static int bc_read(int fd,void *bytes,size_t length,size_t *received) {
++  size_t offset=0;
++  while(offset<length) {
++    ssize_t count=read(fd,(char *)bytes+offset,length-offset);
++    if(count>0)offset+=(size_t)count;
++    else if(count<0 && errno==EINTR)continue;
++    else {if(received)*received=offset;return count<0?errno:EPIPE;}
++  }
++  if(received)*received=offset;
++  return 0;
++}
++
++static int bc_write(int fd,const void *bytes,size_t length) {
++  /* A closed proxy pipe reports EPIPE to this operation. */
++  sigset_t blocked,previous,pending;
++  sigemptyset(&blocked);sigaddset(&blocked,SIGPIPE);
++  int error=pthread_sigmask(SIG_BLOCK,&blocked,&previous);
++  if(error)return error;
++  sigpending(&pending);
++  int had_pipe=sigismember(&pending,SIGPIPE);
++  size_t offset=0;
++  while(offset<length) {
++    ssize_t count=write(fd,(const char *)bytes+offset,length-offset);
++    if(count>0)offset+=(size_t)count;
++    else if(count<0 && errno==EINTR)continue;
++    else {error=count<0?errno:EIO;break;}
++  }
++  if(error==EPIPE && !had_pipe) {
++    sigpending(&pending);
++    if(sigismember(&pending,SIGPIPE)){int delivered;sigwait(&blocked,&delivered);}
++  }
++  int restored=pthread_sigmask(SIG_SETMASK,&previous,NULL);
++  return error?error:restored;
++}
++
++static int bc_random(void *bytes,size_t length) {
++  int fd=open("/dev/urandom",O_RDONLY|O_CLOEXEC);
++  if(fd<0)return errno;
++  int error=bc_read(fd,bytes,length,NULL);
++  if(close(fd) && !error)error=errno;
++  return error;
++}
++
++static uint32_t bc_rotate(uint32_t x,unsigned n) {return (x<<n)|(x>>(32-n));}
++
++/* SHA-1 is required by the WebSocket opening handshake. */
++static void bc_sha1_block(uint32_t state[5],const unsigned char block[64]) {
++  uint32_t words[80];
++  for(unsigned i=0;i<16;i++)words[i]=((uint32_t)block[4*i]<<24)|((uint32_t)block[4*i+1]<<16)|((uint32_t)block[4*i+2]<<8)|block[4*i+3];
++  for(unsigned i=16;i<80;i++)words[i]=bc_rotate(words[i-3]^words[i-8]^words[i-14]^words[i-16],1);
++  uint32_t a=state[0],b=state[1],c=state[2],d=state[3],e=state[4];
++  for(unsigned i=0;i<80;i++) {
++    uint32_t f,k;
++    if(i<20){f=(b&c)|((~b)&d);k=0x5a827999;}
++    else if(i<40){f=b^c^d;k=0x6ed9eba1;}
++    else if(i<60){f=(b&c)|(b&d)|(c&d);k=0x8f1bbcdc;}
++    else {f=b^c^d;k=0xca62c1d6;}
++    uint32_t next=bc_rotate(a,5)+f+e+k+words[i];
++    e=d;d=c;c=bc_rotate(b,30);b=a;a=next;
++  }
++  state[0]+=a;state[1]+=b;state[2]+=c;state[3]+=d;state[4]+=e;
++}
++
++static void bc_sha1(const unsigned char *bytes,size_t length,unsigned char digest[20]) {
++  uint32_t state[5]={0x67452301,0xefcdab89,0x98badcfe,0x10325476,0xc3d2e1f0};
++  size_t offset=0;
++  while(length-offset>=64){bc_sha1_block(state,bytes+offset);offset+=64;}
++  unsigned char final[128]={0};size_t tail=length-offset;
++  memcpy(final,bytes+offset,tail);final[tail]=0x80;
++  size_t padded=tail<56?64:128;
++  uint64_t bits=(uint64_t)length*8;
++  for(unsigned i=0;i<8;i++)final[padded-1-i]=(unsigned char)(bits>>(8*i));
++  bc_sha1_block(state,final);if(padded==128)bc_sha1_block(state,final+64);
++  for(unsigned i=0;i<20;i++)digest[i]=(unsigned char)(state[i/4]>>(24-8*(i%4)));
++}
++
++static void bc_base64(const unsigned char *bytes,size_t length,char *output) {
++  static const char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++  size_t j=0;
++  for(size_t i=0;i<length;i+=3) {
++    uint32_t value=(uint32_t)bytes[i]<<16;
++    if(i+1<length)value|=(uint32_t)bytes[i+1]<<8;
++    if(i+2<length)value|=bytes[i+2];
++    output[j++]=alphabet[value>>18];output[j++]=alphabet[(value>>12)&63];
++    output[j++]=i+1<length?alphabet[(value>>6)&63]:'=';
++    output[j++]=i+2<length?alphabet[value&63]:'=';
++  }
++  output[j]=0;
++}
++
++static char *bc_hex_detail(const char *prefix,const unsigned char *bytes,size_t length) {
++  size_t start=strlen(prefix);
++  if(length>(SIZE_MAX-start-1)/2)return NULL;
++  char *text=malloc(start+length*2+1);
++  if(!text)return NULL;
++  memcpy(text,prefix,start);
++  static const char digits[]="0123456789abcdef";
++  for(size_t i=0;i<length;i++){text[start+2*i]=digits[bytes[i]>>4];text[start+2*i+1]=digits[bytes[i]&15];}
++  text[start+length*2]=0;return text;
++}
++
++static int bc_utf8(const unsigned char *bytes,size_t length) {
++  for(size_t i=0;i<length;) {
++    unsigned a=bytes[i++],need,min,next;
++    if(a<0x80)continue;
++    if(a>=0xc2 && a<=0xdf){need=1;min=0x80;next=a&31;}
++    else if(a>=0xe0 && a<=0xef){need=2;min=0x800;next=a&15;}
++    else if(a>=0xf0 && a<=0xf4){need=3;min=0x10000;next=a&7;}
++    else return 0;
++    if(need>length-i)return 0;
++    while(need--){unsigned b=bytes[i++];if((b&0xc0)!=0x80)return 0;next=(next<<6)|(b&63);}
++    if(next<min || next>0x10ffff || (next>=0xd800 && next<=0xdfff))return 0;
++  }
++  return 1;
++}
++
++static int bc_frame(BatonCodexProxy *proxy,unsigned opcode,const unsigned char *bytes,size_t length) {
++  unsigned char header[14],mask[4];size_t n=2;
++  int error=bc_random(mask,sizeof(mask));if(error)return error;
++  header[0]=(unsigned char)(0x80|opcode);
++  if(length<126)header[1]=(unsigned char)(0x80|length);
++  else if(length<=65535){header[1]=0xfe;header[2]=(unsigned char)(length>>8);header[3]=(unsigned char)length;n=4;}
++  else {header[1]=0xff;for(unsigned i=0;i<8;i++)header[2+i]=(unsigned char)((uint64_t)length>>(56-8*i));n=10;}
++  memcpy(header+n,mask,4);n+=4;
++  pthread_mutex_lock(&proxy->writer);
++  error=proxy->input<0?EPIPE:bc_write(proxy->input,header,n);
++  unsigned char chunk[8192];
++  for(size_t offset=0;!error && offset<length;) {
++    size_t count=length-offset;if(count>sizeof(chunk))count=sizeof(chunk);
++    for(size_t i=0;i<count;i++)chunk[i]=bytes[offset+i]^mask[(offset+i)%4];
++    error=bc_write(proxy->input,chunk,count);offset+=count;
++  }
++  pthread_mutex_unlock(&proxy->writer);return error;
++}
++
++static int bc_pipe(int fds[2]) {
++  if(pipe(fds))return errno;
++  if(fcntl(fds[0],F_SETFD,FD_CLOEXEC)<0 || fcntl(fds[1],F_SETFD,FD_CLOEXEC)<0) {
++    int error=errno;close(fds[0]);close(fds[1]);return error;
++  }
++  return 0;
++}
++
++static int bc_spawn(BatonCodexProxy *proxy) {
++  int input[2],output[2],error=bc_pipe(input);
++  if(error)return error;
++  error=bc_pipe(output);if(error){close(input[0]);close(input[1]);return error;}
++  posix_spawn_file_actions_t actions;posix_spawnattr_t attrs;
++  int have_actions=0,have_attrs=0;
++  error=posix_spawn_file_actions_init(&actions);if(error)goto cleanup;have_actions=1;
++  error=posix_spawnattr_init(&attrs);if(error)goto cleanup;have_attrs=1;
++  error=posix_spawn_file_actions_adddup2(&actions,input[0],STDIN_FILENO);if(error)goto cleanup;
++  error=posix_spawn_file_actions_adddup2(&actions,output[1],STDOUT_FILENO);if(error)goto cleanup;
++  int fds[]={input[0],input[1],output[0],output[1]};
++  for(unsigned i=0;i<4;i++){error=posix_spawn_file_actions_addclose(&actions,fds[i]);if(error)goto cleanup;}
++  sigset_t defaults;sigemptyset(&defaults);sigaddset(&defaults,SIGPIPE);
++  error=posix_spawnattr_setsigdefault(&attrs,&defaults);if(error)goto cleanup;
++  error=posix_spawnattr_setpgroup(&attrs,0);if(error)goto cleanup;
++  error=posix_spawnattr_setflags(&attrs,POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGDEF);if(error)goto cleanup;
++  char *argv[]={"codex","app-server","proxy",NULL};
++  error=posix_spawnp(&proxy->pid,argv[0],&actions,&attrs,argv,environ);
++cleanup:
++  if(have_actions)posix_spawn_file_actions_destroy(&actions);
++  if(have_attrs)posix_spawnattr_destroy(&attrs);
++  close(input[0]);close(output[1]);
++  if(error){close(input[1]);close(output[0]);}
++  else {proxy->input=input[1];proxy->output=output[0];}
++  return error;
++}
++
++static int bc_upgrade(BatonCodexProxy *proxy,char **detail) {
++  unsigned char random[16],digest[20];char key[25],expected[29],challenge[61];
++  int error=bc_random(random,sizeof(random));if(error)return error;
++  bc_base64(random,sizeof(random),key);
++  snprintf(challenge,sizeof(challenge),"%s258EAFA5-E914-47DA-95CA-C5AB0DC85B11",key);
++  bc_sha1((unsigned char *)challenge,strlen(challenge),digest);bc_base64(digest,sizeof(digest),expected);
++  char request[256];int count=snprintf(request,sizeof(request),"GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: %s\r\n\r\n",key);
++  error=bc_write(proxy->input,request,(size_t)count);if(error)return error;
++  size_t length=0,capacity=256;char *header=malloc(capacity);
++  if(!header)return ENOMEM;
++  for(;;) {
++    if(length+1==capacity) {
++      if(capacity>SIZE_MAX/2){error=EOVERFLOW;break;}
++      char *next=realloc(header,capacity*=2);if(!next){error=ENOMEM;break;}header=next;
++    }
++    error=bc_read(proxy->output,header+length,1,NULL);if(error)break;
++    length++;
++    if(length>=4 && !memcmp(header+length-4,"\r\n\r\n",4))break;
++  }
++  header[length]=0;
++  int accepted=length>=13 && !memcmp(header,"HTTP/1.1 101",12) && (header[12]==' ' || header[12]=='\r');
++  int matched=0;char *line=header;
++  while(line && *line) {
++    char *end=strstr(line,"\r\n");
++    if(!strncasecmp(line,"Sec-WebSocket-Accept:",21)) {
++      char *value=line+21;while(*value==' ' || *value=='\t')value++;
++      size_t size=end?(size_t)(end-value):strlen(value);
++      while(size && (value[size-1]==' ' || value[size-1]=='\t'))size--;
++      matched=size==strlen(expected) && !memcmp(value,expected,size);
++    }
++    line=end?end+2:NULL;
++  }
++  if(error || !accepted || !matched) {
++    *detail=bc_hex_detail("Codex proxy WebSocket upgrade response bytes: ",(unsigned char *)header,length);
++    if(!error)error=EPROTO;
++  } else proxy->upgraded=1;
++  free(header);return error;
++}
++
++static int bc_read_part(BatonCodexProxy *proxy,void *bytes,size_t length,char **detail) {
++  size_t received=0;int error=bc_read(proxy->output,bytes,length,&received);
++  if(error)*detail=bc_hex_detail("Codex proxy closed during frame; incomplete bytes: ",bytes,received);
++  return error;
++}
++
++static int bc_message(BatonCodexProxy *proxy,char **message,size_t *length,char **detail) {
++  unsigned char *text=NULL;size_t size=0,capacity=0;int fragmented=0,error=0;
++  for(;;) {
++    unsigned char header[2],extended[8],mask[4];
++    error=bc_read_part(proxy,header,2,detail);if(error)break;
++    unsigned opcode=header[0]&15,final=header[0]&128;uint64_t amount=header[1]&127;
++    if(amount==126) {
++      error=bc_read_part(proxy,extended,2,detail);if(error)break;
++      amount=((uint64_t)extended[0]<<8)|extended[1];
++    } else if(amount==127) {
++      error=bc_read_part(proxy,extended,8,detail);if(error)break;
++      amount=0;for(unsigned i=0;i<8;i++)amount=(amount<<8)|extended[i];
++      if(extended[0]&128){error=EPROTO;break;}
++    }
++    if(amount>SIZE_MAX-1){error=EOVERFLOW;break;}
++    if(header[1]&128){error=bc_read_part(proxy,mask,4,detail);if(error)break;}
++    unsigned char *payload=malloc((size_t)amount+1);if(!payload){error=ENOMEM;break;}
++    error=bc_read_part(proxy,payload,(size_t)amount,detail);
++    if(error){free(payload);break;}
++    if(header[1]&128)for(size_t i=0;i<(size_t)amount;i++)payload[i]^=mask[i%4];
++    if((header[0]&0x70) || (opcode>=8 && (!final || amount>125))) {
++      *detail=bc_hex_detail("Codex proxy invalid WebSocket frame bytes: ",payload,(size_t)amount);free(payload);error=EPROTO;break;
++    }
++    if(opcode==8) {
++      *detail=bc_hex_detail("Codex proxy WebSocket close bytes: ",payload,(size_t)amount);
++      free(payload);error=EPIPE;break;
++    }
++    if(opcode==9 || opcode==10) {
++      if(opcode==9)error=bc_frame(proxy,10,payload,(size_t)amount);
++      free(payload);if(error)break;continue;
++    }
++    if((opcode!=0 && opcode!=1) || (opcode==0 && !fragmented) || (opcode==1 && fragmented)) {
++      *detail=bc_hex_detail("Codex proxy non-text or invalid continuation bytes: ",payload,(size_t)amount);free(payload);error=EPROTO;break;
++    }
++    if(amount>SIZE_MAX-size-1){free(payload);error=EOVERFLOW;break;}
++    size_t wanted=size+(size_t)amount+1;
++    if(wanted>capacity) {
++      size_t grown=capacity?capacity:256;
++      while(grown<wanted){if(grown>SIZE_MAX/2){grown=wanted;break;}grown*=2;}
++      unsigned char *next=realloc(text,grown);
++      if(!next){free(payload);error=ENOMEM;break;}
++      text=next;capacity=grown;
++    }
++    memcpy(text+size,payload,(size_t)amount);size+=(size_t)amount;free(payload);
++    if(!final){fragmented=1;continue;}
++    if(!bc_utf8(text,size)) {
++      *detail=bc_hex_detail("Codex proxy invalid UTF-8 bytes: ",text,size);error=EILSEQ;break;
++    }
++    text[size]=0;*message=(char *)text;*length=size;return 0;
++  }
++  free(text);return error;
++}
++
++static BatonCodexProxy *bc_acquire(uint32_t handle) {
++  pthread_mutex_lock(&baton_codex_registry_lock);
++  BatonCodexProxy *proxy=baton_codex_proxies;
++  while(proxy && proxy->handle!=handle)proxy=proxy->next;
++  if(proxy && !proxy->closing)proxy->references++;else proxy=NULL;
++  pthread_mutex_unlock(&baton_codex_registry_lock);return proxy;
++}
++
++static void bc_release(BatonCodexProxy *proxy) {
++  pthread_mutex_lock(&baton_codex_registry_lock);
++  proxy->references--;pthread_cond_broadcast(&baton_codex_registry_changed);
++  pthread_mutex_unlock(&baton_codex_registry_lock);
++}
++
++static int bc_finish(BatonCodexProxy *proxy,char **status) {
++  if(proxy->upgraded)bc_frame(proxy,8,NULL,0);
++  pthread_mutex_lock(&proxy->writer);
++  if(proxy->input>=0){close(proxy->input);proxy->input=-1;}
++  pthread_mutex_unlock(&proxy->writer);
++  pthread_mutex_lock(&proxy->reader);
++  char buffer[8192];int error=0;
++  for(;;) {
++    ssize_t count=read(proxy->output,buffer,sizeof(buffer));
++    if(count>0)continue;
++    if(count<0 && errno==EINTR)continue;
++    if(count<0)error=errno;
++    break;
++  }
++  close(proxy->output);proxy->output=-1;pthread_mutex_unlock(&proxy->reader);
++  /* Keep the exited child unreaped until signal forwarding stops selecting it. */
++  siginfo_t observed;int settled;
++  do {settled=waitid(P_PID,(id_t)proxy->pid,&observed,WEXITED|WNOWAIT);}while(settled<0 && errno==EINTR);
++  if(settled<0)return errno;
++  pthread_mutex_lock(&baton_codex_registry_lock);
++  pid_t child=proxy->pid;proxy->pid=0;
++  int actual;pid_t waited;
++  do {waited=waitpid(child,&actual,0);}while(waited<0 && errno==EINTR);
++  pthread_mutex_unlock(&baton_codex_registry_lock);
++  if(waited<0)return errno;
++  char text[64];
++  if(WIFEXITED(actual))snprintf(text,sizeof(text),"exit %d",WEXITSTATUS(actual));
++  else if(WIFSIGNALED(actual))snprintf(text,sizeof(text),"signal %d",WTERMSIG(actual));
++  else return ECHILD;
++  *status=strdup(text);return *status?error:ENOMEM;
++}
++
++static void bc_destroy(BatonCodexProxy *proxy) {
++  pthread_mutex_destroy(&proxy->reader);pthread_mutex_destroy(&proxy->writer);free(proxy);
++}
++
++static void bc_remove(BatonCodexProxy *proxy) {
++  pthread_mutex_lock(&baton_codex_lifecycle_lock);
++  pthread_mutex_lock(&baton_codex_registry_lock);
++  while(proxy->references)pthread_cond_wait(&baton_codex_registry_changed,&baton_codex_registry_lock);
++  BatonCodexProxy **link=&baton_codex_proxies;while(*link!=proxy)link=&(*link)->next;*link=proxy->next;
++  int empty=baton_codex_proxies==NULL;
++  pthread_mutex_unlock(&baton_codex_registry_lock);
++  if(empty)bc_signal_stop();
++  pthread_mutex_unlock(&baton_codex_lifecycle_lock);bc_destroy(proxy);
++}
++
++static void baton_codex_call(BatonCodexCall *call) {
++  if(call->kind==BC_OPEN) {
++    BatonCodexProxy *proxy=calloc(1,sizeof(*proxy));if(!proxy){call->error=ENOMEM;return;}
++    proxy->input=proxy->output=-1;
++    int reader=pthread_mutex_init(&proxy->reader,NULL),writer=reader?0:pthread_mutex_init(&proxy->writer,NULL);
++    if(reader || writer){if(!reader)pthread_mutex_destroy(&proxy->reader);free(proxy);call->error=reader?reader:writer;return;}
++    pthread_mutex_lock(&baton_codex_lifecycle_lock);
++    pthread_mutex_lock(&baton_codex_registry_lock);
++    if(baton_codex_serial==UINT32_MAX)call->error=EMFILE;
++    else call->error=bc_signal_start();
++    if(!call->error)call->error=bc_spawn(proxy);
++    if(!call->error){proxy->handle=++baton_codex_serial;proxy->next=baton_codex_proxies;baton_codex_proxies=proxy;call->handle=proxy->handle;}
++    pthread_mutex_unlock(&baton_codex_registry_lock);
++    if(call->error && !baton_codex_proxies)bc_signal_stop();
++    pthread_mutex_unlock(&baton_codex_lifecycle_lock);
++    if(call->error){bc_destroy(proxy);return;}
++    call->error=bc_upgrade(proxy,&call->detail);
++    if(call->error){char *status=NULL;bc_finish(proxy,&status);free(status);bc_remove(proxy);}
++    return;
++  }
++  if(call->kind==BC_CLOSE) {
++    pthread_mutex_lock(&baton_codex_registry_lock);
++    BatonCodexProxy *proxy=baton_codex_proxies;
++    while(proxy && proxy->handle!=call->handle)proxy=proxy->next;
++    if(!proxy || proxy->closing){pthread_mutex_unlock(&baton_codex_registry_lock);call->error=EBADF;return;}
++    proxy->closing=1;pthread_mutex_unlock(&baton_codex_registry_lock);
++    call->error=bc_finish(proxy,&call->text);if(call->text)call->length=strlen(call->text);
++    bc_remove(proxy);return;
++  }
++  BatonCodexProxy *proxy=bc_acquire(call->handle);if(!proxy){call->error=EBADF;return;}
++  if(call->kind==BC_SEND) {
++    if(!bc_utf8((unsigned char *)call->text,call->length))call->error=EILSEQ;
++    else call->error=bc_frame(proxy,1,(unsigned char *)call->text,call->length);
++  } else if(call->kind==BC_NEXT) {
++    pthread_mutex_lock(&proxy->reader);call->error=bc_message(proxy,&call->text,&call->length,&call->detail);pthread_mutex_unlock(&proxy->reader);
++  } else if(call->kind==BC_CANCEL) {
++    pthread_mutex_lock(&baton_codex_registry_lock);
++    if(proxy->pid<=0)call->error=ECHILD;
++    else if(kill(-proxy->pid,(int)call->signal))call->error=errno;
++    pthread_mutex_unlock(&baton_codex_registry_lock);
++  } else call->error=EINVAL;
++  bc_release(proxy);
++}
++
++#if defined(CID_CODEXPROXY_OPEN) || defined(CID_CODEXPROXY_SEND) || defined(CID_CODEXPROXY_NEXT) || defined(CID_CODEXPROXY_CLOSE) || defined(CID_CODEXPROXY_CANCEL)
++static void baton_codex_work(IoWork *work) {baton_codex_call((BatonCodexCall *)work->data);}
++
++static Term baton_codex_pack(Env environment,IoWork *work) {
++  BatonCodexCall *call=(BatonCodexCall *)work->data;
++  Term value=term_pak(CID_UNIT,0);
++  if(!call->error) {
++    if(call->kind==BC_OPEN)value=(Term)call->handle;
++    else if(call->kind==BC_NEXT || call->kind==BC_CLOSE)value=io_str(environment,call->text,call->length);
++  }
++  Term result=call->error?io_fail(environment,call->error,call->detail):io_done(environment,value);
++  free(call->text);free(call->detail);free(call);work->data=NULL;return result;
++}
++
++static Term baton_codex_begin(Env environment,Term *arguments,IoWork *work,int kind) {
++  BatonCodexCall *call=calloc(1,sizeof(*call));if(!call)return io_fail(environment,ENOMEM,NULL);
++  call->kind=kind;
++  if(kind!=BC_OPEN)call->handle=(uint32_t)arguments[0];
++  if(kind==BC_SEND){u64 length=0;call->text=io_cstr(environment,arguments[1],&length);call->length=length;}
++  if(kind==BC_CANCEL)call->signal=(uint32_t)arguments[1];
++  work->data=(char *)call;return io_work(work,baton_codex_work,baton_codex_pack);
++}
++
++#define BC_EFFECT(name,id,kind) \
++  static Term name##_run(Env e,Term *f,IoWork *w){return baton_codex_begin(e,f,w,kind);} \
++  static void __attribute__((constructor)) name##_use(void){io_eff(id,name##_run,0);}
++#ifdef CID_CODEXPROXY_OPEN
++BC_EFFECT(baton_codex_open,CID_CODEXPROXY_OPEN,BC_OPEN)
++#endif
++#ifdef CID_CODEXPROXY_SEND
++BC_EFFECT(baton_codex_send,CID_CODEXPROXY_SEND,BC_SEND)
++#endif
++#ifdef CID_CODEXPROXY_NEXT
++BC_EFFECT(baton_codex_next,CID_CODEXPROXY_NEXT,BC_NEXT)
++#endif
++#ifdef CID_CODEXPROXY_CLOSE
++BC_EFFECT(baton_codex_close,CID_CODEXPROXY_CLOSE,BC_CLOSE)
++#endif
++#ifdef CID_CODEXPROXY_CANCEL
++BC_EFFECT(baton_codex_cancel,CID_CODEXPROXY_CANCEL,BC_CANCEL)
++#endif
++#endif
+diff --git a/bend2/test/codex-inbox.bend b/bend2/test/codex-inbox.bend
+new file mode 100644
+index 000000000..1554573aa
+--- /dev/null
++++ b/bend2/test/codex-inbox.bend
+@@ -0,0 +1,64 @@
++import Base
++import ../src/coordinator/codex-inbox.bend as Inbox
++import ../src/host/instance.bend as Custody
++
++def invalid() -> IO(Unit):
++  IO.die(Unit,2,"DATABASE follow SESSION THREAD | DATABASE session SESSION THREAD MESSAGE TOKEN | DATABASE witness THREAD")
++
++def owner_args(args: List<String>) -> IO(Unit):
++  match args:
++    case database <> Nil{}: IO.try(Unit,Custody.Instance.owner(database))
++    case other: invalid()
++
++def follow_args(database: String, args: List<String>) -> IO(Unit):
++  match args:
++    case session <> thread <> Nil{}: IO.try(Unit,Inbox.follow(database,session,thread))
++    case other: invalid()
++
++def session_args(database: String, args: List<String>) -> IO(Unit):
++  match args:
++    case session <> thread <> message <> token <> Nil{}: IO.try(Unit,Inbox.session(database,session,thread,message,token))
++    case other: invalid()
++
++def witness_args(database: String, args: List<String>) -> IO(Unit):
++  match args:
++    case thread <> Nil{}: IO.try(Unit,Inbox.witness(database,thread))
++    case other: invalid()
++
++def witness_selected(database: String, args: List<String>, selected: Bool) -> IO(Unit):
++  match selected:
++    case True{}: witness_args(database,args)
++    case False{}: invalid()
++
++def session_selected(+database: String, mode: String, args: List<String>, selected: Bool) -> IO(Unit):
++  match selected:
++    case True{}: session_args(database,args)
++    case False{}: witness_selected(database,args,String.eq(mode,"witness"))
++
++def follow_selected(+database: String, +mode: String, args: List<String>, selected: Bool) -> IO(Unit):
++  match selected:
++    case True{}: follow_args(database,args)
++    case False{}: session_selected(database,mode,args,String.eq(mode,"session"))
++
++def database_mode(database: String, +mode: String, args: List<String>) -> IO(Unit):
++  follow_selected(database,mode,args,String.eq(mode,"follow"))
++
++def database_args(database: String, args: List<String>) -> IO(Unit):
++  match args:
++    case mode <> rest: database_mode(database,mode,rest)
++    case other: invalid()
++
++def head_selected(+head: String, rest: List<String>, owner: Bool) -> IO(Unit):
++  match owner:
++    case True{}: owner_args(rest)
++    case False{}: database_args(head,rest)
++
++def dispatch(args: List<String>) -> IO(Unit):
++  match args:
++    case +head <> rest: head_selected(head,rest,String.eq(head,"--instance-owner"))
++    case Nil{}: invalid()
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    args : List<String> <- IO.args()
++    dispatch(args)
+diff --git a/bend2/test/codex-proxy.bend b/bend2/test/codex-proxy.bend
+new file mode 100644
+index 000000000..b6834c603
+--- /dev/null
++++ b/bend2/test/codex-proxy.bend
+@@ -0,0 +1,15 @@
++import Base
++import ../src/host/codex-proxy.bend as Proxy
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    +handle : U32 <- IO.try(U32,Proxy.CodexProxy.open())
++    waiter : Chan(String) <- IO.fork(String,IO.try(String,Proxy.CodexProxy.next(handle)))
++    sent : Unit <- IO.try(Unit,Proxy.CodexProxy.send(handle,"{\"id\":1,\"method\":\"transport-test\"}"))
++    notice : String <- IO.join(String,waiter)
++    shown_notice : Unit <- IO.print(notice)
++    response : String <- IO.try(String,Proxy.CodexProxy.next(handle))
++    shown_response : Unit <- IO.print(response)
++    checked : Unit <- IO.try(Unit,Proxy.CodexProxy.cancel(handle,0))
++    status : String <- IO.try(String,Proxy.CodexProxy.close(handle))
++    IO.print(status)
+diff --git a/bend2/test/codex-proxy.c b/bend2/test/codex-proxy.c
+new file mode 100644
+index 000000000..43049f750
+--- /dev/null
++++ b/bend2/test/codex-proxy.c
+@@ -0,0 +1,103 @@
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE
++#endif
++#include "../src/host/codex-proxy.c"
++
++static volatile sig_atomic_t fixture_interrupts,fixture_terminations;
++static void fixture_signal(int signal) {
++  if(signal==SIGINT)fixture_interrupts++;else if(signal==SIGTERM)fixture_terminations++;
++}
++
++typedef struct {
++  uint32_t handle;
++  pthread_mutex_t mutex;
++  pthread_cond_t changed;
++  int started,error;
++} FixtureReader;
++
++static void *fixture_reader(void *data) {
++  FixtureReader *reader=data;BatonCodexProxy *proxy=bc_acquire(reader->handle);
++  if(!proxy){reader->error=EBADF;return NULL;}
++  pthread_mutex_lock(&proxy->reader);
++  pthread_mutex_lock(&reader->mutex);reader->started=1;pthread_cond_signal(&reader->changed);pthread_mutex_unlock(&reader->mutex);
++  char *text=NULL,*detail=NULL;size_t length=0;
++  reader->error=bc_message(proxy,&text,&length,&detail);
++  free(text);free(detail);pthread_mutex_unlock(&proxy->reader);bc_release(proxy);return NULL;
++}
++
++static void fixture_result(BatonCodexCall *call) {
++  if(call->error)fprintf(stderr,"error %d: %s\n",call->error,call->detail?call->detail:strerror(call->error));
++  else if(call->text && (call->kind==BC_NEXT || call->kind==BC_CLOSE)){fwrite(call->text,1,call->length,stdout);fputc('\n',stdout);}
++  free(call->text);free(call->detail);call->text=call->detail=NULL;
++}
++
++int main(int argc,char **argv) {
++  if(argc<2)return 2;
++  int external=!strncmp(argv[1],"external-",9),blocked=!strcmp(argv[1],"blocked-close");
++  if(external) {
++    struct sigaction prior={0};prior.sa_handler=fixture_signal;sigemptyset(&prior.sa_mask);
++    if(sigaction(SIGINT,&prior,NULL) || sigaction(SIGTERM,&prior,NULL))return 2;
++    raise(SIGINT);raise(SIGTERM);
++    if(fixture_interrupts!=1 || fixture_terminations!=1)return 2;
++  }
++  BatonCodexCall open={.kind=BC_OPEN};baton_codex_call(&open);fixture_result(&open);
++  if(open.error)return 1;
++  uint32_t handle=open.handle;
++  if(!strcmp(argv[1],"retired-cancel")) {
++    BatonCodexProxy *held=bc_acquire(handle);if(!held)return 2;
++    char *status=NULL;int error=bc_finish(held,&status);
++    if(error || !status || strcmp(status,"exit 7"))return 2;free(status);
++    /* This is CLOSE's actual post-wait state while an earlier call still owns
++       a reference. Signal zero detects accidental process-group selection. */
++    BatonCodexCall cancel={.kind=BC_CANCEL,.handle=handle,.signal=0};baton_codex_call(&cancel);
++    if(cancel.error!=ECHILD)return 2;
++    bc_release(held);bc_remove(held);puts("retired-child-refused");return 0;
++  } else if(external || blocked) {
++    BatonCodexCall ready={.kind=BC_NEXT,.handle=handle};baton_codex_call(&ready);
++    if(ready.error)return 2;free(ready.text);free(ready.detail);
++    FixtureReader reader={.handle=handle,.mutex=PTHREAD_MUTEX_INITIALIZER,.changed=PTHREAD_COND_INITIALIZER};
++    pthread_t thread;if(pthread_create(&thread,NULL,fixture_reader,&reader))return 2;
++    pthread_mutex_lock(&reader.mutex);while(!reader.started)pthread_cond_wait(&reader.changed,&reader.mutex);pthread_mutex_unlock(&reader.mutex);
++    BatonCodexCall second={.kind=BC_OPEN};int multiple=!strcmp(argv[1],"external-two");
++    if(multiple){baton_codex_call(&second);if(second.error)return 2;}
++    if(external)raise(!strcmp(argv[1],"external-int")?SIGINT:SIGTERM);
++    BatonCodexCall close={.kind=BC_CLOSE,.handle=handle};baton_codex_call(&close);fixture_result(&close);if(close.error)return 1;
++    if(pthread_join(thread,NULL) || reader.error!=EPIPE)return 2;
++    pthread_mutex_destroy(&reader.mutex);pthread_cond_destroy(&reader.changed);
++    if(multiple) {
++      struct sigaction current;if(sigaction(SIGTERM,NULL,&current) || current.sa_handler!=bc_forward_signal)return 2;
++      close=(BatonCodexCall){.kind=BC_CLOSE,.handle=second.handle};baton_codex_call(&close);fixture_result(&close);if(close.error)return 1;
++    }
++    if(external) {
++      struct sigaction interrupt,terminate;
++      if(sigaction(SIGINT,NULL,&interrupt) || sigaction(SIGTERM,NULL,&terminate))return 2;
++      if(interrupt.sa_handler!=fixture_signal || terminate.sa_handler!=fixture_signal)return 2;
++      raise(SIGINT);raise(SIGTERM);
++      if(fixture_interrupts!=2 || fixture_terminations!=2 || bc_signal_started || bc_signal_pipe[0]!=-1 || bc_signal_pipe[1]!=-1 || baton_codex_proxies)return 2;
++    }
++    return 0;
++  } else if(!strcmp(argv[1],"echo")) {
++    if(argc!=3)return 2;
++    FILE *file=fopen(argv[2],"rb");if(!file)return 2;
++    if(fseek(file,0,SEEK_END))return 2;
++    long amount=ftell(file);if(amount<0 || fseek(file,0,SEEK_SET))return 2;
++    char *bytes=malloc((size_t)amount+1);if(!bytes)return 2;
++    if(fread(bytes,1,(size_t)amount,file)!=(size_t)amount)return 2;
++    fclose(file);
++    BatonCodexCall send={.kind=BC_SEND,.handle=handle,.text=bytes,.length=(size_t)amount};
++    baton_codex_call(&send);fixture_result(&send);if(send.error)return 1;
++    for(int i=0;i<2;i++) {
++      BatonCodexCall next={.kind=BC_NEXT,.handle=handle};baton_codex_call(&next);fixture_result(&next);if(next.error)return 1;
++    }
++  } else if(!strcmp(argv[1],"next")) {
++    BatonCodexCall next={.kind=BC_NEXT,.handle=handle};baton_codex_call(&next);fixture_result(&next);
++    if(!next.error)return 2;
++  } else if(!strcmp(argv[1],"cancel")) {
++    BatonCodexCall cancel={.kind=BC_CANCEL,.handle=handle,.signal=SIGTERM};baton_codex_call(&cancel);fixture_result(&cancel);
++    if(cancel.error)return 1;
++  }
++  BatonCodexCall close={.kind=BC_CLOSE,.handle=handle};baton_codex_call(&close);fixture_result(&close);if(close.error)return 1;
++  BatonCodexCall stale={.kind=BC_CANCEL,.handle=handle,.signal=0};baton_codex_call(&stale);
++  if(stale.error!=EBADF)return 2;
++  return 0;
++}
+diff --git a/bend2/test/codex-proxy.py b/bend2/test/codex-proxy.py
+new file mode 100644
+index 000000000..7b4e9cb0c
+--- /dev/null
++++ b/bend2/test/codex-proxy.py
+@@ -0,0 +1,186 @@
++"""The native Codex proxy retains WebSocket messages and actual child status."""
++import json
++import os
++import pathlib
++import shlex
++import signal
++import subprocess
++import sys
++import tempfile
++import unittest
++
++ROOT = pathlib.Path(__file__).resolve().parents[2]
++
++PROXY = r'''import base64,hashlib,json,os,pathlib,signal,struct,sys
++assert sys.argv[1:]==['app-server','proxy']
++inp=sys.stdin.buffer;out=sys.stdout.buffer
++def read(size):
++    data=b''
++    while len(data)<size:
++        part=inp.read(size-len(data))
++        if not part: raise EOFError(data.hex())
++        data+=part
++    return data
++def frame(payload,opcode=1,final=True):
++    start=bytes([(128 if final else 0)|opcode])
++    if len(payload)<126: start+=bytes([len(payload)])
++    elif len(payload)<65536: start+=b'\x7e'+struct.pack('!H',len(payload))
++    else: start+=b'\x7f'+struct.pack('!Q',len(payload))
++    out.write(start+payload);out.flush()
++def incoming():
++    a,b=read(2);assert a&128 and b&128
++    size=b&127
++    if size==126:size=struct.unpack('!H',read(2))[0]
++    elif size==127:size=struct.unpack('!Q',read(8))[0]
++    mask=read(4);payload=read(size)
++    return a&15,bytes(v^mask[i%4] for i,v in enumerate(payload))
++header=b''
++while not header.endswith(b'\r\n\r\n'):header+=read(1)
++assert header.startswith(b'GET / HTTP/1.1\r\n')
++key=next(line.split(b':',1)[1].strip() for line in header.split(b'\r\n') if line.lower().startswith(b'sec-websocket-key:'))
++accept=base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
++mode=os.environ['BATON_CODEX_FIXTURE']
++if mode=='bad-upgrade':out.write(b'HTTP/1.1 403 Forbidden\r\nX-Error: complete cause\r\n\r\n');out.flush();inp.read();sys.exit(23)
++out.write(b'HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Accept: '+accept+b'\r\n\r\n');out.flush()
++if mode=='echo':
++    opcode,payload=incoming();assert opcode==1
++    greeting=json.dumps({'method':'notice','params':{'text':'\u2603\U0001f680','home':os.environ['HOME'],'codexHome':os.environ['CODEX_HOME'],'cwd':os.getcwd()}},ensure_ascii=False,separators=(',',':')).encode()
++    cut=greeting.index('\U0001f680'.encode())+1
++    frame(greeting[:cut],final=False);frame(b'ping payload',9);frame(greeting[cut:],0)
++    assert incoming()==(10,b'ping payload')
++    frame(payload)
++elif mode=='utf8':frame(b'\xed\xa0\x80')
++elif mode=='binary':frame(b'\x00\xffcomplete',2)
++elif mode=='partial':out.write(b'\x81\x05ab');out.flush();sys.exit(9)
++elif mode=='external':
++    signal.signal(signal.SIGINT,signal.SIG_DFL)
++    signal.signal(signal.SIGTERM,signal.SIG_DFL)
++    frame(b'{"ready":true}')
++    signal.pause()
++elif mode=='blocked-close':frame(b'{"ready":true}')
++elif mode=='cancel':
++    # The parent cancels only after the complete upgrade was observed.
++    signal.pause()
++opcode,payload=incoming();assert opcode==8 and payload==b''
++frame(b'',8);assert inp.read()==b''
++sys.exit(7 if mode=='exit-seven' else 0)
++'''
++
++
++class CodexProxy(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        cls.temp = tempfile.TemporaryDirectory(prefix='baton-codex-transport-')
++        cls.home = pathlib.Path(cls.temp.name)
++        cls.binary = cls.home / 'transport'
++        compiler = shlex.split(os.environ.get('CC', 'clang'))
++        command = [*compiler, '-std=c11', '-D_GNU_SOURCE', '-O1', '-pthread',
++                   str(ROOT / 'bend2/test/codex-proxy.c'), '-o', str(cls.binary)]
++        built = subprocess.run(command, capture_output=True)
++        if built.returncode:
++            raise RuntimeError(f'{command!r}\n{built.stdout.decode()}\n{built.stderr.decode()}')
++        proxy = cls.home / 'codex'
++        proxy.write_text(f'#!{sys.executable}\n' + PROXY)
++        proxy.chmod(0o700)
++
++    @classmethod
++    def tearDownClass(cls):
++        cls.temp.cleanup()
++
++    def run_proxy(self, mode, operation, *arguments):
++        env = {**os.environ, 'PATH': str(self.home) + os.pathsep + os.environ['PATH'],
++               'HOME': str(self.home / 'recorded home'),
++               'CODEX_HOME': str(self.home / 'recorded codex home'),
++               'BATON_CODEX_FIXTURE': mode}
++        return subprocess.run([str(self.binary), operation, *map(str, arguments)],
++                              cwd=self.home, env=env, capture_output=True)
++
++    def test_fragmented_notifications_ping_and_large_raw_rpc_error(self):
++        value = {'id': 17, 'error': {'code': -32001, 'message': 'complete cause',
++                 'data': {'retained': '\u2603\U0001f680' * 30000}}}
++        raw = json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode()
++        path = self.home / 'request.json'
++        path.write_bytes(raw)
++        result = self.run_proxy('echo', 'echo', path)
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        notice, response, status = result.stdout.splitlines()
++        self.assertEqual(response, raw)
++        self.assertEqual(status, b'exit 0')
++        self.assertEqual(json.loads(notice), {'method': 'notice', 'params': {
++            'text': '\u2603\U0001f680', 'home': str(self.home / 'recorded home'),
++            'codexHome': str(self.home / 'recorded codex home'), 'cwd': str(self.home)}})
++
++    def test_upgrade_failure_retains_full_response(self):
++        result = self.run_proxy('bad-upgrade', 'close')
++        self.assertEqual(result.returncode, 1)
++        response = b'HTTP/1.1 403 Forbidden\r\nX-Error: complete cause\r\n\r\n'
++        self.assertIn(response.hex().encode(), result.stderr)
++
++    def test_invalid_utf8_retains_complete_bytes(self):
++        result = self.run_proxy('utf8', 'next')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertIn(b'invalid UTF-8 bytes: eda080', result.stderr)
++        self.assertEqual(result.stdout, b'exit 0\n')
++
++    def test_binary_frame_retains_complete_bytes(self):
++        result = self.run_proxy('binary', 'next')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertIn(b'00ff636f6d706c657465', result.stderr)
++
++    def test_partial_frame_preserves_bytes_and_actual_exit(self):
++        result = self.run_proxy('partial', 'next')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertIn(b'incomplete bytes: 6162', result.stderr)
++        self.assertEqual(result.stdout, b'exit 9\n')
++
++    def test_close_returns_actual_nonzero_exit(self):
++        result = self.run_proxy('exit-seven', 'close')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertEqual(result.stdout, b'exit 7\n')
++
++    def test_cancel_refuses_actual_retired_child_with_outstanding_reference(self):
++        result = self.run_proxy('exit-seven', 'retired-cancel')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertEqual(result.stdout, b'retired-child-refused\n')
++
++    def test_cancel_returns_actual_signal(self):
++        result = self.run_proxy('cancel', 'cancel')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertEqual(result.stdout, f'signal {signal.SIGTERM}\n'.encode())
++
++    def test_bend_effect_registration_and_results(self):
++        binary = ROOT / '.scratch/bend2/codex-proxy-test'
++        env = {**os.environ, 'PATH': str(self.home) + os.pathsep + os.environ['PATH'],
++               'HOME': str(self.home / 'recorded home'),
++               'CODEX_HOME': str(self.home / 'recorded codex home'),
++               'BATON_CODEX_FIXTURE': 'echo'}
++        result = subprocess.run([str(binary)], cwd=self.home, env=env, capture_output=True)
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        notice, response, status = result.stdout.splitlines()
++        self.assertEqual(json.loads(notice)['params']['text'], '\u2603\U0001f680')
++        self.assertEqual(json.loads(response), {'id': 1, 'method': 'transport-test'})
++        self.assertEqual(status, b'exit 0')
++
++    def test_close_settles_a_concurrent_blocked_reader(self):
++        result = self.run_proxy('blocked-close', 'blocked-close')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertEqual(result.stdout, b'exit 0\n')
++
++    def test_external_interrupt_restores_prior_handlers_after_actual_wait(self):
++        result = self.run_proxy('external', 'external-int')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertEqual(result.stdout, f'signal {signal.SIGINT}\n'.encode())
++
++    def test_external_termination_restores_prior_handlers_after_actual_wait(self):
++        result = self.run_proxy('external', 'external-term')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertEqual(result.stdout, f'signal {signal.SIGTERM}\n'.encode())
++
++    def test_external_signal_reaches_all_owned_handles_until_last_close(self):
++        result = self.run_proxy('external', 'external-two')
++        self.assertEqual(result.returncode, 0, result.stderr.decode())
++        self.assertEqual(result.stdout, (f'signal {signal.SIGTERM}\n' * 2).encode())
++
++
++if __name__ == '__main__':
++    unittest.main()

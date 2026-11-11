@@ -1,0 +1,1263 @@
+diff --git a/bend2/src/coordinator/agent-actions.bend b/bend2/src/coordinator/agent-actions.bend
+index 0591c8a28..d20846445 100644
+--- a/bend2/src/coordinator/agent-actions.bend
++++ b/bend2/src/coordinator/agent-actions.bend
+@@ -22,6 +22,7 @@ type Action is Type:
+   Player{id: String}
+   Players{}
+   Assignment{id: String}
++  Branch{args: List<String>}
+   Native{items: List<&2,Domain.Operation>}
+   Repl{args: List<String>}
+   Help{action: String}
+@@ -36,6 +37,7 @@ type Verb is Data:
+   AssignmentVerb{}
+   CompletionRequestVerb{}
+   CompletionConfirmedVerb{}
++  BranchVerb{}
+   GuideVerb{}
+   UnknownVerb{}
+ 
+@@ -231,6 +233,7 @@ def parse_action(action: Verb, args: List<String>) -> Action:
+     case CompletionRequestVerb{}: completion_request_options(args,"",Missing{})
+     case CompletionConfirmedVerb{}: confirmation_args(args,"","","")
+     case GuideVerb{}: decision_args("guide","guidance",args,"","","",Missing{})
++    case BranchVerb{}: Branch{args}
+     case UnknownVerb{}: Invalid{"Choose inbox, read, session, player, players, assignment, send, completion-request, completion-confirmed, guide or acknowledge; use help ACTION for usage."}
+ 
+ def classify_verb(+verb: String) -> Verb:
+@@ -242,7 +245,7 @@ def classify_verb(+verb: String) -> Verb:
+             Bool.pick(Verb,String.eq(verb,"assignment"),AssignmentVerb{},
+               Bool.pick(Verb,String.eq(verb,"completion-request"),CompletionRequestVerb{},
+                 Bool.pick(Verb,String.eq(verb,"completion-confirmed"),CompletionConfirmedVerb{},
+-                  Bool.pick(Verb,String.eq(verb,"guide"),GuideVerb{},UnknownVerb{})))))))))
++                  Bool.pick(Verb,String.eq(verb,"guide"),GuideVerb{},Bool.pick(Verb,String.eq(verb,"branch"),BranchVerb{},UnknownVerb{}))))))))))
+ 
+ def domain_action(parsed: Domain.Parsed) -> Action:
+   match parsed:
+@@ -331,6 +334,7 @@ def help(action: String) -> String:
+     case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID]\nResolve the selected Player's current completion request. Omitted --to selects the sole current request addressed to this coordinator. Baton generates the action identity and links the exact retained request. Explicit selectors retain their native authority checks. Supports mixed and or --and batches.\n"
+     case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nSend guidance to a Player through the ordinary message admission path. Supports mixed and or --and batches.\n"
+     case "send": "send RECIPIENT --kind KIND (--text TEXT | --file PATH) [--id ID] [and RECIPIENT ...]\nEach clause supplies its own recipient, kind, body and optional ID. Omitted IDs are generated and returned. Explicit IDs retain existing exact-retry behavior. Each message reports admission, wake and receipt. PATH - reads stdin.\n"
++    case "branch": "branch start|evaluate|select|continue|status|recover|stop [--ensemble NAME]\nUse help branch or branch --help for source defaults, workspace, evaluator, selection and continuation arguments.\n"
+     case "acknowledge": "acknowledge [ID... | --message ID] [--receipt TEXT]\nRecord handling for the current native attempt's complete recipient-owned read inputs. Baton generates the native receipt. Explicit message selectors and receipts remain available; the first receipt remains retained. A standalone administrative command requires an explicit message selection.\n"
+     case +other:
+       +domain = Domain.help(other)
+diff --git a/bend2/src/coordinator/agent-command.bend b/bend2/src/coordinator/agent-command.bend
+index 3bad6bb04..4beff397b 100644
+--- a/bend2/src/coordinator/agent-command.bend
++++ b/bend2/src/coordinator/agent-command.bend
+@@ -3,6 +3,7 @@ import ./agent-actions.bend as A
+ import ./agent-route.bend as Route
+ import ./agent-native.bend as Native
+ import ./agent-input.bend as AgentInput
++import ./branching.bend as Branching
+ import ./repl.bend as Repl
+ import ../coordinator/commands.bend as C
+ import ./store.bend as Store
+@@ -268,7 +269,8 @@ def completion_confirmed(+db: String, +session: String, +recipient: String, +req
+ 
+ def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
+   match action:
+-    case A.Help{+action}: IO.write(Bool.pick(String,String.eq(action,"repl"),Repl.help(),A.help(action)))
++    case A.Help{+action}: IO.write(Bool.pick(String,String.eq(action,"repl"),Repl.help(),Bool.pick(String,String.eq(action,"branch"),Branching.help(),A.help(action))))
++    case A.Branch{args}: Branching.execute(db,session,args)
+     case A.Invalid{cause}: IO.die(Unit,2,cause ++ "\n" ++ A.help(""))
+     case A.Inbox{}: do IO<Unit>:
+       saved : String <- IO.try(String,Store.read(db,C.Inbox{session}))
+diff --git a/bend2/src/coordinator/agent-route.bend b/bend2/src/coordinator/agent-route.bend
+index 0cea93a15..dc0a998db 100644
+--- a/bend2/src/coordinator/agent-route.bend
++++ b/bend2/src/coordinator/agent-route.bend
+@@ -26,13 +26,14 @@ type TailVerb is Data:
+   OtherVerb{}
+ 
+ def contextual_verb(+verb: String) -> Bool:
+-  Bool.or(String.eq(verb,"session"),
+-    Bool.or(String.eq(verb,"player"),
+-      Bool.or(String.eq(verb,"players"),
+-        Bool.or(String.eq(verb,"assignment"),
+-          Bool.or(String.eq(verb,"completion-request"),
+-            Bool.or(String.eq(verb,"completion-confirmed"),
+-              Bool.or(String.eq(verb,"repl"),Bool.or(String.eq(verb,"guide"),Domain.known(verb)))))))))
++  Bool.or(String.eq(verb,"branch"),
++    Bool.or(String.eq(verb,"session"),
++      Bool.or(String.eq(verb,"player"),
++        Bool.or(String.eq(verb,"players"),
++          Bool.or(String.eq(verb,"assignment"),
++            Bool.or(String.eq(verb,"completion-request"),
++              Bool.or(String.eq(verb,"completion-confirmed"),
++                Bool.or(String.eq(verb,"repl"),Bool.or(String.eq(verb,"guide"),Domain.known(verb))))))))))
+ 
+ def action_verb(+verb: String, project: Bool) -> Bool:
+   Bool.or(String.eq(verb,"read"),
+diff --git a/bend2/src/coordinator/branching-model.bend b/bend2/src/coordinator/branching-model.bend
+new file mode 100644
+index 000000000..28f84b554
+--- /dev/null
++++ b/bend2/src/coordinator/branching-model.bend
+@@ -0,0 +1,79 @@
++import Base
++import ../coordinator/commands.bend as C
++import ./store.bend as Store
++import ./knowledge.bend as Knowledge
++import ./native-initial-input.bend as Initial
++import ../host/sqlite.bend as DB
++import ../context/request.bend as Req
++import ../git/text.bend as Tx
++
++# A round records an explicit Conductor intervention. Native attempts, receipts,
++# stops, initialization seeds and usage retain their existing owning tables.
++def schema() -> String:
++  "CREATE TABLE IF NOT EXISTS branch_rounds(id TEXT PRIMARY KEY NOT NULL,ensemble TEXT NOT NULL REFERENCES ensembles(id),owner TEXT NOT NULL REFERENCES sessions(id),source TEXT NOT NULL REFERENCES sessions(id),ancestor TEXT REFERENCES branch_rounds(id),workspace TEXT NOT NULL,branch_count INTEGER NOT NULL CHECK(branch_count>0),snapshot TEXT NOT NULL DEFAULT '',task TEXT NOT NULL,inputs TEXT NOT NULL CHECK(json_valid(inputs)),knowledge TEXT NOT NULL CHECK(json_valid(knowledge)),includes TEXT NOT NULL CHECK(json_valid(includes)),evaluator TEXT NOT NULL CHECK(json_valid(evaluator)),direction TEXT NOT NULL CHECK(direction IN('max','min')),harness TEXT NOT NULL,model TEXT NOT NULL,effort TEXT NOT NULL,command TEXT NOT NULL,created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
++  ++ "CREATE TABLE IF NOT EXISTS branch_candidates(round TEXT NOT NULL REFERENCES branch_rounds(id),ordinal INTEGER NOT NULL,session TEXT UNIQUE NOT NULL,workspace TEXT NOT NULL,branch TEXT NOT NULL,PRIMARY KEY(round,ordinal));"
++  ++ "CREATE TABLE IF NOT EXISTS branch_operations(id INTEGER PRIMARY KEY AUTOINCREMENT,round TEXT NOT NULL REFERENCES branch_rounds(id),session TEXT NOT NULL,operation TEXT NOT NULL,result TEXT NOT NULL CHECK(json_valid(result)),recorded TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
++  ++ "CREATE TABLE IF NOT EXISTS branch_evaluations(id TEXT PRIMARY KEY NOT NULL,round TEXT NOT NULL REFERENCES branch_rounds(id),session TEXT NOT NULL REFERENCES sessions(id),snapshot TEXT NOT NULL DEFAULT '',workspace TEXT NOT NULL,argv TEXT NOT NULL CHECK(json_valid(argv)),native TEXT NOT NULL,attempt TEXT NOT NULL,phase TEXT NOT NULL,native_status TEXT NOT NULL,result TEXT CHECK(result IS NULL OR json_valid(result)),accepted INTEGER,score REAL,recorded TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
++  ++ "CREATE TABLE IF NOT EXISTS branch_selections(round TEXT PRIMARY KEY NOT NULL REFERENCES branch_rounds(id),session TEXT NOT NULL,evaluation TEXT REFERENCES branch_evaluations(id),reason TEXT NOT NULL,actor TEXT NOT NULL REFERENCES sessions(id),recorded TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
++
++def ensure(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    ready : Unit <- Store.ensure_before_begin(db)
++    made : String <- IO.try(String,DB.Sql.query(db,Knowledge.knowledge_schema() ++ Initial.schema() ++ schema()))
++    IO.pure(Unit,Unit{})
++
++def scalar(+db: String, expression: String) -> IO(String):
++  do IO<String>:
++    encoded : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(coalesce((" ++ expression ++ "),''));"))
++    IO.pure(String,Req.scalar_value(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(encoded)))))
++
++def field(db: String, table: String, +id: String, name: String) -> IO(String):
++  scalar(db,"SELECT " ++ name ++ " FROM " ++ table ++ " WHERE id=" ++ C.q(id))
++
++def require(ok: Bool, cause: String) -> IO(Unit):
++  Bool.pick(IO(Unit),ok,IO.pure(Unit,Unit{}),IO.die(Unit,2,cause))
++
++def check(+db: String, expression: String, cause: String) -> IO(Unit):
++  do IO<Unit>:
++    answer : String <- scalar(db,expression)
++    require(String.eq(answer,"1"),cause)
++
++def write(+db: String, sql: String) -> IO(Unit):
++  do IO<Unit>:
++    saved : String <- IO.try(String,Store.transact_sql(db,"BEGIN IMMEDIATE;" ++ sql ++ "COMMIT;"))
++    IO.pure(Unit,Unit{})
++
++def identity(db: String, prefix: String) -> IO(String):
++  scalar(db,C.q(prefix) ++ "||lower(hex(randomblob(16)))")
++
++def ensemble(+db: String, +actor: String, +selected: String) -> IO(String):
++  do IO<String>:
++    authorized : Unit <- check(db,"SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(actor) ++ " AND " ++ C.assigned_role("id") ++ "='conductor' AND NOT " ++ C.stopped_session_sql("id") ++ ")","Branching requires an unstopped recorded Conductor.")
++    +found : String <- scalar(db,"SELECT CASE WHEN count(*)=1 THEN min(id) ELSE '' END FROM ensembles WHERE owner=" ++ C.q(actor) ++ Bool.pick(String,String.is_empty(selected),""," AND id=" ++ C.q(selected)))
++    exact : Unit <- require(Bool.not(String.is_empty(found)),"Select --ensemble NAME for one Ensemble owned by this Conductor.")
++    IO.pure(String,found)
++
++def round(+db: String, +ensemble: String, +selected: String) -> IO(String):
++  do IO<String>:
++    +found : String <- scalar(db,"SELECT id FROM branch_rounds WHERE ensemble=" ++ C.q(ensemble) ++ Bool.pick(String,String.is_empty(selected)," ORDER BY rowid DESC LIMIT 1"," AND id=" ++ C.q(selected)))
++    exists : Unit <- require(Bool.not(String.is_empty(found)),"This Ensemble has no selected branching round. Start one, or select an existing --round ID.")
++    IO.pure(String,found)
++
++def settled(+session: String) -> String:
++  "EXISTS(SELECT 1 FROM executions WHERE session=" ++ session ++ " AND phase='exited' AND status<>'' AND status<>'owner-death')"
++
++def operation(db: String, round: String, session: String, kind: String, result: String) -> IO(Unit):
++  write(db,"INSERT INTO branch_operations(round,session,operation,result) VALUES(" ++ C.q(round) ++ "," ++ C.q(session) ++ "," ++ C.q(kind) ++ "," ++ C.q(result) ++ ");")
++
++def candidate(+session: String) -> String:
++  "json_object('player'," ++ session ++ ",'session',json((SELECT json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'workspace',workspace,'branch',branch,'base',base) FROM sessions WHERE id=" ++ session ++ ")),'execution',(SELECT json_object('id',id,'directory',directory,'phase',phase,'status',status) FROM executions WHERE session=" ++ session ++ "),'settled',json(CASE WHEN " ++ settled(session) ++ " THEN 'true' ELSE 'false' END),'stop',(SELECT json_object('id',id,'reason',reason,'outcome',outcome) FROM session_stops WHERE session=" ++ session ++ "),'initialInputs',json((SELECT coalesce(json_group_array(json_object('attempt',attempt,'turn',turn,'seed',seed,'instruction',instruction,'guidance',guidance)),'[]') FROM native_initial_inputs WHERE session=" ++ session ++ ")), 'reports',json((SELECT coalesce(json_group_array(json_object('id',id,'body',body,'receipt',receipt)),'[]') FROM messages WHERE sender=" ++ session ++ " AND kind IN('report','completion-request'))),'pending',json((SELECT coalesce(json_group_array(json_object('id',id,'kind',kind,'body',body)),'[]') FROM messages WHERE recipient=" ++ session ++ " AND receipt IS NULL)))"
++
++# Evaluation evidence is separate from Player reports and includes its exact
++# native settlement observation. Missing settlement remains visible as unknown.
++def status_sql(+round: String) -> String:
++  "SELECT json_object('round',r.id,'ensemble',r.ensemble,'owner',r.owner,'source',r.source,'ancestor',r.ancestor,'snapshot',nullif(r.snapshot,''),'task',r.task,'inputs',json(r.inputs),'knowledge',json(r.knowledge),'includes',json(r.includes),'evaluator',json(r.evaluator),'direction',r.direction,'candidates',json((SELECT coalesce(json_group_array(json_object('ordinal',b.ordinal,'workspace',b.workspace,'branch',b.branch,'state',json(" ++ candidate("b.session") ++ "))),'[]') FROM branch_candidates b WHERE b.round=r.id)),'evaluations',json((SELECT coalesce(json_group_array(json_object('id',e.id,'player',e.session,'snapshot',nullif(e.snapshot,''),'workspace',e.workspace,'argv',json(e.argv),'native',e.native,'attempt',e.attempt,'phase',e.phase,'nativeStatus',e.native_status,'result',json(e.result),'accepted',e.accepted,'score',e.score)),'[]') FROM branch_evaluations e WHERE e.round=r.id)),'selection',(SELECT json_object('player',s.session,'evaluation',s.evaluation,'reason',s.reason,'actor',s.actor) FROM branch_selections s WHERE s.round=r.id),'operations',json((SELECT coalesce(json_group_array(json_object('player',o.session,'operation',o.operation,'result',json(o.result))),'[]') FROM branch_operations o WHERE o.round=r.id))) FROM branch_rounds r WHERE r.id=" ++ C.q(round) ++ ";"
++
++def status(+db: String, round: String) -> IO(Unit):
++  do IO<Unit>:
++    saved : String <- IO.try(String,DB.Sql.read(db,status_sql(round)))
++    IO.write(saved)
+diff --git a/bend2/src/coordinator/branching-workspace.bend b/bend2/src/coordinator/branching-workspace.bend
+new file mode 100644
+index 000000000..9ae3d27be
+--- /dev/null
++++ b/bend2/src/coordinator/branching-workspace.bend
+@@ -0,0 +1,78 @@
++import Base
++import ./branching-model.bend as M
++import ./agent-native.bend as Native
++import ./agent-domain.bend as D
++import ../coordinator/commands.bend as C
++import ./recruit.bend as Recruit
++import ../git/process.bend as Git
++import ../git/types.bend as G
++import ../git/text.bend as Tx
++import ../host/process.bend as P
++import ../host/files.bend as F
++import ../host/sqlite.bend as DB
++import ../json/canonical.bend as J
++
++# A private index leaves the source checkout's index and HEAD unchanged. The
++# snapshot commit includes tracked and nonignored untracked paths. Explicit
++# includes add required ignored inputs to the same immutable Git object.
++def indexed(+workspace: String, index: String, args: List<String>) -> IO(String):
++  do IO<String>:
++    result : G.RunRes <- Git.runFull(Con{"env",Con{"GIT_INDEX_FILE=" ++ index,Con{"git",Con{"-C",Con{workspace,args}}}}},".")
++    answer : G.GitOut = Git.git_out(result)
++    Recruit.git_output("branch workspace snapshot",answer)
++
++def include_paths(+workspace: String, +index: String, paths: List<String>) -> IO(Unit):
++  match paths:
++    case Nil{}: IO.pure(Unit,Unit{})
++    case encoded <> rest: do IO<Unit>:
++      added : String <- indexed(workspace,index,["add","--force","--",Native.decoded(encoded)])
++      include_paths(workspace,index,rest)
++
++def snapshot(+db: String, +workspace: String, +id: String, includes: String) -> IO(String):
++  do IO<String>:
++    +index : String = db ++ ".branch-index-" ++ id
++    base : G.GitOut <- Git.runGit(workspace,["rev-parse","--verify","HEAD"])
++    +parent : String <- Recruit.git_output("branch snapshot HEAD",base)
++    loaded : String <- indexed(workspace,index,["read-tree",Tx.trim_nl(parent)])
++    added : String <- indexed(workspace,index,["add","--all","--","."])
++    paths : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(value) FROM json_each(" ++ C.q(includes) ++ ") ORDER BY CAST(key AS INTEGER);"))
++    included : Unit <- include_paths(workspace,index,Tx.split_lines(paths))
++    +tree : String <- indexed(workspace,index,["write-tree"])
++    result : G.RunRes <- Git.runFull(["env","GIT_AUTHOR_NAME=Baton","GIT_AUTHOR_EMAIL=baton@localhost","GIT_COMMITTER_NAME=Baton","GIT_COMMITTER_EMAIL=baton@localhost","git","-C",workspace,"commit-tree",Tx.trim_nl(tree),"-p",Tx.trim_nl(parent),"-m","Branch workspace snapshot"],".")
++    commit : String <- Recruit.git_output("branch snapshot commit",Git.git_out(result))
++    removed : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(index)
++    IO.pure(String,Tx.trim_nl(commit))
++
++def outcome(result: Result<&1,&1,U32 & String,Native.Outcome>, argv: String) -> String:
++  match result:
++    case Fail{(code,cause)}:
++      "{\"argv\":" ++ argv ++ ",\"stdout\":\"\",\"stderr\":\"\",\"waitStatus\":null,\"cause\":" ++ J.string_literal(U32.show(code) ++ ": " ++ cause) ++ "}"
++    case Done{Native.Finished{stdout,stderr,wait,cause}}:
++      "{\"argv\":" ++ argv ++ ",\"stdout\":" ++ J.string_literal(stdout) ++ ",\"stderr\":" ++ J.string_literal(stderr) ++ ",\"waitStatus\":" ++ J.string_literal(wait) ++ ",\"cause\":" ++ J.string_literal(cause) ++ "}"
++
++def evaluate_spawned(argv: String, path: String, spawned: Result<&1,&1,U32 & String,U32>) -> IO(String):
++  match spawned:
++    case Fail{error}: IO.pure(String,outcome(Fail{error},argv))
++    case Done{handle}: do IO<String>:
++      result : Native.Outcome <- Native.wait_child(handle,path,"")
++      IO.pure(String,outcome(Done{result},argv))
++
++def argv_values(rows: List<String>) -> List<String>:
++  match rows:
++    case Nil{}: Nil{}
++    case row <> rest: Con{Native.decoded(row),argv_values(rest)}
++
++# Evaluators receive the declared argv and a separate snapshot checkout as CWD.
++# They run with the coordinator user's ordinary filesystem permissions.
++def evaluate(+db: String, +workspace: String, +id: String, +argv: String) -> IO(String):
++  do IO<String>:
++    rows : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(value) FROM json_each(" ++ C.q(argv) ++ ") ORDER BY CAST(key AS INTEGER);"))
++    +error : String = db ++ ".branch-evaluator-" ++ id ++ ".stderr"
++    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv(argv_values(Tx.split_lines(rows))),workspace,error)
++    evaluate_spawned(argv,error,spawned)
++
++def evaluator_valid(+argv: String) -> String:
++  "CASE WHEN json_valid(" ++ C.q(argv) ++ ") THEN json_type(" ++ C.q(argv) ++ ")='array' AND json_array_length(" ++ C.q(argv) ++ ")>0 AND NOT EXISTS(SELECT 1 FROM json_each(" ++ C.q(argv) ++ ") WHERE type<>'text' OR instr(value,char(0))>0) AND coalesce(json_extract(" ++ C.q(argv) ++ ",'$[0]'),'')<>'' ELSE 0 END"
++
++def paths_valid(+paths: String) -> String:
++  "CASE WHEN json_valid(" ++ C.q(paths) ++ ") THEN json_type(" ++ C.q(paths) ++ ")='array' AND NOT EXISTS(SELECT 1 FROM json_each(" ++ C.q(paths) ++ ") WHERE type<>'text' OR value='' OR substr(value,1,1)='/' OR value IN('.','..','.git') OR value LIKE '../%' OR value LIKE '%/../%' OR value LIKE '%/..' OR value LIKE '.git/%' OR value LIKE '%/.git/%' OR value LIKE '%/.git' OR instr(value,char(0))>0) ELSE 0 END"
+diff --git a/bend2/src/coordinator/branching.bend b/bend2/src/coordinator/branching.bend
+new file mode 100644
+index 000000000..865b5b62b
+--- /dev/null
++++ b/bend2/src/coordinator/branching.bend
+@@ -0,0 +1,392 @@
++import Base
++import ./branching-model.bend as M
++import ./branching-workspace.bend as W
++import ./agent-domain.bend as D
++import ./agent-native.bend as Native
++import ../coordinator/commands.bend as C
++import ./store.bend as Store
++import ./recruit.bend as Recruit
++import ./knowledge.bend as Knowledge
++import ../host/sqlite.bend as DB
++import ../host/session-lock.bend as Lock
++import ../host/files.bend as F
++import ../git/create-worktree.bend as CW
++import ../git/types.bend as G
++import ../git/process.bend as Git
++import ../git/text.bend as Tx
++
++
++def help() -> String:
++  "Branching compares alternative solutions on an owned Ensemble: snapshot a settled agent's workspace, start fresh conversations in separate worktrees, evaluate results, select a Player, then continue its existing conversation. The Ensemble's configured coupling can be loose or tight.\nbranch start [--ensemble NAME] [--from SESSION] --count N [--text TASK | --file PATH] --evaluator '[\"executable\",\"argument\"]' [--direction max|min] [--include '[\"path\"]'] [--knowledge '[\"finding\"]'] [--harness NAME] [--model MODEL] [--effort EFFORT] [--command EXECUTABLE]\nbranch evaluate|status|recover [--ensemble NAME] [--round ID]\nbranch select [--ensemble NAME] [--player PLAYER --reason TEXT] [--round ID]\nbranch continue [--ensemble NAME] [--text GUIDANCE | --file PATH] [--round ID]\nbranch stop [--ensemble NAME] --reason TEXT [--player PLAYER] [--round ID]\nOmit --ensemble only when the current Conductor owns exactly one Ensemble. Otherwise select an owned Ensemble explicitly; absent or ambiguous selection refuses. Omitted --round selects that Ensemble's latest round.\n--from defaults to the latest selected Player in this Ensemble, including explicit and score-based selections; before any selection it uses the current Conductor. The source needs a recorded Git workspace and settled native custody. Start inherits its complete task and native configuration; the options override these fields. An external managed endpoint may require --command.\nEvaluate records settled branches and complete evaluator stdout, stderr and wait status. Evaluator stdout must be one JSON object with boolean accepted and numeric score. Then run select without --player for score-based selection: every branch needs successful native settlement, no explicit stop and an accepted current evaluation, with one unique best score. Start uses --direction max by default; min selects the lowest score. Evaluate alone records evidence. To decide a tied, failed or partial round, select --player PLAYER --reason TEXT.\nContinue preserves the selected Player's conversation and workspace; omitted guidance uses the stored complete task. Recover retries recorded setup and owed input while preserving explicit stops. Stop records a supported session stop. All branches and artifacts remain retained. Use help ensemble to configure coupling.\n"
++
++def flags() -> List<String>:
++  ["--ensemble","--round","--from","--count","--text","--file","--evaluator","--direction","--include","--knowledge","--player","--reason","--command","--harness","--model","--effort"]
++
++def options(args: List<String>, +found: List<&2,D.Option>) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
++  match args:
++    case Nil{}: Done{found}
++    case +name <> value <> rest:
++      Bool.pick(Result<&1,&1,U32 & String,List<&2,D.Option>>,Bool.and(D.member(name,flags()),Bool.not(D.present(found,name))),
++        options(rest,Con{D.Field{name,value},found}),Fail{(2,"Branch options must be known and supplied once. Use branch --help.")})
++    case other: Fail{(2,"Each branch option requires its value. Use branch --help.")}
++
++def verb_flags(verb: String) -> List<String>:
++  match verb:
++    case "start": ["--ensemble","--from","--count","--text","--file","--evaluator","--direction","--include","--knowledge","--command","--harness","--model","--effort"]
++    case "select": ["--ensemble","--round","--player","--reason"]
++    case "continue": ["--ensemble","--round","--text","--file"]
++    case "stop": ["--ensemble","--round","--player","--reason"]
++    case other: ["--ensemble","--round"]
++
++def options_allowed(+verb: String, options: List<&2,D.Option>) -> Bool:
++  match options:
++    case Nil{}: True{}
++    case D.Field{name,value} <> rest: Bool.and(D.member(name,verb_flags(verb)),options_allowed(verb,rest))
++
++def task(+options: List<&2,D.Option>, fallback: String) -> IO(String):
++  Bool.pick(IO(String),Bool.and(D.present(options,"--file"),D.present(options,"--text")),
++    IO.die(String,2,"Supply one --text or --file task input."),
++    Bool.pick(IO(String),D.present(options,"--file"),IO.try(String,Native.text_value(D.value(options,"--file",""))),IO.pure(String,D.value(options,"--text",fallback))))
++
++def native_command(+db: String, +round: String, +player: String, +verb: String, args: List<String>) -> IO(String):
++  do IO<String>:
++    executable : String <- IO.try(String,Lock.SessionLock.executable())
++    +nonce : String <- M.identity(db,"branch-operation-")
++    +result : String <- Native.run_input(db,0,verb,Con{executable,Con{db,args}},db ++ "." ++ nonce ++ ".stderr")
++    retained : Unit <- M.operation(db,round,player,verb,result)
++    IO.pure(String,result)
++
++def successful(+db: String, +result: String) -> IO(Bool):
++  do IO<Bool>:
++    value : String <- M.scalar(db,"json_extract(" ++ C.q(result) ++ ",'$.status')='completed'")
++    IO.pure(Bool,String.eq(value,"1"))
++
++def input_snapshot(+source: String) -> String:
++  "(SELECT coalesce(json_group_array(json_object('id',id,'sender',sender,'kind',kind,'body',body,'receipt',receipt)),'[]') FROM (SELECT * FROM messages WHERE recipient=" ++ C.q(source) ++ " AND seq>=coalesce(" ++ C.task_assignment_sql(C.q(source)) ++ ",0) AND kind IN('task','task-assignment','guidance','recovery','task-continuation') ORDER BY seq))"
++
++def knowledge_visible(+source: String, +ensemble: String) -> String:
++  "(" ++ Knowledge.scope_findings_sql("worker",source,True{}) ++ " OR " ++ Knowledge.scope_findings_sql("group",ensemble,True{}) ++ ")"
++
++def knowledge_snapshot(+source: String, +ensemble: String, requested: String) -> String:
++  "(SELECT coalesce(json_group_array(json(" ++ Knowledge.knowledge_item() ++ ")),'[]') FROM knowledge k WHERE k.id IN(SELECT value FROM json_each(" ++ C.q(requested) ++ ")) AND " ++ knowledge_visible(source,ensemble) ++ ")"
++
++def round_task(+task: String, +inputs: String, knowledge: String) -> String:
++  task ++ "\n\nInherited task inputs recorded at the branch boundary:\n" ++ inputs ++ "\n\nSelected scratchpad knowledge:\n" ++ knowledge
++
++def child_field(+db: String, +round: String, +ordinal: U32, column: String) -> IO(String):
++  M.scalar(db,"SELECT " ++ column ++ " FROM branch_candidates WHERE round=" ++ C.q(round) ++ " AND ordinal=" ++ U32.show(ordinal))
++
++def prepare_candidates(db: String, +round: String, +root: String, +count: U32) -> IO(Unit):
++  M.write(db,"WITH RECURSIVE numbered(n) AS (SELECT 0 WHERE " ++ U32.show(count) ++ ">0 UNION ALL SELECT n+1 FROM numbered WHERE n+1<" ++ U32.show(count) ++ ") INSERT OR IGNORE INTO branch_candidates(round,ordinal,session,workspace,branch) SELECT " ++ C.q(round) ++ ",n," ++ C.q(round) ++ "||'-'||n," ++ C.q(root) ++ "||'/'||n," ++ C.q("baton/" ++ round) ++ "||'-'||n FROM numbered;")
++
++def configure_child(+db: String, +round: String, +player: String, +path: String, ready: Bool) -> IO(Bool):
++  match ready:
++    case False{}: IO.pure(Bool,False{})
++    case True{}: do IO<Bool>:
++      +endpoint : String <- M.scalar(db,"SELECT endpoint FROM sessions WHERE id=" ++ C.q(player))
++      stopped : String <- M.scalar(db,"EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(player) ++ ")")
++      Bool.pick(IO(Bool),String.eq(stopped,"1"),IO.pure(Bool,False{}),
++        Bool.pick(IO(Bool),Bool.not(String.is_empty(endpoint)),IO.pure(Bool,True{}),
++        (do IO<Bool>:
++          command : String <- M.field(db,"branch_rounds",round,"command")
++          configured : String <- native_command(db,round,player,"receiver",["receiver",player,command,db ++ "." ++ player ++ ".native.log",path])
++          successful(db,configured))))
++
++def launch_child(+db: String, +round: String, +player: String, +owner: String) -> IO(Unit):
++  do IO<Unit>:
++    +endpoint : String <- M.scalar(db,"SELECT endpoint FROM sessions WHERE id=" ++ C.q(player))
++    stopped : String <- M.scalar(db,"EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(player) ++ ")")
++    launched : String <- Bool.pick(IO(String),Bool.or(String.is_empty(endpoint),String.eq(stopped,"1")),IO.pure(String,""),
++      (do IO<String>:
++        inputs : String <- M.field(db,"branch_rounds",round,"inputs")
++        knowledge : String <- M.field(db,"branch_rounds",round,"knowledge")
++        body : String <- M.field(db,"branch_rounds",round,"task")
++        +message : String = player ++ ":branch-task"
++        existing : String <- M.scalar(db,"EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(message) ++ ")")
++        Bool.pick(IO(String),String.eq(existing,"1"),native_command(db,round,player,"resume",["resume",player]),
++          native_command(db,round,player,"dispatch",["agent-contextual-input",owner,"dispatch","--to",player,"--id",message,"--text",round_task(body,inputs,knowledge)]))))
++    IO.pure(Unit,Unit{})
++
++def existing_child(+db: String, +round: String, +player: String, +owner: String, harness: String, model: String, effort: String, +branch: String, +path: String, +snapshot: String, actual: G.GitOut) -> IO(String):
++  match actual:
++    case G.GRun{code,out}: do IO<String>:
++      current : G.GitOut <- Git.runGit(path,["symbolic-ref","--quiet","--short","HEAD"])
++      name : String <- Recruit.git_output("branch recovery worktree",current)
++      exact : Unit <- M.require(Bool.and(U32.is_eq(code,0),Bool.and(String.eq(Tx.trim_nl(out),snapshot),String.eq(Tx.trim_nl(name),branch))),"The generated branch worktree differs from its recorded snapshot. Preserve it and inspect branch status.")
++      native_command(db,round,player,"join",["join",player,owner,harness,model,effort,path])
++    case G.GBroken{detail}: IO.die(String,2,detail)
++
++def register_present(+db: String, +round: String, +player: String, +owner: String, +harness: String, +model: String, +effort: String, +source: String, +branch: String, +path: String, +snapshot: String, actual: G.GitOut) -> IO(String):
++  match actual:
++    case G.GRun{+code,out}:
++      Bool.pick(IO(String),U32.is_eq(code,0),existing_child(db,round,player,owner,harness,model,effort,branch,path,snapshot,G.GRun{code,out}),native_command(db,round,player,"recruit",["recruit",player,owner,harness,model,effort,source,branch,path,snapshot]))
++    case G.GBroken{detail}: native_command(db,round,player,"recruit",["recruit",player,owner,harness,model,effort,source,branch,path,snapshot])
++
++def register_child(+db: String, +round: String, +player: String, +owner: String, +harness: String, +model: String, +effort: String, +source: String, +branch: String, +path: String, +snapshot: String) -> IO(String):
++  do IO<String>:
++    registered : String <- M.scalar(db,"EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ ")")
++    Bool.pick(IO(String),String.eq(registered,"1"),
++      (do IO<String>:
++        assignment : Unit <- M.check(db,"EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ " AND parent=" ++ C.q(owner) ++ " AND workspace=" ++ C.q(path) ++ " AND branch=" ++ C.q(branch) ++ " AND base=" ++ C.q(snapshot) ++ ")","The recorded branch Player has a different workspace assignment. Preserve it and inspect the round.")
++        native_command(db,round,player,"session",["session",player])),
++      (do IO<String>:
++        actual : G.GitOut <- Git.runGit(path,["rev-parse","--verify","HEAD"])
++        register_present(db,round,player,owner,harness,model,effort,source,branch,path,snapshot,actual)))
++
++def setup_child(+db: String, +round: String, +ordinal: U32, +owner: String) -> IO(Unit):
++  do IO<Unit>:
++    +player : String <- child_field(db,round,ordinal,"session")
++    +path : String <- child_field(db,round,ordinal,"workspace")
++    +branch : String <- child_field(db,round,ordinal,"branch")
++    +source : String <- M.field(db,"branch_rounds",round,"workspace")
++    +snapshot : String <- M.field(db,"branch_rounds",round,"snapshot")
++    +harness : String <- M.field(db,"branch_rounds",round,"harness")
++    +model : String <- M.field(db,"branch_rounds",round,"model")
++    +effort : String <- M.field(db,"branch_rounds",round,"effort")
++    recruited : String <- register_child(db,round,player,owner,harness,model,effort,source,branch,path,snapshot)
++    +ready : Bool <- successful(db,recruited)
++    member : Unit <- Bool.pick(IO(Unit),ready,M.write(db,"INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT ensemble," ++ C.q(player) ++ " FROM branch_rounds WHERE id=" ++ C.q(round) ++ ";"),IO.pure(Unit,Unit{}))
++    configured : Bool <- configure_child(db,round,player,path,ready)
++    launched : Unit <- Bool.pick(IO(Unit),configured,launch_child(db,round,player,owner),IO.pure(Unit,Unit{}))
++    IO.pure(Unit,Unit{})
++
++def number_read(value: Maybe<&2,U32>) -> U32:
++  match value:
++    case None{}: 0
++    case Some{n}: n
++
++def number(value: String) -> U32:
++  number_read(U32.read(value))
++
++def setup_children(+db: String, +round: String, +owner: String, rows: List<String>) -> IO(Unit):
++  match rows:
++    case Nil{}: IO.pure(Unit,Unit{})
++    case ordinal <> rest: do IO<Unit>:
++      prepared : Unit <- setup_child(db,round,number(ordinal),owner)
++      setup_children(db,round,owner,rest)
++
++def source_player(+db: String, +ensemble: String, +actor: String, +options: List<&2,D.Option>) -> IO(String):
++  do IO<String>:
++    +inherited : String <- M.scalar(db,"SELECT s.session FROM branch_selections s JOIN branch_rounds r ON r.id=s.round WHERE r.ensemble=" ++ C.q(ensemble) ++ " ORDER BY r.rowid DESC LIMIT 1")
++    +source : String = D.value(options,"--from",Bool.pick(String,String.is_empty(inherited),actor,inherited))
++    allowed : Unit <- M.check(db,"EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(source) ++ " AND (id=" ++ C.q(actor) ++ " OR parent=" ++ C.q(actor) ++ " OR EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ C.q(ensemble) ++ " AND session=sessions.id)) )","The branch source must be a Player in this Conductor's Ensemble or direct assignment.")
++    IO.pure(String,source)
++
++def snapshot_locked(+db: String, +workspace: String, +id: String, +includes: String, lock: Maybe<U32>) -> IO(String):
++  match lock:
++    case None{}: IO.die(String,2,"The source still owns a native attempt. Select a settled workspace boundary or explicitly stop it before snapshotting.")
++    case Some{handle}: do IO<String>:
++      commit : String <- W.snapshot(db,workspace,id,includes)
++      released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
++      IO.pure(String,commit)
++
++# Managed endpoints identify their transport, coordinator and conversation. A
++# recorded native launch supplies its executable; absent launch input requires
++# an explicit command from the Conductor.
++def source_command(+db: String, +source: String) -> IO(String):
++  do IO<String>:
++    +endpoint : String <- M.scalar(db,"SELECT " ++ Native.endpoint_field(source,"5") ++ " FROM sessions WHERE id=" ++ C.q(source))
++    table : String <- M.scalar(db,"EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='direct_turn_requests')")
++    +direct : String <- Bool.pick(IO(String),String.eq(table,"1"),
++      M.scalar(db,"SELECT r.command FROM direct_turn_requests r JOIN sessions s ON s.id=r.session WHERE s.id=" ++ C.q(source) ++ " AND r.harness=s.harness AND r.model=s.model AND r.effort=s.effort AND r.workspace=s.workspace ORDER BY r.rowid DESC LIMIT 1"),IO.pure(String,""))
++    inherited : String <- M.scalar(db,"SELECT r.command FROM branch_rounds r JOIN branch_candidates b ON b.round=r.id JOIN sessions s ON s.id=b.session WHERE s.id=" ++ C.q(source) ++ " AND r.harness=s.harness AND r.model=s.model AND r.effort=s.effort ORDER BY r.rowid DESC LIMIT 1")
++    IO.pure(String,Bool.pick(String,String.is_empty(endpoint),Bool.pick(String,String.is_empty(direct),inherited,direct),endpoint))
++
++def start(+db: String, +actor: String, +ensemble: String, +options: List<&2,D.Option>) -> IO(Unit):
++  do IO<Unit>:
++    +source : String <- source_player(db,ensemble,actor,options)
++    +workspace : String <- M.scalar(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(source))
++    +round : String <- M.identity(db,"branch-")
++    +count : U32 = number(D.value(options,"--count","0"))
++    count_ok : Unit <- M.require(Bool.not(U32.is_eq(count,0)),"Start requires a positive explicit --count N.")
++    +evaluator : String = D.value(options,"--evaluator","")
++    argv_ok : Unit <- M.check(db,W.evaluator_valid(evaluator),"--evaluator must be a nonempty JSON argv array of strings.")
++    +includes : String = D.value(options,"--include","[]")
++    paths_ok : Unit <- M.check(db,W.paths_valid(includes),"--include must be a JSON array of relative workspace paths without parent traversal or .git paths.")
++    +requested : String = D.value(options,"--knowledge","[]")
++    knowledge_json : Unit <- M.check(db,"CASE WHEN json_valid(" ++ C.q(requested) ++ ") THEN json_type(" ++ C.q(requested) ++ ")='array' AND NOT EXISTS(SELECT 1 FROM json_each(" ++ C.q(requested) ++ ") WHERE type<>'text') ELSE 0 END","--knowledge must be a JSON array of finding IDs.")
++    known : Unit <- M.check(db,"NOT EXISTS(SELECT 1 FROM json_each(" ++ C.q(requested) ++ ") selected WHERE NOT EXISTS(SELECT 1 FROM knowledge k WHERE k.id=selected.value AND " ++ knowledge_visible(source,ensemble) ++ "))","Every selected finding must be visible to the source Player or this Ensemble.")
++    +direction : String = D.value(options,"--direction","max")
++    direction_ok : Unit <- M.require(D.member(direction,["max","min"]),"--direction must be max or min.")
++    fallback : String <- M.scalar(db,"SELECT body FROM messages WHERE seq=" ++ C.task_assignment_sql(C.q(source)))
++    +body : String <- task(options,fallback)
++    body_ok : Unit <- M.require(Bool.not(String.is_empty(body)),"Start requires complete task text, a task file, or the source's recorded assignment.")
++    +harness : String <- M.scalar(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(source))
++    +model : String <- M.scalar(db,"SELECT model FROM sessions WHERE id=" ++ C.q(source))
++    effort : String <- M.scalar(db,"SELECT effort FROM sessions WHERE id=" ++ C.q(source))
++    +selected_command : String <- Bool.pick(IO(String),D.present(options,"--command"),IO.pure(String,D.value(options,"--command","")),source_command(db,source))
++    config_ok : Unit <- M.require(Bool.and(D.member(D.value(options,"--harness",harness),["omp","codex","muse","claude-code"]),Bool.and(Bool.not(String.is_empty(D.value(options,"--model",model))),Bool.not(String.is_empty(selected_command)))),"The source requires a supported native harness, model and configured executable; explicit --harness, --model and --command may select them.")
++    recorded : Unit <- M.write(db,"INSERT INTO branch_rounds(id,ensemble,owner,source,ancestor,workspace,branch_count,task,inputs,knowledge,includes,evaluator,direction,harness,model,effort,command) VALUES(" ++ C.q(round) ++ "," ++ C.q(ensemble) ++ "," ++ C.q(actor) ++ "," ++ C.q(source) ++ ",(SELECT b.round FROM branch_candidates b WHERE b.session=" ++ C.q(source) ++ ")," ++ C.q(workspace) ++ "," ++ U32.show(count) ++ "," ++ C.q(body) ++ "," ++ input_snapshot(source) ++ "," ++ knowledge_snapshot(source,ensemble,requested) ++ "," ++ C.q(includes) ++ "," ++ C.q(evaluator) ++ "," ++ C.q(direction) ++ "," ++ C.q(D.value(options,"--harness",harness)) ++ "," ++ C.q(D.value(options,"--model",model)) ++ "," ++ C.q(D.value(options,"--effort",effort)) ++ "," ++ C.q(selected_command) ++ ");")
++    lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(db,source))
++    +snapshot : String <- snapshot_locked(db,workspace,round,includes,lock)
++    stored : Unit <- M.write(db,"UPDATE branch_rounds SET snapshot=" ++ C.q(snapshot) ++ " WHERE id=" ++ C.q(round) ++ ";")
++    +root : String = workspace ++ "-" ++ round
++    directory : Unit <- IO.try(Unit,F.Files.mkdir(root))
++    prepared : Unit <- prepare_candidates(db,round,root,count)
++    rows : String <- IO.try(String,DB.Sql.read(db,"SELECT ordinal FROM branch_candidates WHERE round=" ++ C.q(round) ++ " ORDER BY ordinal;"))
++    launched : Unit <- setup_children(db,round,actor,Tx.split_lines(rows))
++    M.status(db,round)
++
++# A completed evaluator's stdout is interpreted only after retaining its wait
++# and both output streams. Invalid, refused and incomplete evaluations remain
++# distinct from an accepted numeric result.
++def evaluation_result(+db: String, +id: String, +result: String) -> IO(Unit):
++  M.write(db,"UPDATE branch_evaluations SET result=" ++ C.q(result) ++ ",accepted=CASE WHEN json_extract(" ++ C.q(result) ++ ",'$.waitStatus')='exit 0' AND json_extract(" ++ C.q(result) ++ ",'$.cause')='' AND json_valid(json_extract(" ++ C.q(result) ++ ",'$.stdout')) THEN CASE WHEN json_type(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.accepted') IN('true','false') AND json_type(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.score') IN('integer','real') THEN json_extract(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.accepted') ELSE NULL END ELSE NULL END,score=CASE WHEN json_extract(" ++ C.q(result) ++ ",'$.waitStatus')='exit 0' AND json_valid(json_extract(" ++ C.q(result) ++ ",'$.stdout')) THEN CASE WHEN json_type(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.score') IN('integer','real') THEN json_extract(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.score') ELSE NULL END ELSE NULL END WHERE id=" ++ C.q(id) ++ ";")
++
++def evaluate_created(+db: String, +round: String, +player: String, +id: String, path: String, argv: String, made: Result<&1,&1,G.GitFail,G.WorktreeCreated>) -> IO(Unit):
++  match made:
++    case Fail{error}: do IO<Unit>:
++      result : String = W.outcome(Fail{(1,G.fail_text(error))},argv)
++      evaluation_result(db,id,result)
++    case Done{created}: do IO<Unit>:
++      result : String <- W.evaluate(db,path,id,argv)
++      saved : Unit <- evaluation_result(db,id,result)
++      usage : String <- native_command(db,round,player,"observed-usage",["observed-usage",player])
++      IO.pure(Unit,Unit{})
++
++def evaluate_owned(+db: String, +round: String, +player: String, +path: String, lock: Maybe<U32>) -> IO(Unit):
++  match lock:
++    case None{}: M.operation(db,round,player,"evaluate","{\"status\":\"pending\",\"cause\":\"The Player still owns its native attempt.\"}")
++    case Some{handle}: do IO<Unit>:
++      settled : Unit <- M.check(db,M.settled(C.q(player)),"The Player's native settlement changed before evaluation. Inspect branch status and evaluate after settlement is known.")
++      +id : String <- M.identity(db,"evaluation-")
++      includes : String <- M.field(db,"branch_rounds",round,"includes")
++      +snapshot : String <- W.snapshot(db,path,id,includes)
++      +argv : String <- M.field(db,"branch_rounds",round,"evaluator")
++      +evaluation_path : String = path ++ "-" ++ id
++      recorded : Unit <- M.write(db,"INSERT INTO branch_evaluations(id,round,session,snapshot,workspace,argv,native,attempt,phase,native_status) SELECT " ++ C.q(id) ++ "," ++ C.q(round) ++ ",s.id," ++ C.q(snapshot) ++ "," ++ C.q(evaluation_path) ++ "," ++ C.q(argv) ++ ",s.native,e.directory,e.phase,e.status FROM sessions s JOIN executions e ON e.session=s.id WHERE s.id=" ++ C.q(player) ++ ";")
++      released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
++      made : Result<&1,&1,G.GitFail,G.WorktreeCreated> <- CW.createWorktree(path,"baton/" ++ id,evaluation_path,snapshot)
++      evaluated : Unit <- evaluate_created(db,round,player,id,evaluation_path,argv,made)
++      IO.pure(Unit,Unit{})
++
++def evaluate_child(+db: String, +round: String, +player: String) -> IO(Unit):
++  do IO<Unit>:
++    +settled : String <- M.scalar(db,M.settled(C.q(player)))
++    ready : Unit <- Bool.pick(IO(Unit),String.eq(settled,"1"),
++      (do IO<Unit>:
++        path : String <- M.scalar(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(player))
++        lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(db,player))
++        evaluate_owned(db,round,player,path,lock)),
++      M.operation(db,round,player,"evaluate","{\"status\":\"pending\",\"cause\":\"Native settlement is running or unknown.\"}"))
++    IO.pure(Unit,Unit{})
++
++def evaluate_children(+db: String, +round: String, rows: List<String>) -> IO(Unit):
++  match rows:
++    case Nil{}: IO.pure(Unit,Unit{})
++    case encoded <> rest: do IO<Unit>:
++      evaluated : Unit <- evaluate_child(db,round,Native.decoded(encoded))
++      evaluate_children(db,round,rest)
++
++def latest_evaluation(+round: String, +player: String) -> String:
++  "(SELECT id FROM branch_evaluations WHERE round=" ++ C.q(round) ++ " AND session=" ++ player ++ " ORDER BY rowid DESC LIMIT 1)"
++
++def valid_evaluation(+round: String) -> String:
++  "e.id=" ++ latest_evaluation(round,"b.session") ++ " AND e.accepted=1 AND e.score IS NOT NULL AND e.native_status='exit 0' AND EXISTS(SELECT 1 FROM sessions s JOIN executions x ON x.session=s.id WHERE s.id=b.session AND s.native=e.native AND x.directory=e.attempt AND x.phase='exited' AND x.status=e.native_status) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=b.session)"
++
++# The selected evaluation and its score are read in the same writer transaction
++# that records the decision, including when another evaluation completes.
++def automatic_selection(+round: String, order: String) -> String:
++  "WITH eligible AS (SELECT b.session,e.id AS evaluation,e.score FROM branch_candidates b JOIN branch_evaluations e ON e.session=b.session AND e.round=b.round WHERE b.round=" ++ C.q(round) ++ " AND " ++ valid_evaluation(round) ++ "),best AS (SELECT session,evaluation FROM eligible WHERE score=(SELECT " ++ order ++ "(score) FROM eligible)) SELECT session,evaluation FROM best WHERE (SELECT count(*) FROM eligible)=(SELECT count(*) FROM branch_candidates WHERE round=" ++ C.q(round) ++ ") AND (SELECT count(*) FROM best)=1"
++
++def select(+db: String, +actor: String, +round: String, +options: List<&2,D.Option>) -> IO(Unit):
++  do IO<Unit>:
++    +explicit : String = D.value(options,"--player","")
++    +reason : String = D.value(options,"--reason","")
++    reason_ok : Unit <- M.require(Bool.or(String.is_empty(explicit),Bool.not(String.is_empty(reason))),"Explicit selection requires --reason TEXT to retain the Conductor's decision.")
++    member : Unit <- M.check(db,Bool.pick(String,String.is_empty(explicit),"1","EXISTS(SELECT 1 FROM branch_candidates WHERE round=" ++ C.q(round) ++ " AND session=" ++ C.q(explicit) ++ ")"),"Select a Player from this round.")
++    direction : String <- M.field(db,"branch_rounds",round,"direction")
++    order : String = Bool.pick(String,String.eq(direction,"max"),"max","min")
++    choice : String = Bool.pick(String,String.is_empty(explicit),
++      "SELECT " ++ C.q(round) ++ ",session,evaluation,'Unique accepted best evaluator score.'," ++ C.q(actor) ++ " FROM (" ++ automatic_selection(round,order) ++ ")",
++      "SELECT " ++ C.q(round) ++ "," ++ C.q(explicit) ++ "," ++ latest_evaluation(round,C.q(explicit)) ++ "," ++ C.q(reason) ++ "," ++ C.q(actor))
++    saved : Unit <- M.write(db,"INSERT INTO branch_selections(round,session,evaluation,reason,actor) " ++ choice ++ " WHERE 1 ON CONFLICT(round) DO NOTHING;")
++    selected : Unit <- M.check(db,"EXISTS(SELECT 1 FROM branch_selections WHERE round=" ++ C.q(round) ++ ")","Selection needs a unique accepted best result from every successfully settled branch. For a tie, failed or partial evaluation, choose --player PLAYER with --reason TEXT.")
++    unchanged : Unit <- M.check(db,Bool.pick(String,String.is_empty(explicit),"1","EXISTS(SELECT 1 FROM branch_selections WHERE round=" ++ C.q(round) ++ " AND session=" ++ C.q(explicit) ++ ")"),"This round already has a different retained selection. Start a new round from the intended Player.")
++    M.status(db,round)
++
++def continue_selected(+db: String, +actor: String, +round: String, +options: List<&2,D.Option>) -> IO(Unit):
++  do IO<Unit>:
++    +player : String <- M.scalar(db,"SELECT session FROM branch_selections WHERE round=" ++ C.q(round))
++    selected : Unit <- M.require(Bool.not(String.is_empty(player)),"Select a branch before continuing it.")
++    unstopped : Unit <- M.check(db,"NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(player) ++ ")","The selected branch is explicitly stopped. Use the supported explicit resume --lift-stop command before continuing it.")
++    fallback : String <- M.field(db,"branch_rounds",round,"task")
++    body : String <- task(options,fallback)
++    inputs : String <- M.field(db,"branch_rounds",round,"inputs")
++    knowledge : String <- M.field(db,"branch_rounds",round,"knowledge")
++    id : String <- M.identity(db,"branch-continuation-")
++    launched : String <- native_command(db,round,player,"dispatch",["agent-contextual-input",actor,"dispatch","--to",player,"--id",id,"--text",round_task(body,inputs,knowledge)])
++    M.status(db,round)
++
++def stop_children(+db: String, +round: String, +reason: String, rows: List<String>) -> IO(Unit):
++  match rows:
++    case Nil{}: IO.pure(Unit,Unit{})
++    case encoded <> rest: do IO<Unit>:
++      +player : String = Native.decoded(encoded)
++      +id : String <- M.scalar(db,"SELECT coalesce((SELECT id FROM session_stops WHERE session=" ++ C.q(player) ++ ")," ++ C.q(player ++ ":branch-stop") ++ ")")
++      +recorded_reason : String <- M.scalar(db,"SELECT reason FROM session_stops WHERE session=" ++ C.q(player))
++      stopped : String <- native_command(db,round,player,"stop",["stop",player,id,Bool.pick(String,String.is_empty(recorded_reason),reason,recorded_reason)])
++      stop_children(db,round,reason,rest)
++
++def recover(+db: String, +actor: String, +round: String) -> IO(Unit):
++  do IO<Unit>:
++    +snapshot : String <- M.field(db,"branch_rounds",round,"snapshot")
++    +workspace : String <- M.field(db,"branch_rounds",round,"workspace")
++    snapshot_ready : Unit <- Bool.pick(IO(Unit),String.is_empty(snapshot),
++      (do IO<Unit>:
++        source : String <- M.field(db,"branch_rounds",round,"source")
++        includes : String <- M.field(db,"branch_rounds",round,"includes")
++        lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(db,source))
++        commit : String <- snapshot_locked(db,workspace,round,includes,lock)
++        M.write(db,"UPDATE branch_rounds SET snapshot=" ++ C.q(commit) ++ " WHERE id=" ++ C.q(round) ++ ";")),IO.pure(Unit,Unit{}))
++    count : String <- M.field(db,"branch_rounds",round,"branch_count")
++    +root : String = workspace ++ "-" ++ round
++    directory : Unit <- IO.try(Unit,F.Files.mkdir(root))
++    prepared : Unit <- prepare_candidates(db,round,root,number(count))
++    rows : String <- IO.try(String,DB.Sql.read(db,"SELECT ordinal FROM branch_candidates WHERE round=" ++ C.q(round) ++ " ORDER BY ordinal;"))
++    recovered : Unit <- setup_children(db,round,actor,Tx.split_lines(rows))
++    M.status(db,round)
++
++def round_action(+db: String, +actor: String, +round: String, verb: String, +options: List<&2,D.Option>) -> IO(Unit):
++  match verb:
++    case "status": M.status(db,round)
++    case "evaluate": do IO<Unit>:
++      rows : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(session) FROM branch_candidates WHERE round=" ++ C.q(round) ++ " ORDER BY ordinal;"))
++      evaluated : Unit <- evaluate_children(db,round,Tx.split_lines(rows))
++      M.status(db,round)
++    case "select": select(db,actor,round,options)
++    case "continue": continue_selected(db,actor,round,options)
++    case "recover": recover(db,actor,round)
++    case "stop": do IO<Unit>:
++      +reason : String = D.value(options,"--reason","")
++      supplied : Unit <- M.require(Bool.not(String.is_empty(reason)),"Stop requires the Conductor's explicit --reason TEXT.")
++      +player : String = D.value(options,"--player","")
++      member : Unit <- M.check(db,Bool.pick(String,String.is_empty(player),"1","EXISTS(SELECT 1 FROM branch_candidates WHERE round=" ++ C.q(round) ++ " AND session=" ++ C.q(player) ++ ")"),"Stop selects a Player from this round.")
++      rows : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(session) FROM branch_candidates WHERE round=" ++ C.q(round) ++ Bool.pick(String,String.is_empty(player),""," AND session=" ++ C.q(player)) ++ " ORDER BY ordinal;"))
++      stopped : Unit <- stop_children(db,round,reason,Tx.split_lines(rows))
++      M.status(db,round)
++    case unknown: IO.die(Unit,2,"Choose branch start, evaluate, select, continue, status, recover or stop. Use branch --help.")
++
++def ensemble_action(+db: String, +actor: String, +ensemble: String, verb: String, +options: List<&2,D.Option>) -> IO(Unit):
++  match verb:
++    case "start": start(db,actor,ensemble,options)
++    case other: do IO<Unit>:
++      round : String <- M.round(db,ensemble,D.value(options,"--round",""))
++      round_action(db,actor,round,other,options)
++
++def dispatch(+db: String, +actor: String, verb: String, +options: List<&2,D.Option>) -> IO(Unit):
++  do IO<Unit>:
++    ensemble : String <- M.ensemble(db,actor,D.value(options,"--ensemble",""))
++    ensemble_action(db,actor,ensemble,verb,options)
++
++def execute(+db: String, actor: String, args: List<String>) -> IO(Unit):
++  match args:
++    case "--help" <> Nil{}: IO.write(help())
++    case "-h" <> Nil{}: IO.write(help())
++    case Nil{}: IO.write(help())
++    case +verb <> rest: do IO<Unit>:
++      +parsed : List<&2,D.Option> <- IO.pass(List<&2,D.Option>,options(rest,Nil{}))
++      known : Unit <- M.require(D.member(verb,["start","evaluate","select","continue","status","recover","stop"]),"Choose branch start, evaluate, select, continue, status, recover or stop.")
++      accepted : Unit <- M.require(options_allowed(verb,parsed),"This branch action does not accept one of its supplied options. Use branch --help.")
++      schema : Unit <- M.ensure(db)
++      dispatch(db,actor,verb,parsed)
+diff --git a/bend2/test/branching-focused.bend b/bend2/test/branching-focused.bend
+new file mode 100644
+index 000000000..280269b8b
+--- /dev/null
++++ b/bend2/test/branching-focused.bend
+@@ -0,0 +1,202 @@
++# Focused fixture for the Branching Ensemble packet. It drives the production
++# branching-model, branching-workspace and branching command modules over a
++# temporary coordination database and real Git repositories.
++#
++# Covered behavior:
++#   - snapshot isolation: the source checkout keeps its HEAD and index, and the
++#     snapshot commit is a child of the source HEAD
++#   - forked candidate isolation: two worktrees created from one snapshot keep
++#     separate files and branches, and neither changes the source checkout
++#   - lineage: each candidate commit descends from the snapshot commit, and the
++#     candidate records keep distinct sessions, workspaces and branches
++#   - winner/flush: automatic selection retains the best accepted evaluation of
++#     the round and stop_children flushes every candidate through the native
++#     command path
++#
++# usage: branching-focused DB ROOT
++# The same binary answers the child invocation [DB agent-native-input] by
++# recording one flush event and exiting 0.
++import Base
++import ../src/coordinator/commands.bend as C
++import ../src/coordinator/branching.bend as B
++import ../src/coordinator/branching-model.bend as M
++import ../src/coordinator/branching-workspace.bend as W
++import ../src/host/sqlite.bend as DB
++import ../src/host/files.bend as F
++import ../src/git/process.bend as Git
++import ../src/git/create-worktree.bend as CW
++import ../src/git/types.bend as G
++import ../src/git/text.bend as Tx
++
++def expect(+label: String, ok: Bool) -> IO(Unit):
++  Bool.pick(IO(Unit),ok,IO.print("fixture-branching " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-branching " ++ label ++ ": refused"))
++
++def query(+db: String, +text: String) -> IO(Unit):
++  do IO<Unit>:
++    ignore : String <- IO.try(String,DB.Sql.query(db,text))
++    IO.pure(Unit,Unit{})
++
++def read(+db: String, +text: String) -> IO(String):
++  IO.try(String,DB.Sql.read(db,text))
++
++def expect_read(+db: String, +text: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    value : String <- read(db,text)
++    expect(label,String.eq(value,expected))
++
++def git_result(result: G.GitOut) -> IO(String):
++  match result:
++    case G.GRun{+code,+out}: do IO<String>:
++      +shown : String <- IO.pure(String,out)
++      ok : Unit <- expect("git-" ++ Tx.trim_nl(shown),U32.is_eq(code,0))
++      IO.pure(String,shown)
++    case G.GBroken{detail}: IO.die(String,2,detail)
++
++def git_code_result(result: G.GitOut) -> IO(U32):
++  match result:
++    case G.GRun{code,out}: IO.pure(U32,code)
++    case G.GBroken{detail}: IO.die(U32,2,detail)
++
++def git_output(dir: String, args: List<String>) -> IO(String):
++  do IO<String>:
++    result : G.GitOut <- Git.runGit(dir,args)
++    git_result(result)
++
++def git_code(dir: String, args: List<String>) -> IO(U32):
++  do IO<U32>:
++    result : G.GitOut <- Git.runGit(dir,args)
++    git_code_result(result)
++
++def write_file(dir: String, name: String, text: String) -> IO(Unit):
++  IO.try(Unit,F.Files.write_private(dir ++ "/" ++ name,text))
++
++def require_worktree(result: Result<&1,&1,G.GitFail,G.WorktreeCreated>, label: String) -> IO(Unit):
++  match result:
++    case Done{commit}: IO.pure(Unit,Unit{})
++    case Fail{error}: IO.die(Unit,2,label)
++
++def setup(+db: String, +root: String) -> IO(Unit):
++  do IO<Unit>:
++    schema : String <- IO.try(String,DB.Sql.query(db,C.schema()))
++    ensured : Unit <- M.ensure(db)
++    made : Unit <- IO.try(Unit,F.Files.mkdir(root))
++    events : Unit <- query(db,"CREATE TABLE IF NOT EXISTS flush_events(id INTEGER PRIMARY KEY AUTOINCREMENT);")
++    conductor : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,observed_harness,observed_model,observed_effort,endpoint,workspace,branch,base) VALUES('root',NULL,'omp','fixture','high','native-root','','','','/bin/true','','','');")
++    ensemble : Unit <- query(db,"INSERT INTO ensembles(id,owner,coupling) VALUES('fixture-ensemble','root','tight');")
++    IO.pure(Unit,Unit{})
++
++def source_repo(+db: String, +root: String) -> IO(String):
++  do IO<String>:
++    +src : String = root ++ "/source"
++    made : Unit <- IO.try(Unit,F.Files.mkdir(src))
++    init : String <- git_output(src,["init","-q"])
++    email : String <- git_output(src,["config","user.email","fixture@example.com"])
++    name : String <- git_output(src,["config","user.name","Baton Fixture"])
++    base : Unit <- write_file(src,"base.txt","base\n")
++    added : String <- git_output(src,["add","-A"])
++    committed : String <- git_output(src,["commit","-q","-m","fixture base"])
++    +head : String <- git_output(src,["rev-parse","--verify","HEAD"])
++    inserted : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,observed_harness,observed_model,observed_effort,endpoint,workspace,branch,base) VALUES('source','root','omp','fixture','high','native-source','','','','/bin/true'," ++ C.q(src) ++ ",'','');")
++    IO.pure(String,src)
++
++def snapshot_case(+db: String, +src: String, +root: String) -> IO(String):
++  do IO<String>:
++    +before : String <- git_output(src,["rev-parse","--verify","HEAD"])
++    +snapshot : String <- W.snapshot(db,src,"round-iso","[]")
++    +after : String <- git_output(src,["rev-parse","--verify","HEAD"])
++    +clean : String <- git_output(src,["status","--porcelain"])
++    expect("snapshot-preserves-source-head",String.eq(before,after))
++    expect("snapshot-leaves-source-index-clean",String.is_empty(Tx.trim_nl(clean)))
++    +parent : String <- git_output(src,["rev-parse","--verify",snapshot ++ "^"])
++    expect("snapshot-child-of-source-head",String.eq(Tx.trim_nl(parent),Tx.trim_nl(before)))
++    IO.pure(String,snapshot)
++
++def candidate_case(+db: String, +src: String, +root: String, +snapshot: String) -> IO(Unit):
++  do IO<Unit>:
++    +path_a : String = root ++ "/candidate-a"
++    +path_b : String = root ++ "/candidate-b"
++    made_a : Result<&1,&1,G.GitFail,G.WorktreeCreated> <- CW.createWorktree(src,"baton/fixture-a",path_a,snapshot)
++    made_b : Result<&1,&1,G.GitFail,G.WorktreeCreated> <- CW.createWorktree(src,"baton/fixture-b",path_b,snapshot)
++    ready_a : Unit <- require_worktree(made_a,"candidate-a worktree refused")
++    ready_b : Unit <- require_worktree(made_b,"candidate-b worktree refused")
++    alpha : Unit <- write_file(path_a,"candidate.txt","alpha\n")
++    beta : Unit <- write_file(path_b,"candidate.txt","beta\n")
++    add_a : String <- git_output(path_a,["add","-A"])
++    add_b : String <- git_output(path_b,["add","-A"])
++    commit_a : String <- git_output(path_a,["commit","-q","-m","candidate alpha"])
++    commit_b : String <- git_output(path_b,["commit","-q","-m","candidate beta"])
++    +shown_a : String <- git_output(path_a,["show","HEAD:candidate.txt"])
++    +shown_b : String <- git_output(path_b,["show","HEAD:candidate.txt"])
++    expect("candidate-a-keeps-alpha",String.eq(shown_a,"alpha\n"))
++    expect("candidate-b-keeps-beta",String.eq(shown_b,"beta\n"))
++    expect("candidates-keep-separate-content",Bool.not(String.eq(shown_a,shown_b)))
++    absent_code : U32 <- git_code(src,["cat-file","-e","HEAD:candidate.txt"])
++    expect("candidate-change-absent-from-source",Bool.not(U32.is_eq(absent_code,0)))
++    +branch_a : String <- git_output(path_a,["symbolic-ref","--short","HEAD"])
++    +branch_b : String <- git_output(path_b,["symbolic-ref","--short","HEAD"])
++    expect("candidate-branches-distinct",Bool.not(String.eq(Tx.trim_nl(branch_a),Tx.trim_nl(branch_b))))
++    +count_a : String <- git_output(path_a,["rev-list","--count",snapshot ++ "..HEAD"])
++    +count_b : String <- git_output(path_b,["rev-list","--count",snapshot ++ "..HEAD"])
++    expect("candidate-a-lineage-single-commit",String.eq(Tx.trim_nl(count_a),"1"))
++    expect("candidate-b-lineage-single-commit",String.eq(Tx.trim_nl(count_b),"1"))
++    ancestor_a : U32 <- git_code(path_a,["merge-base","--is-ancestor",snapshot,"HEAD"])
++    ancestor_b : U32 <- git_code(path_b,["merge-base","--is-ancestor",snapshot,"HEAD"])
++    expect("candidate-a-descends-from-snapshot",U32.is_eq(ancestor_a,0))
++    expect("candidate-b-descends-from-snapshot",U32.is_eq(ancestor_b,0))
++    IO.pure(Unit,Unit{})
++
++def isolation_records(+db: String, +src: String, +root: String, +snapshot: String) -> IO(Unit):
++  do IO<Unit>:
++    round : Unit <- query(db,"INSERT INTO branch_rounds(id,ensemble,owner,source,ancestor,workspace,branch_count,snapshot,task,inputs,knowledge,includes,evaluator,direction,harness,model,effort,command) VALUES('round-iso','fixture-ensemble','root','source',NULL," ++ C.q(src) ++ ",2," ++ C.q(snapshot) ++ ",'fixture task','[]','[]','[]','[\"/bin/true\"]','max','omp','fixture','high','/bin/true');")
++    prepared : Unit <- B.prepare_candidates(db,"round-iso",root,2)
++    expect_read(db,"SELECT count(*) FROM branch_candidates WHERE round='round-iso';","2\n","candidate-records-count")
++    expect_read(db,"SELECT count(DISTINCT session) FROM branch_candidates WHERE round='round-iso';","2\n","candidate-sessions-distinct")
++    expect_read(db,"SELECT count(DISTINCT workspace) FROM branch_candidates WHERE round='round-iso';","2\n","candidate-workspaces-distinct")
++    expect_read(db,"SELECT count(DISTINCT branch) FROM branch_candidates WHERE round='round-iso';","2\n","candidate-branch-labels-distinct")
++    IO.pure(Unit,Unit{})
++
++def winner_cases(+db: String, +src: String, +root: String, +snapshot: String) -> IO(Unit):
++  do IO<Unit>:
++    +path_a : String = root ++ "/candidate-a"
++    +path_b : String = root ++ "/candidate-b"
++    round : Unit <- query(db,"INSERT INTO branch_rounds(id,ensemble,owner,source,ancestor,workspace,branch_count,snapshot,task,inputs,knowledge,includes,evaluator,direction,harness,model,effort,command) VALUES('round-win','fixture-ensemble','root','source',NULL," ++ C.q(src) ++ ",2," ++ C.q(snapshot) ++ ",'fixture winner task','[]','[]','[]','[\"/bin/true\"]','max','omp','fixture','high','/bin/true');")
++    candidates : Unit <- query(db,"INSERT INTO branch_candidates(round,ordinal,session,workspace,branch) VALUES('round-win',0,'cand-a'," ++ C.q(path_a) ++ ",'baton/fixture-a'),('round-win',1,'cand-b'," ++ C.q(path_b) ++ ",'baton/fixture-b');")
++    session_a : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,observed_harness,observed_model,observed_effort,endpoint,workspace,branch,base) VALUES('cand-a','root','omp','fixture','high','native-a','','','','/bin/true'," ++ C.q(path_a) ++ ",'baton/fixture-a'," ++ C.q(snapshot) ++ ");")
++    session_b : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,observed_harness,observed_model,observed_effort,endpoint,workspace,branch,base) VALUES('cand-b','root','omp','fixture','high','native-b','','','','/bin/true'," ++ C.q(path_b) ++ ",'baton/fixture-b'," ++ C.q(snapshot) ++ ");")
++    execution_a : Unit <- query(db,"INSERT INTO executions(session,id,mode,directory,phase,status) VALUES('cand-a','exec-a','managed'," ++ C.q(path_a) ++ ",'exited','exit 0');")
++    execution_b : Unit <- query(db,"INSERT INTO executions(session,id,mode,directory,phase,status) VALUES('cand-b','exec-b','managed'," ++ C.q(path_b) ++ ",'exited','exit 0');")
++    evaluation_a : Unit <- query(db,"INSERT INTO branch_evaluations(id,round,session,snapshot,workspace,argv,native,attempt,phase,native_status,result,accepted,score) VALUES('eval-a','round-win','cand-a'," ++ C.q(snapshot) ++ "," ++ C.q(path_a) ++ ",'[\"/bin/true\"]','native-a'," ++ C.q(path_a) ++ ",'exited','exit 0',NULL,1,0.9);")
++    evaluation_b : Unit <- query(db,"INSERT INTO branch_evaluations(id,round,session,snapshot,workspace,argv,native,attempt,phase,native_status,result,accepted,score) VALUES('eval-b','round-win','cand-b'," ++ C.q(snapshot) ++ "," ++ C.q(path_b) ++ ",'[\"/bin/true\"]','native-b'," ++ C.q(path_b) ++ ",'exited','exit 0',NULL,1,0.4);")
++    selected : Unit <- B.select(db,"root","round-win",Nil{})
++    expect_read(db,"SELECT session FROM branch_selections WHERE round='round-win';","cand-a\n","winner-best-accepted-score")
++    flushed : Unit <- B.stop_children(db,"round-win","fixture flush",Con{"63616e642d61",Con{"63616e642d62",Nil{}}})
++    expect_read(db,"SELECT count(*) FROM flush_events;","2\n","flush-reaches-every-candidate")
++    expect_read(db,"SELECT count(*) FROM branch_operations WHERE round='round-win' AND operation='stop' AND json_extract(result,'$.status')='completed';","2\n","flush-operations-completed")
++    expect_read(db,"SELECT session FROM branch_selections WHERE round='round-win';","cand-a\n","winner-retained-after-flush")
++    IO.pure(Unit,Unit{})
++
++def fixture(+db: String, +root: String) -> IO(Unit):
++  do IO<Unit>:
++    setup(db,root)
++    +src : String <- source_repo(db,root)
++    +snapshot : String <- snapshot_case(db,src,root)
++    candidate_case(db,src,root,snapshot)
++    isolation_records(db,src,root,snapshot)
++    winner_cases(db,src,root,snapshot)
++    IO.print("fixture-branching-ok")
++
++def child(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    event : Unit <- query(db,"INSERT INTO flush_events DEFAULT VALUES;")
++    IO.pure(Unit,Unit{})
++
++def main_args(args: List<String>) -> IO(Unit):
++  match args:
++    case +db <> "agent-native-input" <> Nil{}: child(db)
++    case +db <> +root <> Nil{}: fixture(db,root)
++    case other: IO.die(Unit,2,"usage: branching-focused DB ROOT")
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    args : List<String> <- IO.args()
++    main_args(args)
+diff --git a/bend2/test/branching.py b/bend2/test/branching.py
+new file mode 100644
+index 000000000..a13b7f03e
+--- /dev/null
++++ b/bend2/test/branching.py
+@@ -0,0 +1,279 @@
++"""Branching Ensemble snapshots, native identities, evaluator evidence and continuation."""
++import json
++import os
++import pathlib
++import subprocess
++import sys
++import unittest
++
++import control
++
++
++class Branching(unittest.TestCase):
++    setUp_control = control.Control.setUp
++    git = control.Control.git
++    call = control.Control.call
++    root = control.Control.root
++    recruit = control.Control.recruit
++    receiver = control.Control.receiver
++    accept_any = control.Control.accept_any
++    accept = control.Control.accept
++    action = control.Control.action
++    finish = control.Control.finish
++    rows = control.Control.rows
++    eventually = control.Control.eventually
++    process_rows = control.Control.process_rows
++    exited = control.Control.exited
++    close_fixtures = control.Control.close_fixtures
++
++    def setUp(self):
++        self.setUp_control()
++        self.root()
++        self.call('connect', 'root', 'saved-root', json.dumps(['/usr/bin/true']))
++        source = self.recruit('source')
++        self.source = pathlib.Path(source['workspace'])
++        self.receiver('source')
++        self.call('ensemble', 'search', 'root', 'tight')
++        # Native conversation identity follows the generated Player, even when
++        # branches deliberately share one model and effort configuration.
++        fixture = control.FIXTURE.replace(
++            "session=config.get('sessions',{}).get(model,model)",
++            "session=os.environ['BATON_SESSION']")
++        fixture = fixture.replace("    if action.get('output'):", """    if 'write_branch' in action:
++        pathlib.Path('result.json').write_text(json.dumps(action['write_branch']))
++        reply({'written':True})
++        continue
++    if action.get('output'):""")
++        self.fixture.write_text('#!' + sys.executable + '\n' + fixture)
++        self.task_body = 'Complete the isolated task.\nPreserve "quotes", λ and 🙂.\n' * 100
++        (self.source / 'seed.txt').write_text('changed tracked input\n')
++        (self.source / 'untracked.txt').write_text('untracked task input\n')
++        (self.source / '.gitignore').write_text('required.secret\n')
++        (self.source / 'required.secret').write_text('selected ignored task input\n')
++        (self.source / 'evaluate.py').write_text('''import json,pathlib,sys
++value=json.loads(pathlib.Path('result.json').read_text())
++print('retained evaluator diagnostic',file=sys.stderr)
++print(json.dumps(value))
++sys.exit(value.get('exit',0))
++''')
++        self.original_index = self.source_git('ls-files', '--stage').stdout
++        self.finding_claim = 'Retain the selected source finding. λ\n' * 100
++        self.call('record', 'source-finding', 'source', self.finding_claim,
++                  'Evidence contains the complete observed source result.', 'Scoped to this source workspace.')
++
++    def source_git(self, *args):
++        return subprocess.run(['git', '-C', str(self.source), *args], env=self.environment,
++                              check=True, capture_output=True, text=True)
++
++    def branch(self, verb, *args, ok=True):
++        return self.call('as', 'root', 'branch', verb, '--ensemble', 'search', *args, ok=ok)
++
++    def start(self, count=2, *options):
++        state = self.branch('start', '--from', 'source', '--count', str(count),
++                            '--text', self.task_body,
++                            '--evaluator', json.dumps([sys.executable, 'evaluate.py']),
++                            '--include', json.dumps(['required.secret']),
++                            '--knowledge', json.dumps(['source-finding']), *options)
++        self.assertEqual(len(state['candidates']), count, state)
++        for operation in state['operations']:
++            self.assertEqual(operation['result']['status'], 'completed', operation)
++        streams = {}
++        starts = {}
++        for _ in state['candidates']:
++            stream, observed = self.accept_any()
++            player = observed['session']
++            self.assertNotIn(player, streams)
++            streams[player], starts[player] = stream, observed
++            with (self.directory / 'native-starts.jsonl').open('a') as output:
++                output.write(json.dumps(observed) + '\n')
++            self.eventually(lambda: self.rows(
++                "SELECT s.id FROM sessions s JOIN executions e ON e.session=s.id "
++                "WHERE s.id=? AND s.native=? AND e.phase='running'",
++                (player, observed['native'])))
++        self.assertEqual(set(streams), {candidate['state']['player'] for candidate in state['candidates']})
++        return state, streams, starts
++
++    def result(self, stream, score, accepted=True, exit_code=0):
++        self.assertEqual(self.action(stream, write_branch={
++            'accepted': accepted, 'score': score, 'exit': exit_code}), {'written': True})
++
++    def settle(self, player, stream):
++        self.finish(stream, body='Completed isolated branch work.')
++        row = self.exited(player)
++        self.eventually(lambda: (pathlib.Path(row['directory']) / 'released').exists())
++        return row
++
++    def test_snapshots_fresh_context_selection_and_same_conversation_continuation(self):
++        state, streams, starts = self.start()
++        players = list(streams)
++        self.assertNotEqual(starts[players[0]]['native'], starts[players[1]]['native'])
++        self.assertNotEqual(starts[players[0]]['cwd'], starts[players[1]]['cwd'])
++        for player, started in starts.items():
++            self.assertEqual(started['resume'], '')
++            self.assertIn(self.task_body, started['prompt'])
++            self.assertIn(json.dumps(self.finding_claim, ensure_ascii=False)[1:-1], started['prompt'])
++            recorded = next(row['state']['session'] for row in state['candidates']
++                            if row['state']['player'] == player)
++            self.assertEqual((recorded['parent'], recorded['harness'], recorded['model'], recorded['effort']),
++                             ('root', 'omp', 'source', 'low'))
++            self.assertEqual(recorded['base'], state['snapshot'])
++            workspace = pathlib.Path(started['cwd'])
++            self.assertEqual(recorded['workspace'], str(workspace))
++            self.assertEqual((workspace / 'seed.txt').read_text(), 'changed tracked input\n')
++            self.assertEqual((workspace / 'untracked.txt').read_text(), 'untracked task input\n')
++            self.assertEqual((workspace / 'required.secret').read_text(), 'selected ignored task input\n')
++            self.assertFalse((workspace / 'result.json').exists())
++        self.assertEqual(state['knowledge'][0]['claim'], self.finding_claim)
++        self.assertEqual(self.source_git('ls-files', '--stage').stdout, self.original_index)
++        self.assertEqual(self.source_git('rev-parse', 'HEAD').stdout.strip(), self.base)
++        for score, player in enumerate(players):
++            self.result(streams[player], score)
++            self.settle(player, streams[player])
++        evaluated = self.branch('evaluate')
++        self.assertEqual(len(evaluated['evaluations']), 2, evaluated)
++        seeds = self.rows('SELECT session,seed,instruction,guidance FROM native_initial_inputs WHERE session IN (?,?)', players)
++        self.assertEqual(len({row['seed'] for row in seeds}), 2, seeds)
++        for row in seeds:
++            self.assertIn(self.task_body, row['guidance'])
++            self.assertIn(row['seed'], starts[row['session']]['prompt'])
++            self.assertIn(row['instruction'], starts[row['session']]['prompt'])
++        for result in evaluated['evaluations']:
++            self.assertTrue(result['accepted'], result)
++            self.assertEqual(result['argv'], [sys.executable, 'evaluate.py'])
++            self.assertEqual(result['native'], starts[result['player']]['native'])
++            self.assertEqual((result['phase'], result['nativeStatus']), ('exited', 'exit 0'))
++            self.assertEqual(len(result['snapshot']), 40)
++            self.assertEqual(result['result']['waitStatus'], 'exit 0')
++            self.assertIn('retained evaluator diagnostic', result['result']['stderr'])
++            self.assertTrue(pathlib.Path(result['workspace']).is_dir())
++            self.assertNotEqual(result['workspace'], starts[result['player']]['cwd'])
++        selected = self.branch('select')
++        winner = players[-1]
++        self.assertEqual(selected['selection']['player'], winner)
++        original_native = starts[winner]['native']
++        self.branch('continue')
++        stream, resumed = self.accept(winner)
++        self.assertEqual(resumed['native'], original_native)
++        self.assertTrue(resumed['resume'])
++        self.assertEqual(resumed['cwd'], starts[winner]['cwd'])
++        self.assertIn(self.task_body, resumed['prompt'])
++        self.settle(winner, stream)
++        retained = self.branch('status')
++        self.assertEqual(len(retained['candidates']), 2)
++        self.assertTrue(pathlib.Path(starts[players[0]]['cwd']).is_dir())
++        # A second explicit intervention forks the selected workspace and keeps
++        # the prior round, evaluations and nonselected workspaces intact.
++        followup = self.branch('start', '--count', '1', '--text', 'Review the selected result.',
++                               '--evaluator', json.dumps([sys.executable, 'evaluate.py']))
++        self.assertEqual(followup['ancestor'], state['round'])
++        self.assertEqual(followup['source'], winner)
++        new_player = followup['candidates'][0]['state']['player']
++        stream, new_native = self.accept(new_player)
++        self.assertNotEqual(new_native['native'], original_native)
++        self.assertEqual(new_native['resume'], '')
++        self.settle(new_player, stream)
++
++    def test_partial_evaluation_explicit_selection_and_stop_survive_recovery(self):
++        state, streams, starts = self.start()
++        first, second = list(streams)
++        self.result(streams[first], 3)
++        self.settle(first, streams[first])
++        evaluated = self.branch('evaluate')
++        self.assertEqual([row['player'] for row in evaluated['evaluations']], [first])
++        self.assertTrue(any(row['operation'] == 'evaluate' and row['session'] == second
++                            for row in self.rows('SELECT * FROM branch_operations WHERE round=?', (state['round'],))))
++        refused = self.branch('select', ok=False)
++        self.assertIn('partial', refused['stderr'])
++        chosen = self.branch('select', '--player', first, '--reason', 'The other branch remains active; continue the reviewed result.')
++        self.assertEqual(chosen['selection']['player'], first)
++        self.assertIsNone(starts[second].get('resume') or None)
++        stopped = self.branch('stop', '--player', second, '--reason', 'Conductor ends this branch explicitly.')
++        stop = next(row for row in stopped['candidates'] if row['state']['player'] == second)['state']['stop']
++        self.assertEqual(stop['reason'], 'Conductor ends this branch explicitly.')
++        self.eventually(lambda: self.rows("SELECT session FROM executions WHERE session=? AND phase='exited'", (second,)))
++        before = self.rows('SELECT native FROM sessions WHERE id=?', (second,))[0]['native']
++        recovered = self.branch('recover')
++        self.assertEqual(next(row for row in recovered['candidates'] if row['state']['player'] == second)['state']['stop']['id'], stop['id'])
++        self.assertEqual(self.rows('SELECT native FROM sessions WHERE id=?', (second,))[0]['native'], before)
++        self.assertTrue(pathlib.Path(starts[second]['cwd']).is_dir())
++        self.assertEqual(self.rows('SELECT count(*) AS n FROM messages WHERE id=?', (second + ':branch-task',))[0]['n'], 1)
++        pending = self.call('delivery', second + ':branch-task')
++        self.assertIsNone(pending['receipt'])
++        self.assertIn(self.task_body, pending['body'])
++
++    def test_ties_and_failed_evaluators_remain_explicit(self):
++        state, streams, starts = self.start()
++        for player, stream in streams.items():
++            self.result(stream, 5)
++            self.settle(player, stream)
++        tied = self.branch('evaluate')
++        self.assertEqual([row['score'] for row in tied['evaluations']], [5, 5])
++        self.branch('select', ok=False)
++        winner = list(streams)[0]
++        self.branch('select', '--player', winner, ok=False)
++        self.branch('select', '--player', winner, '--reason', 'Equal scores; choose the reviewed implementation.')
++        # A later evaluation retains the previous result and records the real
++        # evaluator failure with both streams and its ordinary wait status.
++        failing = pathlib.Path(starts[winner]['cwd']) / 'result.json'
++        failing.write_text(json.dumps({'accepted': True, 'score': 10, 'exit': 3}))
++        failed = self.branch('evaluate')
++        current = [row for row in failed['evaluations'] if row['player'] == winner][-1]
++        self.assertEqual(current['result']['waitStatus'], 'exit 3')
++        self.assertIsNone(current['accepted'])
++        self.assertIn('retained evaluator diagnostic', current['result']['stderr'])
++        self.assertGreater(len(failed['evaluations']), len(tied['evaluations']))
++
++    def test_managed_transport_requires_an_explicit_native_command(self):
++        self.call('connect', 'source', 'native-source', json.dumps(['/usr/bin/true']))
++        refused = self.branch('start', '--from', 'source', '--count', '1', '--text', self.task_body,
++                              '--evaluator', json.dumps([sys.executable, 'evaluate.py']), ok=False)
++        self.assertIn('configured executable', refused['stderr'])
++        state, streams, starts = self.start(1, '--command', str(self.fixture))
++        player = next(iter(streams))
++        self.assertEqual(starts[player]['resume'], '')
++        self.result(streams[player], 1)
++        self.settle(player, streams[player])
++        self.assertEqual(self.branch('evaluate')['evaluations'][0]['result']['waitStatus'], 'exit 0')
++
++    def test_failed_receiver_setup_retains_task_for_recovery(self):
++        delayed = self.directory / 'late-native'
++        failed = self.branch('start', '--from', 'source', '--count', '1', '--text', self.task_body,
++                             '--evaluator', json.dumps([sys.executable, 'evaluate.py']),
++                             '--command', str(delayed))
++        player = failed['candidates'][0]['state']['player']
++        configuration = [row for row in failed['operations'] if row['operation'] == 'receiver']
++        self.assertEqual(len(configuration), 1, failed)
++        self.assertEqual(configuration[0]['result']['status'], 'failed')
++        self.assertTrue(configuration[0]['result']['stderr'], configuration)
++        self.assertEqual(failed['task'], self.task_body)
++        self.assertFalse(any(row['operation'] == 'dispatch' for row in failed['operations']))
++        self.assertFalse(self.rows('SELECT * FROM messages WHERE id=?', (player + ':branch-task',)))
++        delayed.write_bytes(self.fixture.read_bytes())
++        delayed.chmod(0o755)
++        recovered = self.branch('recover')
++        self.assertEqual(recovered['round'], failed['round'])
++        self.assertEqual(recovered['candidates'][0]['state']['player'], player)
++        self.assertEqual(len([row for row in recovered['operations'] if row['operation'] == 'recruit']), 1)
++        self.assertEqual([row for row in recovered['operations'] if row['operation'] == 'receiver'][-1]['result']['status'], 'completed')
++        stream, start = self.accept(player)
++        self.assertEqual(start['resume'], '')
++        self.assertIn(self.task_body, start['prompt'])
++        self.settle(player, stream)
++
++    def test_scope_path_and_evaluator_refusals_preserve_source(self):
++        for path in ('../outside', 'child/..', '.git/config', 'child/.git'):
++            refused = self.branch('start', '--from', 'source', '--count', '1', '--text', 'Task',
++                                  '--evaluator', json.dumps([sys.executable, 'evaluate.py']),
++                                  '--include', json.dumps([path]), ok=False)
++            self.assertIn('--include', refused['stderr'])
++        self.branch('start', '--from', 'source', '--count', '1', '--text', 'Task',
++                    '--evaluator', 'python3 evaluate.py', ok=False)
++        self.assertEqual(self.source_git('ls-files', '--stage').stdout, self.original_index)
++        self.branch('status', '--text', 'Unused input must refuse.', ok=False)
++        self.call('attach', 'outsider', 'omp', '', '')
++        refused = self.call('as', 'outsider', 'branch', 'status', '--ensemble', 'search', ok=False)
++        self.assertIn('Conductor', refused['stderr'])
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/docs/bend2/branching-ensembles.md b/docs/bend2/branching-ensembles.md
+new file mode 100644
+index 000000000..cac27a890
+--- /dev/null
++++ b/docs/bend2/branching-ensembles.md
+@@ -0,0 +1,104 @@
++# Branching Ensembles
++
++Issue [#751](https://github.com/Flip-Engineering/baton/issues/751) adds explicit
++branch boundaries to a Conductor-owned Ensemble. Each boundary records the source
++Player, workspace snapshot, complete task inputs, selected scratchpad findings,
++native configuration and evaluator command. Baton generates round, Player and
++evaluation identities.
++
++Use branching to compare alternative solutions and continue the selected Player's
++existing conversation. Configure loose or tight coupling on the Ensemble; both
++support branching. `help branch` and `branch --help` show the same complete usage.
++
++## Commands
++
++The current Conductor can create an Ensemble and start branches from one of its
++Players:
++
++```sh
++baton ensemble --id experiments --coupling tight
++baton branch start --ensemble experiments --from researcher --count 3 \
++  --text 'Complete the assigned change and retain its validation evidence.' \
++  --evaluator '["python3","evaluate.py"]' --direction max
++baton branch status --ensemble experiments
++baton branch evaluate --ensemble experiments
++baton branch select --ensemble experiments
++baton branch continue --ensemble experiments
++```
++
++Omit `--ensemble` when the current Conductor owns exactly one Ensemble. With
++zero or several owned Ensembles, select an owned Ensemble explicitly; unresolved
++selection refuses with `Select --ensemble NAME for one Ensemble owned by this
++Conductor.` Commands default to the latest round within that Ensemble;
++`--round` selects recorded historical work.
++
++`--from SESSION` selects a source agent. Its default is the latest selected Player
++in this Ensemble, including score-based and explicit selections. Before any
++selection it uses the current Conductor. Either source needs a recorded Git
++workspace and settled native custody.
++
++Start inherits the source's recorded task and native configuration. `--text` or
++`--file` supplies task text; Baton stores the complete text in the database.
++`--harness`, `--model`, `--effort` and `--command` select explicit native
++configuration. A source attached to an external conversation may require
++`--command` when its registered endpoint does not contain a native executable.
++
++## Workspace and input boundary
++
++Start requires settled physical custody of the source. A private Git index
++captures tracked files and nonignored untracked files without changing the
++source's index or HEAD. `--include '["path"]'` adds explicitly selected ignored
++inputs. Each child receives a separate worktree at the recorded snapshot and a
++fresh native conversation. Existing native initialization records retain its
++generated seed and complete guidance.
++
++The task includes the source's recorded assignment and subsequent task guidance,
++plus findings selected with `--knowledge '["finding"]'`. Finding selection uses
++the source Player's and Ensemble's existing visibility rules. Existing native
++identity, receipt and communication rules apply to each child.
++
++## Evaluation and selection
++
++The evaluator is a JSON argv array. Baton runs it in a separate snapshot checkout
++of a settled branch and retains its complete stdout, stderr and actual wait
++status. Successful evaluator output is one JSON object:
++
++```json
++{"accepted": true, "score": 12.5}
++```
++
++`branch evaluate` records the workspace snapshot, evaluator argv, observed native
++attempt and result. Then `branch select` without `--player` performs score-based
++selection. Every branch needs successful native settlement, no explicit stop and
++an accepted current evaluation, with one unique best score. Start defaults to
++`--direction max` for the highest score; `min` selects the lowest. Missing settlement remains visible as
++unknown. Evaluation alone records evidence. Failed, partial and tied outcomes
++require an explicit Conductor decision:
++
++```sh
++baton branch select --ensemble experiments --player PLAYER --reason 'Decision evidence.'
++```
++
++Continue dispatches guidance to the selected Player's existing conversation and
++workspace. Its default guidance is the stored complete task. A subsequent explicit
++start uses the selected Player as its default source and creates fresh branches.
++All branch artifacts, reports, pending input and evaluator evidence remain
++retained. Resource usage is observational; a Conductor chooses when to start,
++evaluate, select or continue work.
++
++## Recovery and stops
++
++`branch recover` retries recorded setup and owed input, including interrupted
++worktree creation and registration. Existing seven-field assignments constrain
++registration recovery. Explicit session stops remain effective through recovery.
++`branch stop --reason TEXT` uses the supported session stop operation; `--player`
++selects one child. A stopped selected Player requires the supported explicit
++`resume --lift-stop` operation before continuation.
++
++## Research reference
++
++[Fork-and-Flush](https://arxiv.org/html/2610.07447v1) describes retaining a workspace
++while starting fresh agent conversations, evaluating parallel continuations and
++continuing selected work. Baton records these operations at explicit Conductor
++boundaries. Native lifecycle, scoped authority and the project's runtime rules
++govern execution.

@@ -1,0 +1,60 @@
+--- /mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/recovery-helper-routes-20261018/bend2/src/coordinator/receive-recovery-focused.bend	2026-10-18 18:17:50.255069264 -0700
++++ /mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton-consolidation-review-20261017/private/cgen-allocation-ds-pr890-split-20261019/candidate/receive-recovery-focused.bend	2026-10-19 02:53:45.681514578 -0700
+@@ -53,19 +53,53 @@
+         case False{}: IO.die(Unit,2,"expected instance lifecycle command")
+ 
+ @unsafe
+-def dispatch(args: List<String>) -> IO(Unit):
++def shape_lifecycle(args: List<String>) -> IO(Unit):
+   match args:
+-    case "--host-process-keeper" <> +directory <> +lock <> Nil{}:
+-      dispatch_host_keeper(directory,lock)
+     case +flag <> +db <> Nil{}:
+       dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
++    case other:
++      IO.die(Unit,2,"expected instance lifecycle command")
++
++@unsafe
++def shape_recover13(args: List<String>) -> IO(Unit):
++  match args:
+     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
+       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,"")
++    case other:
++      IO.die(Unit,2,"observer recovery entry expects a recovery command")
++
++@unsafe
++def shape_recover14(args: List<String>) -> IO(Unit):
++  match args:
+     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> +inputs <> Nil{}:
+       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,inputs)
++    case other:
++      IO.die(Unit,2,"observer recovery entry expects a recovery command")
++
++@unsafe
++def shape_observer(args: List<String>) -> IO(Unit):
++  match args:
+     case +first <> +second <> +session <> +observer <> Nil{}:
+       dispatch_observer(String.eq(first,"--recover-observer"),first,second,session,observer)
+-    case other: IO.die(Unit,2,"observer recovery entry expects a recovery command")
++    case other:
++      IO.die(Unit,2,"expected observer recovery command")
++
++@unsafe
++def dispatch_by_count(count: Nat, args: List<String>) -> IO(Unit):
++  match count:
++    case 2n: shape_lifecycle(args)
++    case 13n: shape_recover13(args)
++    case 14n: shape_recover14(args)
++    case 4n: shape_observer(args)
++    case other_count: IO.die(Unit,2,"observer recovery entry expects a recovery command")
++
++@unsafe
++def dispatch(+args: List<String>) -> IO(Unit):
++  match args:
++    case "--host-process-keeper" <> +directory <> +lock <> Nil{}:
++      dispatch_host_keeper(directory,lock)
++    case other:
++      dispatch_by_count(List.length(&1, String, args), args)
+ 
+ @unsafe
+ def main() -> IO(Unit):

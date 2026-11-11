@@ -1,0 +1,197 @@
+From d17731ac35c80ca99052a220e1e16015729411b8 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 19:38:38 -0700
+Subject: [PATCH] Make the native gate cap runner portable and reaping-safe
+
+Replace /proc tree discovery with the portable ps pid/ppid/rss/pgid table so
+the gate runs on Linux and Darwin and does not parse process names. Wrap the
+observation loop in finally: cap, timeout, and observation failure kill only
+the child session's process group and always reap the child.
+
+Gate validation on current main: focused-reads 6,821,556,224 B/91.555 s,
+observed-usage 36 tests OK, harness-inventory 5 tests OK, subscription
+3,474,259,968 B/33.282 s and fixture exit 0. Tiny fixtures cover success, cap,
+timeout, observation failure, descendant cleanup, comm names with spaces and
+unrelated process-group preservation. The sampled RSS is an observation, not a
+cgroup ceiling.
+---
+ bend2/scripts/capped-run.py   | 150 ++++++++++++++++++++++++++++++++++
+ bend2/scripts/check-native.sh |   4 +-
+ 2 files changed, 152 insertions(+), 2 deletions(-)
+ create mode 100755 bend2/scripts/capped-run.py
+
+diff --git a/bend2/scripts/capped-run.py b/bend2/scripts/capped-run.py
+new file mode 100755
+index 00000000..bd917be7
+--- /dev/null
++++ b/bend2/scripts/capped-run.py
+@@ -0,0 +1,150 @@
++#!/usr/bin/env python3
++"""Run a command with a sampled process-tree resident limit and wall timeout.
++
++The resident limit is an observation, not a kernel cgroup ceiling. Use a
++delegated cgroup for a hard limit. Process identity comes from the portable
++`ps -A -o pid=,ppid=,rss=,pgid=` table, so the same path runs on Linux and
++Darwin and does not parse /proc or process command names.
++
++The child starts in a new session. Only that session's process group is
++signaled, and only after a cap, timeout or observation failure. The child is
++always reaped in a finally block.
++
++Usage:
++  python3 bend2/scripts/capped-run.py --limit-bytes N --timeout SECONDS -- COMMAND...
++"""
++import argparse
++import os
++import resource
++import signal
++import subprocess
++import sys
++import time
++
++
++class ObservationError(RuntimeError):
++    pass
++
++
++def process_table():
++    try:
++        result = subprocess.run(
++            ['ps', '-A', '-o', 'pid=,ppid=,rss=,pgid='],
++            capture_output=True, text=True, timeout=10)
++    except (OSError, subprocess.TimeoutExpired) as error:
++        raise ObservationError(f'ps failed: {error}') from error
++    if result.returncode != 0:
++        raise ObservationError(result.stderr.strip() or f'ps exit {result.returncode}')
++    rows = []
++    for line in result.stdout.splitlines():
++        fields = line.split()
++        if not fields:
++            continue
++        if len(fields) != 4:
++            raise ObservationError(f'malformed ps row: {line!r}')
++        try:
++            pid, ppid, rss, pgid = (int(field) for field in fields)
++        except ValueError as error:
++            raise ObservationError(f'malformed ps row: {line!r}') from error
++        rows.append((pid, ppid, rss, pgid))
++    return rows
++
++
++def descendants(root, rows):
++    children = {}
++    for pid, ppid, _rss, _pgid in rows:
++        children.setdefault(ppid, []).append(pid)
++    seen = set()
++    pending = [root]
++    while pending:
++        pid = pending.pop()
++        if pid in seen:
++            continue
++        seen.add(pid)
++        pending.extend(children.get(pid, ()))
++    return seen
++
++
++def tree_rss(root, rows):
++    members = descendants(root, rows)
++    return sum(rss for pid, _ppid, rss, _pgid in rows if pid in members) * 1024
++
++
++def group_members(pgid, rows):
++    return any(row_pgid == pgid for _pid, _ppid, _rss, row_pgid in rows)
++
++
++def child_setup():
++    resource.setrlimit(resource.RLIMIT_STACK,
++                       (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
++
++
++def kill_group(pgid, rows):
++    # Signal only the child's own session/process group. When a fresh process
++    # table is available, require a member with that pgid first.
++    if rows is not None and not group_members(pgid, rows):
++        return
++    try:
++        os.killpg(pgid, signal.SIGKILL)
++    except ProcessLookupError:
++        pass
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument('--limit-bytes', type=int, required=True)
++    parser.add_argument('--timeout', type=float, required=True)
++    parser.add_argument('command', nargs=argparse.REMAINDER)
++    options = parser.parse_args()
++    command = options.command
++    if command and command[0] == '--':
++        command = command[1:]
++    if not command:
++        parser.error('a command is required after --')
++
++    started = time.monotonic()
++    child = subprocess.Popen(command, preexec_fn=child_setup,
++                             start_new_session=True)
++    pgid = child.pid
++    peak = 0
++    cause = 'completed'
++    detail = ''
++    last_rows = None
++    try:
++        while True:
++            status = child.poll()
++            rows = process_table()
++            last_rows = rows
++            current = tree_rss(child.pid, rows)
++            peak = max(peak, current)
++            if current > options.limit_bytes:
++                cause = 'resident-cap-exceeded'
++                break
++            if time.monotonic() - started > options.timeout:
++                cause = 'wall-timeout'
++                break
++            if status is not None:
++                break
++            time.sleep(0.05)
++    except ObservationError as error:
++        cause = 'observation-error'
++        detail = str(error)
++    finally:
++        if cause != 'completed' or child.poll() is None:
++            kill_group(pgid, last_rows)
++        try:
++            child.wait()
++        except ChildProcessError:
++            pass
++
++    elapsed = time.monotonic() - started
++    line = (f'capped-run cause={cause} exit={child.returncode} '
++            f'peak_rss_bytes={peak} elapsed_seconds={elapsed:.3f}')
++    if detail:
++        line += f' detail={detail}'
++    print(line, flush=True)
++    return 0 if cause == 'completed' and child.returncode == 0 else 1
++
++
++if __name__ == '__main__':
++    sys.exit(main())
+diff --git a/bend2/scripts/check-native.sh b/bend2/scripts/check-native.sh
+index 52ecc1aa..5f58c5f9 100644
+--- a/bend2/scripts/check-native.sh
++++ b/bend2/scripts/check-native.sh
+@@ -14,9 +14,9 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
+ .scratch/bend2/git-test
+ sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
+ .scratch/bend2/land-test
+-sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
++"$PYTHON3" bend2/scripts/capped-run.py --limit-bytes 8589934592 --timeout 180 -- sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
+ .scratch/bend2/subscription-profiles-test
+-sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
++"$PYTHON3" bend2/scripts/capped-run.py --limit-bytes 9663676416 --timeout 240 -- sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
+ BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/observed-usage.py
+ BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/harness-inventory.py
+ "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
+-- 
+2.43.0
+

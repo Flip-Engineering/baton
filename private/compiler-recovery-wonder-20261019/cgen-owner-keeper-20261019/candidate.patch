@@ -1,0 +1,50 @@
+From c14d2f467540e1a8a95049566394976e389de792 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sun, 18 Oct 2026 21:03:57 -0700
+Subject: [PATCH] Dispatch host keeper by String.eq in the recovery helper
+ entry
+
+The string-literal list pattern for --host-process-keeper made the
+Bend match compiler expand a character decision tree across the
+remaining dispatch cases. Measured on a same-source dispatch proxy
+with the real arities: 54,063,638 bytes of C, 2m28s and 18,450,476
+KiB for the literal form versus 424,856 bytes, 0.57s and 122,304 KiB
+when the case captures the flag and compares it with String.eq, the
+style the same dispatch already uses for --recover-receive and the
+instance routes. The case order, arities, target function, and the
+code 2 refusal for a different three-argument command are preserved.
+---
+ bend2/src/coordinator/receive-recovery-focused.bend | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/bend2/src/coordinator/receive-recovery-focused.bend b/bend2/src/coordinator/receive-recovery-focused.bend
+index eaa0d55c3..fc51c5583 100644
+--- a/bend2/src/coordinator/receive-recovery-focused.bend
++++ b/bend2/src/coordinator/receive-recovery-focused.bend
+@@ -43,6 +43,12 @@ def run_host_keeper(+directory: String, lock: Maybe<&2,U32>) -> IO(Unit):
+ def dispatch_host_keeper(+directory: String, +lock: String) -> IO(Unit):
+   run_host_keeper(directory,U32.read(lock))
+ 
++@unsafe
++def dispatch_host_keeper_command(selected: Bool, +directory: String, +lock: String) -> IO(Unit):
++  match selected:
++    case True{}: dispatch_host_keeper(directory,lock)
++    case False{}: IO.die(Unit,2,"observer recovery entry expects a recovery command")
++
+ @unsafe
+ def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
+   match owner:
+@@ -55,8 +61,8 @@ def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
+ @unsafe
+ def dispatch(args: List<String>) -> IO(Unit):
+   match args:
+-    case "--host-process-keeper" <> +directory <> +lock <> Nil{}:
+-      dispatch_host_keeper(directory,lock)
++    case +flag <> +directory <> +lock <> Nil{}:
++      dispatch_host_keeper_command(String.eq(flag,"--host-process-keeper"),directory,lock)
+     case +flag <> +db <> Nil{}:
+       dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
+     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
+-- 
+2.43.0
+

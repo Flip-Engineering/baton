@@ -1,0 +1,56 @@
+From 8bf522d412df6ceedbe0abbc11d402b2fb33fea2 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 16:59:54 -0700
+Subject: [PATCH] Route the operator to and from its child conductor
+
+message_route denied both directions for an associate conductor whose recorded
+parent is the operator seat, because operator_route required the conductor to
+have no parent. The empty consolidation group could receive no operator task
+and could not report to the operator.
+
+Accept a conductor whose parent is the operator as an operator route endpoint.
+Keep player and deeper subordinate routes denied.
+
+The focused messaging test covers a task and a report in both directions plus
+a denied operator-to-child-player route.
+---
+ bend2/src/coordinator/commands.bend | 2 +-
+ bend2/test/messaging.py             | 9 +++++++++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/bend2/src/coordinator/commands.bend b/bend2/src/coordinator/commands.bend
+index 0c071a2e..a578247f 100644
+--- a/bend2/src/coordinator/commands.bend
++++ b/bend2/src/coordinator/commands.bend
+@@ -423,7 +423,7 @@ def tight_peers(+sender: String, +recipient: String) -> String:
+   "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight'))"
+ 
+ def operator_route(+sender: String, +recipient: String) -> String:
+-  "((" ++ assigned_role(sender) ++ "='operator' AND " ++ assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND parent IS NULL)) OR (" ++ assigned_role(recipient) ++ "='operator' AND " ++ assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))"
++  "((" ++ assigned_role(sender) ++ "='operator' AND " ++ assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND (parent IS NULL OR parent=" ++ sender ++ "))) OR (" ++ assigned_role(recipient) ++ "='operator' AND " ++ assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND (parent IS NULL OR parent=" ++ recipient ++ "))))"
+ 
+ def message_route(+sender: String, +recipient: String) -> String:
+   "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ assigned_role(sender) ++ "='conductor' AND " ++ descendant(sender,recipient) ++ ") OR " ++ tight_peers(sender,recipient) ++ ")) OR " ++ operator_route(sender,recipient) ++ "))"
+diff --git a/bend2/test/messaging.py b/bend2/test/messaging.py
+index dd2227b3..e1917785 100644
+--- a/bend2/test/messaging.py
++++ b/bend2/test/messaging.py
+@@ -149,6 +149,15 @@ class Messaging(unittest.TestCase):
+         self.send('operator-report', 'root', 'operator', 'report')
+         self.refused('operator-to-subordinate', 'operator', 'leaf-a')
+         self.refused('subordinate-to-operator', 'leaf-a', 'operator')
++        self.call('recruit', 'operator-lead', 'operator', 'fixture', 'model', 'low',
++                  str(self.repo), 'operator-lead-branch', str(self.directory / 'operator-lead'), 'HEAD')
++        self.call('role', 'operator-lead', 'associate-conductor')
++        self.call('connect', 'operator-lead', '', self.endpoint)
++        self.send('operator-child-task', 'operator', 'operator-lead', 'task')
++        self.send('operator-child-report', 'operator-lead', 'operator', 'report')
++        self.call('recruit', 'operator-leaf', 'operator', 'fixture', 'model', 'low',
++                  str(self.repo), 'operator-leaf-branch', str(self.directory / 'operator-leaf'), 'HEAD')
++        self.refused('operator-to-child-player', 'operator', 'operator-leaf')
+         self.call('role', 'leaf-a', 'operator', success=False)
+         self.assertEqual(self.call('role', 'leaf-a')['role'], 'player')
+         self.ensemble('null-peers', 'root', 'unassigned')
+-- 
+2.43.0
+

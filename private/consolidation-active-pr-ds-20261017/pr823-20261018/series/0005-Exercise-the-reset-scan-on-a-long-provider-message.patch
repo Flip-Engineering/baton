@@ -1,0 +1,44 @@
+From 9d9474fbefa839f3892d62a3a4638209fed57199 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 21:20:24 -0700
+Subject: [PATCH 5/9] Exercise the reset scan on a long provider message
+
+500 words and one date-time pair return the same reset as the short form, a long message with no reset returns none, and the run takes 0.011 s. The earlier scan did not return on this text.
+---
+ bend2/test/usage-windows-long.bend | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+ create mode 100644 bend2/test/usage-windows-long.bend
+
+diff --git a/bend2/test/usage-windows-long.bend b/bend2/test/usage-windows-long.bend
+new file mode 100644
+index 000000000..af48d8d36
+--- /dev/null
++++ b/bend2/test/usage-windows-long.bend
+@@ -0,0 +1,24 @@
++# Long-text scan fixture: a provider message with hundreds of words and one
++# date-time pair must return the same reset as the short form, and a long
++# message with no reset must return none. The earlier scan recursed in both
++# branches of a strict pick and did not return on text this long.
++#
++# usage: usage-windows-long
++import Base
++import ../src/coordinator/usage-windows.bend as UW
++
++def long_words() -> String:
++  "quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text"
++
++def long_reset() -> String:
++  long_words() ++ " reset at 2026-10-06 07:12:52"
++
++def expect(+label: String, is_ok: Bool) -> IO(Unit):
++  Bool.pick(IO(Unit),is_ok,IO.print("fixture-window-long " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window-long " ++ label ++ ": refused"))
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    expect("long-reset-matches-short",String.eq(UW.reset_text_of(long_reset()),UW.reset_text_of("reset at 2026-10-06 07:12:52")))
++    expect("long-reset-value",String.eq(UW.reset_text_of(long_reset()),"2026-10-06 07:12:52"))
++    expect("long-words-no-reset",String.eq(UW.reset_text_of(long_words()),""))
++    IO.print("fixture-windows-long-ok")
+-- 
+2.43.0
+

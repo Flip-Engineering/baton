@@ -1,0 +1,63 @@
+From ad0d4a69597969e5dbfd1243204f6f3a07f21e49 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sun, 18 Oct 2026 00:31:52 -0700
+Subject: [PATCH 15/19] Run the continuation against a far-future reset (#797,
+ #823)
+
+The wake fixture now executes the production continuation argv with a one-second test delay while the window is two days away: the test wake entry re-checks and records a held check, delivers nothing, and the next segment is 86400 s. The fake wake entry scopes its gate check to the message recipient's account, so it cannot see another session's window.
+---
+ bend2/test/fake-wake-marker        |  3 ++-
+ bend2/test/usage-windows-wake.bend | 14 ++++++++++++++
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/bend2/test/fake-wake-marker b/bend2/test/fake-wake-marker
+index 9ee9f64de..b2460eb6b 100755
+--- a/bend2/test/fake-wake-marker
++++ b/bend2/test/fake-wake-marker
+@@ -7,9 +7,10 @@
+ # sets the message receipt, so a repeated continuation changes nothing.
+ db=$2
+ msg=$3
++recipient=$(sqlite3 "$db" "SELECT coalesce((SELECT recipient FROM messages WHERE id='$msg'),'');")
+ pending=$(sqlite3 "$db" "SELECT count(*) FROM messages WHERE id='$msg' AND receipt IS NULL;")
+ [ "$pending" = "1" ] || exit 0
+-held=$(sqlite3 "$db" "SELECT CASE WHEN EXISTS(SELECT 1 FROM usage_windows l WHERE l.id=(SELECT l2.id FROM usage_windows l2 WHERE l2.window=l.window ORDER BY l2.recorded_at DESC,l2.id DESC LIMIT 1) AND l.window IN (SELECT p.window FROM usage_windows p WHERE p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC,p2.id DESC LIMIT 1) AND ((p.used_fraction IS NOT NULL AND p.used_fraction >= 1) OR p.reset_source='provider-message')) AND l.resets_at IS NOT NULL AND l.resets_at > CAST(strftime('%s','now') AS INTEGER)*1000) THEN 1 ELSE 0 END;")
++held=$(sqlite3 "$db" "SELECT CASE WHEN EXISTS(SELECT 1 FROM usage_windows l WHERE l.account='$recipient' AND l.id=(SELECT l2.id FROM usage_windows l2 WHERE l2.account='$recipient' AND l2.window=l.window ORDER BY l2.recorded_at DESC,l2.id DESC LIMIT 1) AND l.window IN (SELECT p.window FROM usage_windows p WHERE p.account='$recipient' AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE p2.account='$recipient' AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC,p2.id DESC LIMIT 1) AND ((p.used_fraction IS NOT NULL AND p.used_fraction >= 1) OR p.reset_source='provider-message')) AND l.resets_at IS NOT NULL AND l.resets_at > CAST(strftime('%s','now') AS INTEGER)*1000) THEN 1 ELSE 0 END;")
+ if [ "$held" = "1" ]; then
+   sqlite3 "$db" "INSERT OR IGNORE INTO wake_held_checks(id) VALUES('$msg');"
+   exit 0
+diff --git a/bend2/test/usage-windows-wake.bend b/bend2/test/usage-windows-wake.bend
+index 80ebeba9b..3818daa89 100644
+--- a/bend2/test/usage-windows-wake.bend
++++ b/bend2/test/usage-windows-wake.bend
+@@ -98,6 +98,19 @@ def stale_case(+db: String, +self: String) -> IO(Unit):
+     receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-ws';","delivered\n","elapsed-sets-receipt")
+     IO.pure(Unit,Unit{})
+ 
++def far_case(+db: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    +far : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+172800000 AS TEXT);")
++    created : Unit <- session(db,"far2")
++    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','far2','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far window','m-far2');")
++    owed : Unit <- message(db,"far2","m-far2","")
++    held : Unit <- expect_gate(db,"far2","far2","held","far-continuation-held")
++    +argv : String <- IO.pure(String,Tx.enc_argv(UW.schedule_argv(self,db,"m-far2","1")))
++    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(argv,".")
++    checked : Unit <- expect_read(db,"SELECT count(*) FROM wake_held_checks WHERE id='m-far2';","1\n","far-continuation-held-check")
++    blocked : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-far2';","0\n","far-continuation-no-delivery")
++    next_segment : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-continuation-next-segment")
++
+ def cap_case(+db: String) -> IO(Unit):
+   do IO<Unit>:
+     +far : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+172800000;")
+@@ -119,6 +132,7 @@ def main_args(args: List<String>) -> IO(Unit):
+       handled_case(path,self)
+       duplicate_case(path,self)
+       stale_case(path,self)
++      far_case(path,self)
+       cap_case(path)
+       waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","sleep 5"]),".")
+       handled_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wa';","0\n","handled-no-second-delivery")
+-- 
+2.43.0
+

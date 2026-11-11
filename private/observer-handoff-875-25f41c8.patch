@@ -1,0 +1,824 @@
+diff --git a/bend2/src/host/process-spawn.c b/bend2/src/host/process-spawn.c
+index bfc47876e..9721a4804 100644
+--- a/bend2/src/host/process-spawn.c
++++ b/bend2/src/host/process-spawn.c
+@@ -385,7 +385,7 @@ typedef struct {
+ typedef struct BatonRetained {
+   int socket,spool,error,exited,status,input_closed;
+   int guard,watch,life,orphan,unknown,released,acknowledged,observer_only,custody_lock;
+-  int observer_detached;
++  int observer_detached,receiver_started;
+   char *directory,*database;
+   uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation,owner_epoch;
+   int reply_error;
+@@ -398,6 +398,8 @@ typedef struct BatonRetained {
+   pthread_cond_t changed;
+ } BatonRetained;
+ static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained);
++static int br_monitor_lock(BatonRetained *retained);
++static int br_custody_write(const char *directory,BatonRetained *retained);
+ typedef struct BrKeeper {
+   struct BrKeeper *next;
+   uint32_t id;
+@@ -686,6 +688,34 @@ static int br_process_lifetime(pid_t pid,int *ended) {
+ #endif
+   return fd;
+ }
++/* A live observer must match the executable recorded in this attempt's
++   recovery argv. The keeper separately binds its PID to the connected peer birth. */
++static int br_process_matches_executable(pid_t pid,const char *expected) {
++  if(!expected || !*expected || expected[0]!='/')return EINVAL;
++  char *recorded=realpath(expected,NULL);
++  if(!recorded)return errno;
++#ifdef __APPLE__
++  char target[PROC_PIDPATHINFO_MAXSIZE];
++  int length=proc_pidpath(pid,target,sizeof(target));
++  if(length<=0){int error=errno?errno:ESRCH;free(recorded);return error;}
++  char *observed=realpath(target,NULL);
++  if(!observed){int error=errno;free(recorded);return error;}
++  struct stat expected_info,observed_info;int error=0;
++  if(stat(recorded,&expected_info))error=errno;
++  else if(stat(observed,&observed_info))error=errno;
++  else if(expected_info.st_dev!=observed_info.st_dev ||
++          expected_info.st_ino!=observed_info.st_ino)error=ESTALE;
++  free(recorded);free(observed);return error;
++#else
++  char target[64];snprintf(target,sizeof(target),"/proc/%d/exe",(int)pid);
++  struct stat expected_info,observed_info;int error=0;
++  if(stat(recorded,&expected_info))error=errno;
++  else if(stat(target,&observed_info))error=errno;
++  else if(expected_info.st_dev!=observed_info.st_dev ||
++          expected_info.st_ino!=observed_info.st_ino)error=ESTALE;
++  free(recorded);return error;
++#endif
++}
+ /* Registration precedes the keeper's waitpid. A dead/reused birth is ended. */
+ static int br_lifetime(const char *directory,int *ended) {
+   BrBirth saved,current;int error=br_read_file(directory,"native.birth",&saved,sizeof(saved));
+@@ -857,16 +887,22 @@ static int br_hello(int socket,BrFrame *hello,int *guard) {
+   if(message.msg_flags&MSG_CTRUNC)return EPROTO;
+   return (size_t)length<sizeof(*hello)?br_read_all(socket,(char *)hello+length,sizeof(*hello)-(size_t)length):0;
+ }
+-static int br_attach_socket(BatonChild *child,const char *directory,int socket,int *unstarted,uint64_t incarnation,int ready_ack) {
++static int br_attach_socket(BatonChild *child,const char *directory,int socket,int *unstarted,uint64_t incarnation,int ready_ack,int defer_receiver,int allow_legacy_transfer) {
+   BrFrame hello;BrState state={0};int guard=-1;
+   int error=br_hello(socket,&hello,&guard);
+   if(!error && hello.serial>1)error=EPROTO;
++  int legacy_transfer=0;
++  int acknowledge_ready=ready_ack;
+   if(!error && hello.error) {
+     error=hello.error;
+     if(unstarted && hello.op==BR_HELLO && hello.value==1)*unstarted=1;
+   }
+   if(!error && (hello.op!=BR_HELLO || hello.length!=sizeof(state)))error=EPROTO;
+   if(!error)error=br_read_all(socket,&state,sizeof(state));
++  if(!error && allow_legacy_transfer && hello.serial==0) {
++    if(!state.exited)error=EBUSY;
++    else {legacy_transfer=1;acknowledge_ready=0;}
++  }
+   char *path=br_path(directory,"stdout");int spool=-1;
+   if(!error){spool=path?open(path,O_RDONLY|O_CLOEXEC):-1;if(spool<0)error=path?errno:ENOMEM;}
+   free(path);
+@@ -881,7 +917,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
+   retained->custody_lock=-1;
+   retained->directory=strdup(directory);retained->exited=state.exited;retained->status=state.status;
+   retained->input_closed=state.input_closed;retained->released=state.released;
+-  retained->observer_detached=hello.serial==1;
++  retained->observer_detached=hello.serial==1 || legacy_transfer;
+   retained->observer_only=hello.value==4 || hello.value==5;
+   if(hello.value==4)retained->unknown=1;
+   pthread_mutex_init(&retained->state,NULL);pthread_mutex_init(&retained->command,NULL);
+@@ -892,17 +928,31 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
+      caller's decision, taken through restore after it has restored the reducer
+      state the checkpoint carries. */
+   if(!error && (hello.value==2 || hello.value==3 || hello.value==4 || hello.value==5)) {
+-    BrFrame ready={.op=BR_READY,.serial=ready_ack?1:0};error=br_write_all(socket,&ready,sizeof(ready));
++    BrFrame ready={.op=BR_READY,.serial=acknowledge_ready?1:0};error=br_write_all(socket,&ready,sizeof(ready));
+     BrFrame reply={0};
+-    if(!error && ready_ack)error=br_read_all(socket,&reply,sizeof(reply));
+-    if(!error && ready_ack && (reply.op!=BR_REPLY || reply.serial!=ready.serial || reply.length))error=EPROTO;
+-    if(!error && ready_ack)error=reply.error;
++    if(!error && acknowledge_ready)error=br_read_all(socket,&reply,sizeof(reply));
++    if(!error && acknowledge_ready && (reply.op!=BR_REPLY || reply.serial!=ready.serial || reply.length))error=EPROTO;
++    if(!error && acknowledge_ready)error=reply.error;
++  }
++  if(!error && legacy_transfer) {
++    retained->exited=1;retained->unknown=1;retained->observer_only=1;retained->input_closed=1;
++  }
++  if(!error && !defer_receiver) {
++    error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
++    if(!error)retained->receiver_started=1;
+   }
+-  if(!error)error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
+   if(error){if(life>=0)close(life);if(guard>=0)close(guard);close(spool);close(socket);free(retained->directory);free(retained);return error;}
+   child->pid=state.pid;child->retained=retained;
+   return 0;
+ }
++static int br_retained_start(BatonChild *child) {
++  BatonRetained *retained=child?child->retained:NULL;
++  if(!retained)return EINVAL;
++  if(retained->receiver_started)return 0;
++  int error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
++  if(!error)retained->receiver_started=1;
++  return error;
++}
+ static int br_attach_orphan(BatonChild *child,const char *directory,int guard) {
+   BatonRetained *retained=calloc(1,sizeof(*retained));if(!retained)return ENOMEM;
+   retained->socket=-1;retained->spool=-1;retained->watch=-1;retained->life=-1;retained->custody_lock=-1;
+@@ -917,7 +967,7 @@ static int br_attach_orphan(BatonChild *child,const char *directory,int guard) {
+   pthread_mutex_init(&retained->state,NULL);pthread_mutex_init(&retained->command,NULL);
+   pthread_mutex_init(&retained->reader,NULL);pthread_cond_init(&retained->changed,NULL);
+   if(!error)error=br_orphan(retained);
+-  if(!error)error=pthread_create(&retained->receiver,NULL,br_follow,retained);
++  if(!error) {error=pthread_create(&retained->receiver,NULL,br_follow,retained);if(!error)retained->receiver_started=1;}
+   if(error){if(retained->guard>=0)close(retained->guard);if(retained->spool>=0)close(retained->spool);
+     if(retained->life>=0)close(retained->life);if(retained->watch>=0)close(retained->watch);
+     free(retained->directory);free(retained);return error;}
+@@ -1157,7 +1207,7 @@ static void baton_retained_call(BatonProcessCall *call) {
+   if(!call->error && call->kind==BP_ACK) {
+     retained->acknowledged=1;
+     if(retained->socket>=0)shutdown(retained->socket,SHUT_RDWR);
+-    pthread_join(retained->receiver,NULL);
++    if(retained->receiver_started)pthread_join(retained->receiver,NULL);
+     if(retained->socket>=0)close(retained->socket);retained->socket=-1;
+     close(retained->spool);retained->spool=-1;
+     if(retained->life>=0)close(retained->life);retained->life=-1;
+@@ -3583,7 +3633,7 @@ static int br_retain(BatonProcessCall *call) {
+     }
+   }
+   if(sockets[1]>=0)close(sockets[1]);
+-  if(!error) {error=br_attach_socket(call->child,directory,sockets[0],&call->unstarted,0,1);sockets[0]=-1;}
++  if(!error) {error=br_attach_socket(call->child,directory,sockets[0],&call->unstarted,0,1,0,0);sockets[0]=-1;}
+   if(sockets[0]>=0)close(sockets[0]);if(null>=0)close(null);if(log>=0)close(log);
+   free(self);free(log_path);free(address);free(directory);
+   return error;
+@@ -3885,11 +3935,11 @@ static int br_attempt_socket(const char *directory,uint32_t op,uint64_t serial,i
+   return error;
+ }
+ /* Legacy attempt connections use the keeper's serial-zero ready exchange. */
+-static int br_instance_attach_legacy(BatonProcessCall *call,const char *directory) {
++static int br_instance_attach_legacy(BatonProcessCall *call,const char *directory,int64_t observer,int defer_receiver,int allow_legacy_transfer) {
+   int socket_fd=-1;
+-  int error=br_attempt_socket(directory,BR_ATTACH,0,0,NULL,0,&socket_fd);
++  int error=br_attempt_socket(directory,BR_ATTACH,0,observer>1?(uint64_t)observer:0,NULL,0,&socket_fd);
+   if(!error) {
+-    error=br_attach_socket(call->child,directory,socket_fd,NULL,0,0);
++    error=br_attach_socket(call->child,directory,socket_fd,NULL,0,0,defer_receiver,allow_legacy_transfer);
+     socket_fd=-1;
+   }
+   if(socket_fd>=0)close(socket_fd);
+@@ -3897,11 +3947,11 @@ static int br_instance_attach_legacy(BatonProcessCall *call,const char *director
+ }
+ /* Joins an existing attempt as its observer, bound to the owner incarnation
+    that resolved it. */
+-static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_t incarnation,uint64_t epoch,int64_t observer) {
++static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_t incarnation,uint64_t epoch,int64_t observer,int allow_legacy_transfer) {
+   int socket_fd=-1;
+   int error=br_attempt_socket(directory,BR_ATTACH,0,observer,NULL,0,&socket_fd);
+   if(!error) {
+-    error=br_attach_socket(call->child,directory,socket_fd,NULL,incarnation,1);socket_fd=-1;
++    error=br_attach_socket(call->child,directory,socket_fd,NULL,incarnation,1,observer>1,allow_legacy_transfer);socket_fd=-1;
+     if(!error && call->child->retained) {
+       call->child->retained->database=strdup(call->database);
+       if(!call->child->retained->database)error=ENOMEM;
+@@ -3959,7 +4009,7 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
+       return error;
+     }
+   }
+-  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,0);
++  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,0,0);
+   if(!error && dormant) {
+     call->unstarted=0;
+     br_instance_state_call(call);
+@@ -3967,20 +4017,40 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
+   free(address);free(directory);
+   return error;
+ }
+-static int br_instance_attach_observer(BatonProcessCall *call,int64_t observer) {
++static int br_instance_attach_observer(BatonProcessCall *call,int64_t observer,int legacy_unknown) {
+   char *directory=realpath(call->directory,NULL);
+   if(!directory)return errno;
+   BrInstanceFrame reply={0};
+-  int error=br_instance_request(call->database,
++  BatonRetained monitor={.custody_lock=-1,.directory=directory};
++  int error=observer>1 && legacy_unknown?br_monitor_lock(&monitor):0;
++  if(!error)error=br_instance_request(call->database,
+     (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
+-  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,observer);
++  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,observer,observer>1 && legacy_unknown);
+   else if(!observer && (error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET))
+-    error=br_instance_attach_legacy(call,directory);
++    error=br_instance_attach_legacy(call,directory,0,0,0);
++  else if(observer>1 && legacy_unknown &&
++          (error==EPROTO || error==EPIPE || error==ECONNRESET || error==ENOSYS ||
++           error==EOPNOTSUPP || error==ENOENT || error==ECONNREFUSED))
++    error=br_instance_attach_legacy(call,directory,observer,1,1);
++  if(!error && observer>1 && call->child && call->child->retained) {
++    BatonRetained *retained=call->child->retained;
++    if(monitor.custody_lock>=0 && retained->unknown) {
++      retained->custody_lock=monitor.custody_lock;monitor.custody_lock=-1;
++      error=br_custody_write(directory,retained);
++    } else if(monitor.custody_lock>=0) {
++      close(monitor.custody_lock);monitor.custody_lock=-1;
++    }
++    if(!error && call->database) {
++      retained->database=strdup(call->database);
++      if(!retained->database)error=ENOMEM;
++    }
++  }
++  if(monitor.custody_lock>=0)close(monitor.custody_lock);
+   free(directory);
+   return error;
+ }
+ static int br_instance_attach(BatonProcessCall *call) {
+-  return br_instance_attach_observer(call,0);
++  return br_instance_attach_observer(call,0,0);
+ }
+ static int br_instance_recover(BatonProcessCall *call) {
+   if(!call || !call->database || !call->directory || !call->identity ||
+@@ -4026,7 +4096,7 @@ static int br_instance_recover(BatonProcessCall *call) {
+   if(socket_fd>=0)close(socket_fd);
+   if(!error) {
+     call->owner_attempt=reply.attempt;
+-    error=br_instance_join(call,directory,reply.owner,reply.epoch,0);
++    error=br_instance_join(call,directory,reply.owner,reply.epoch,0,0);
+   }
+   if(!error) {
+     BrManifest manifest={0};BrBirth birth={0};uint64_t manifest_digest=0;
+@@ -4081,14 +4151,14 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
+   int error=br_instance_request(call->database,
+     (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
+   if(!error) {
+-    error=br_instance_join(call,directory,reply.owner,reply.epoch,0);
++    error=br_instance_join(call,directory,reply.owner,reply.epoch,0,0);
+     if(error==ECONNREFUSED || error==ENOENT || error==EPIPE || error==ECONNRESET)
+       error=br_attach_orphan(call->child,directory,(int)call->lock);
+   }
+   else if(error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET) {
+     /* A legacy keeper can still serve this attempt when the database owner
+        has no record of it. Attach there to retain native input and completion. */
+-    error=br_instance_attach_legacy(call,directory);
++    error=br_instance_attach_legacy(call,directory,0,0,0);
+     if(error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET)
+       error=br_attach_orphan(call->child,directory,(int)call->lock);
+   }
+@@ -4840,7 +4910,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
+       int socket_fd=-1;
+       call->error=br_attempt_socket(directory,op,serial,call->signal,payload,length,&socket_fd);
+       if(!call->error) {
+-        if(attach) {call->error=br_attach_socket(call->child,directory,socket_fd,NULL,0,1);socket_fd=-1;}
++        if(attach) {call->error=br_attach_socket(call->child,directory,socket_fd,NULL,0,1,0,0);socket_fd=-1;}
+         else {
+           BrFrame reply;
+           call->error=br_read_all(socket_fd,&reply,sizeof(reply));
+@@ -5676,8 +5746,13 @@ static int baton_observer_completed(BatonSessionLock *call) {
+   if((error=br_manifest_read(call->directory,&manifest))) {
+     br_manifest_free(&manifest);return error;
+   }
++  char **recovery=br_argv(manifest.field[4],(size_t)manifest.header.lengths[4]);
++  if(!error && !recovery)error=EINVAL;
++  if(!error && !call->observer_ended)
++    error=br_process_matches_executable((pid_t)call->observer,recovery[0]);
++  free(recovery);
+   struct sockaddr_un address;
+-  error=br_socket_address(&address,manifest.field[5]);
++  if(!error)error=br_socket_address(&address,manifest.field[5]);
+   br_manifest_free(&manifest);
+   int probe=error?-1:socket(AF_UNIX,SOCK_STREAM,0);
+   if(!error && probe<0)error=errno;
+@@ -5747,7 +5822,7 @@ static int baton_observer_recover(BatonSessionLock *call) {
+ #else
+   if(!call->observer_ended)return ENOTSUP;
+ #endif
+-  if(call->keeper && !call->observer_ended) {
++  if(call->keeper && !call->observer_ended && !call->legacy_unknown) {
+     error=baton_observer_transfer_supported(call->directory);
+     if(error) {
+       call->detail="The keeper cannot attest a live observer handoff.";
+@@ -5758,7 +5833,7 @@ static int baton_observer_recover(BatonSessionLock *call) {
+   call->attempt.directory=call->directory;
+   call->attempt.lock=(u32)call->handle;
+   if(call->keeper) {
+-    error=br_instance_attach_observer(&call->attempt,call->observer);
++    error=br_instance_attach_observer(&call->attempt,call->observer,call->legacy_unknown);
+     if(error==EBUSY && call->legacy_unknown) {
+       /* A legacy keeper cannot transfer an unknown attempt and its EBUSY may
+          mean another live observer still holds the connection. Adopt only
+@@ -5775,7 +5850,10 @@ static int baton_observer_recover(BatonSessionLock *call) {
+       if(!call->observer_ended && (!retained || !retained->observer_detached)) {
+         call->detail="The keeper did not attest the live observer connection.";
+         error=EBUSY;
+-      } else error=baton_observer_retire(call);
++      } else {
++        error=baton_observer_retire(call);
++        if(!error)error=br_retained_start(call->attempt.child);
++      }
+     }
+     else if(call->legacy_unknown &&
+             (error==EPROTO || error==EPIPE || error==ECONNRESET ||
+@@ -5784,6 +5862,9 @@ static int baton_observer_recover(BatonSessionLock *call) {
+         br_adopt_orphan(&call->attempt,call->directory,(int)call->handle):EBUSY;
+     }
+     if(error==EBUSY)call->detail="Another observer holds the retained attempt; inspect its current receive.";
++    if(!error && call->attempt.child->retained &&
++       !call->attempt.child->retained->receiver_started)
++      error=br_retained_start(call->attempt.child);
+     if(!error) {
+       int guard=call->attempt.child->retained->guard;
+       if(guard>=0) {
+@@ -5887,7 +5968,7 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
+       BatonRetained *retained=call->attempt.child->retained;
+       if(retained) {
+         if(retained->socket>=0)shutdown(retained->socket,SHUT_RDWR);
+-        pthread_join(retained->receiver,NULL);
++        if(retained->receiver_started)pthread_join(retained->receiver,NULL);
+         if(retained->socket>=0)close(retained->socket);
+         if(retained->guard>=0)close(retained->guard);
+         if(retained->spool>=0)close(retained->spool);
+diff --git a/bend2/test/process.bend b/bend2/test/process.bend
+index 15bbc10be..957d6178b 100644
+--- a/bend2/test/process.bend
++++ b/bend2/test/process.bend
+@@ -162,6 +162,42 @@ def recover_observer_cli(args: List<String>) -> IO(Unit):
+       recover_observer_with_pid(database,directory,U32.read(observer))
+     case _: IO.die(Unit,2,"recover-observer DATABASE ATTEMPT OBSERVER_PID")
+ 
++def observer_probe_line(line: Maybe<String>) -> IO(Unit):
++  match line:
++    case None{}: IO.print("probe-eof")
++    case Some{text}: IO.print("probe:" ++ text)
++
++def observer_probe_result(result: Result<&1,&1,U32 & String,U32 & U32>) -> IO(Unit):
++  match result:
++    case Fail{(code,text)}: IO.die(Unit,1,U32.show(code) ++ ": " ++ text)
++    case Done{(+lock,+handle)}: do IO<Unit>:
++      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
++      shown : Unit <- observer_probe_line(line)
++      unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
++      IO.print("probe-custody-open")
++
++def recover_observer_probe_with_pid(database: String, directory: String,
++                                    parsed: Maybe<&2,U32>) -> IO(Unit):
++  match parsed:
++    case None{}: IO.die(Unit,2,"invalid observer PID")
++    case Some{pid}: do IO<Unit>:
++      result : Result<&1,&1,U32 & String,U32 & U32> <- Lock.SessionLock.recover_observer(database,"fixture",directory,pid)
++      observer_probe_result(result)
++
++def recover_observer_probe_cli(args: List<String>) -> IO(Unit):
++  match args:
++    case database <> directory <> observer <> Nil{}:
++      recover_observer_probe_with_pid(database,directory,U32.read(observer))
++    case _: IO.die(Unit,2,"recover-probe DATABASE ATTEMPT OBSERVER_PID")
++
++def observer_hold_cli(args: List<String>) -> IO(Unit):
++  match args:
++    case directory <> Nil{}: do IO<Unit>:
++      +handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
++      held : String <- IO.try(String,Text.Text.read("-"))
++      IO.print("observer-holder-released")
++    case _: IO.die(Unit,2,"observer-hold ATTEMPT")
++
+ def write_cli(args: List<String>) -> IO(Unit):
+   match args:
+     case directory <> path <> Nil{}: do IO<Unit>:
+@@ -212,7 +248,9 @@ def mode_number(+mode: String) -> U32:
+   Bool.pick(U32,String.eq(mode,"lock-try"),4,
+   Bool.pick(U32,String.eq(mode,"control-write"),5,
+   Bool.pick(U32,String.eq(mode,"control-signal"),6,
+-  Bool.pick(U32,String.eq(mode,"recover-observer"),7,0)))))))))
++  Bool.pick(U32,String.eq(mode,"recover-observer"),7,
++  Bool.pick(U32,String.eq(mode,"recover-probe"),10,
++  Bool.pick(U32,String.eq(mode,"observer-hold"),11,0)))))))))))
+ 
+ def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
+   match mode:
+@@ -225,6 +263,8 @@ def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
+     case 7: recover_observer_cli(rest)
+     case 8: instance_owner_cli(rest)
+     case 9: instance_shutdown_cli(rest)
++    case 10: recover_observer_probe_cli(rest)
++    case 11: observer_hold_cli(rest)
+     case _: spawn_cli(original <> rest)
+ 
+ def cli(args: List<String>) -> IO(Unit):
+diff --git a/bend2/test/process.py b/bend2/test/process.py
+index ed07c650e..9f8524dad 100644
+--- a/bend2/test/process.py
++++ b/bend2/test/process.py
+@@ -7,6 +7,11 @@ import tempfile
+ import unittest
+ import os
+ import signal
++import array
++import fcntl
++import socket
++import struct
++import threading
+ import shutil
+ import stat
+ import time
+@@ -271,6 +276,403 @@ class Process(unittest.TestCase):
+             if observer.stderr:
+                 observer.stderr.close()
+ 
++    def test_legacy_unknown_observer_transfer_reopens_spool_without_ack(self):
++        (self.runtime / 'baton2').mkdir(parents=True, mode=0o700)
++        database = self.cwd / 'state.db'
++        database.touch()
++        attempt = self.cwd / 'legacy-attempt'
++        attempt.mkdir(mode=0o700)
++        (attempt / 'stdout').write_bytes(b'legacy-output\n')
++        control_dir = pathlib.Path(tempfile.mkdtemp(prefix='br-legacy-'))
++        control = control_dir / 'keeper.sock'
++        guard_path = attempt / 'guard'
++        guard_fd = os.open(guard_path, os.O_CREAT | os.O_RDWR, 0o600)
++        fcntl.flock(guard_fd, fcntl.LOCK_EX)
++        observer = None
++        observer_image = self.cwd / 'legacy-observer-bin'
++        shutil.copy2(EXE, observer_image)
++        observer_image.chmod(0o700)
++        native = subprocess.Popen([sys.executable, '-c', 'pass'],
++                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
++                                  stderr=subprocess.DEVNULL, env=self.environment)
++        proc_stat = pathlib.Path('/proc', str(native.pid), 'stat').read_text()
++        ticks = int(proc_stat.rsplit(')', 1)[1].split()[19])
++        boot = next(int(line.split()[1]) for line in pathlib.Path('/proc/stat').read_text().splitlines()
++                    if line.startswith('btime '))
++        native.wait(timeout=10)
++        (attempt / 'native.pid').write_text(f'{native.pid}\n')
++        (attempt / 'native.birth').write_bytes(
++            struct.pack('=i4xQQ', native.pid, ticks, boot))
++
++        fields = [
++            b'/bin/true\0',
++            os.fsencode(self.cwd),
++            os.fsencode(attempt / 'native.stderr'),
++            b'',
++            os.fsencode(observer_image) + b'\0',
++            os.fsencode(control),
++        ]
++        header = struct.pack('=8s6Q2I', b'BATONRP1',
++                             *(len(value) for value in fields), 0, 0)
++        manifest_bytes = header + b''.join(fields)
++        (attempt / 'manifest').write_bytes(manifest_bytes)
++        canonical = os.fsencode(attempt.resolve())
++        info = attempt.stat()
++        db_info = database.stat()
++        prefix = struct.pack('=8sII7Q', b'BATONAD1', 1, 0,
++                             db_info.st_dev, db_info.st_ino, 0, 0,
++                             info.st_dev, info.st_ino, len(canonical))
++        digest = 0xcbf29ce484222325
++        for byte in prefix + canonical:
++            digest = ((digest ^ byte) * 0x100000001b3) & 0xffffffffffffffff
++        (attempt / 'admission').write_bytes(prefix + struct.pack('=Q', digest) + canonical)
++
++        frame = struct.Struct('=IiQQq')
++        server_errors = []
++        server_events = []
++        initial_ready = threading.Event()
++        native_exited = True
++        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++        listener.bind(str(control))
++        listener.listen(2)
++        listener.settimeout(8)
++
++        def exact(connection, count):
++            parts = []
++            remaining = count
++            while remaining:
++                part = connection.recv(remaining)
++                if not part:
++                    raise EOFError('legacy recovery socket closed early')
++                parts.append(part)
++                remaining -= len(part)
++            return b''.join(parts)
++
++        def serve_legacy_keeper():
++            old_connection = None
++            try:
++                old_connection, _ = listener.accept()
++                first = exact(old_connection, frame.size)
++                op, error, serial, length, value = frame.unpack(first)
++                payload = exact(old_connection, length)
++                peer_pid = struct.unpack('3i', old_connection.getsockopt(
++                    socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))[0]
++                assert (op, error, serial, value) == (11, 0, 0, 0)
++                assert payload == os.fsencode(attempt.resolve()) + b'\0'
++                server_events.append(('initial-peer', peer_pid))
++                state = struct.pack('=5i', native.pid, int(native_exited), 0, 0,
++                                    int(native_exited))
++                hello = frame.pack(1, 0, 0, len(state), 2)
++                old_connection.sendmsg([hello], [
++                    (socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [guard_fd]))])
++                old_connection.sendall(state)
++                ready = frame.unpack(exact(old_connection, frame.size))
++                assert ready == (14, 0, 1, 0, 0), ready
++                old_connection.sendall(frame.pack(4, 0, 1, 0, 0))
++                initial_ready.set()
++
++                while True:
++                    replacement, _ = listener.accept()
++                    first = replacement.recv(1)
++                    if not first:
++                        replacement.close()  # recovery liveness probe
++                        continue
++                    break
++                with replacement:
++                    op, error, serial, length, value = frame.unpack(
++                        first + exact(replacement, frame.size - 1))
++                    payload = exact(replacement, length)
++                    assert (op, error, serial, value) == (11, 0, 0, peer_pid)
++                    assert payload == os.fsencode(attempt.resolve()) + b'\0'
++                    state = struct.pack('=5i', native.pid, int(native_exited), 0, 0,
++                                        int(native_exited))
++                    hello = frame.pack(1, 0, 0, len(state), 2)
++                    replacement.sendmsg([hello], [
++                        (socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [guard_fd]))])
++                    replacement.sendall(state)
++                    if not native_exited:
++                        try:
++                            exact(replacement, frame.size)
++                        except EOFError:
++                            server_events.append('refused-before-ready')
++                            old_connection.settimeout(10)
++                            try:
++                                while old_connection.recv(64):
++                                    pass
++                            except ConnectionResetError:
++                                pass
++                            return
++                        raise AssertionError('recovery accepted a keeper reporting a live native')
++                    old_connection.close()
++                    old_connection = None
++                    ready = frame.unpack(exact(replacement, frame.size))
++                    assert ready == (14, 0, 0, 0, 0), ready
++                    server_events.append('legacy-transfer-ready')
++                    replacement.sendall(frame.pack(2, 0, 0, 0, 0))
++                    replacement.settimeout(5)
++                    try:
++                        while replacement.recv(64):
++                            pass
++                    except ConnectionResetError:
++                        pass
++            except BaseException as error:
++                server_errors.append(error)
++            finally:
++                if old_connection is not None:
++                    old_connection.close()
++                listener.close()
++
++        server = threading.Thread(target=serve_legacy_keeper, daemon=True)
++        server.start()
++        observer = subprocess.Popen([str(observer_image), 'observer-hold', str(attempt)],
++                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
++                                    stderr=subprocess.PIPE, env=self.environment)
++        try:
++            if not initial_ready.wait(timeout=5):
++                if observer.poll() is not None:
++                    observer_out, observer_err = observer.communicate(timeout=2)
++                else:
++                    observer_out, observer_err = '<still-running>', '<no stderr>'
++                server.join(timeout=1)
++                self.fail(f'legacy observer did not attach: rc={observer.returncode}; '
++                          f'out={observer_out!r}; err={observer_err!r}; '
++                          f'server={server_errors!r}')
++            wrong_fields = fields.copy()
++            wrong_fields[4] = b'/bin/true' + bytes((0,))
++            (attempt / 'manifest').write_bytes(
++                struct.pack('=8s6Q2I', b'BATONRP1',
++                            *(len(value) for value in wrong_fields), 0, 0) +
++                b''.join(wrong_fields))
++            mismatch = subprocess.run(
++                [str(EXE), 'recover-probe', str(database), str(attempt), str(observer.pid)],
++                text=True, capture_output=True, env=self.environment, timeout=20)
++            self.assertNotEqual(mismatch.returncode, 0, mismatch.stdout)
++            self.assertIn('116:', mismatch.stderr)
++            self.assertIsNone(observer.poll(), 'wrong executable binding retired the observer')
++            self.assertEqual(server_events, [('initial-peer', observer.pid)])
++            (attempt / 'manifest').write_bytes(manifest_bytes)
++            recovery = subprocess.run(
++                [str(EXE), 'recover-probe', str(database), str(attempt), str(observer.pid)],
++                text=True, capture_output=True, env=self.environment, timeout=20)
++            self.assertEqual(recovery.returncode, 0, recovery.stderr)
++            self.assertIn('probe:legacy-output', recovery.stdout)
++            self.assertIn('probe-custody-open', recovery.stdout)
++            self.assertEqual(observer.wait(timeout=10), -signal.SIGTERM)
++            server.join(timeout=6)
++            self.assertFalse(server.is_alive(), 'legacy keeper fixture did not close')
++            self.assertEqual(server_errors, [])
++            self.assertEqual(server_events, [('initial-peer', observer.pid), 'legacy-transfer-ready'])
++            self.assertTrue((attempt / 'custody').is_file())
++            self.assertFalse((attempt / 'status').exists())
++            self.assertFalse((attempt / 'released').exists())
++            self.assertFalse((attempt / 'acknowledged').exists())
++        finally:
++            if observer.poll() is None:
++                observer.terminate()
++                observer.wait(timeout=10)
++            if observer.stdin:
++                observer.stdin.close()
++            if observer.stdout:
++                observer.stdout.close()
++            if observer.stderr:
++                observer.stderr.close()
++            os.close(guard_fd)
++            shutil.rmtree(control_dir, ignore_errors=True)
++
++    def test_legacy_unknown_observer_refuses_live_native_without_retiring_observer(self):
++        (self.runtime / 'baton2').mkdir(parents=True, mode=0o700)
++        database = self.cwd / 'state.db'
++        database.touch()
++        attempt = self.cwd / 'legacy-attempt'
++        attempt.mkdir(mode=0o700)
++        (attempt / 'stdout').write_bytes(b'legacy-output\n')
++        control_dir = pathlib.Path(tempfile.mkdtemp(prefix='br-legacy-'))
++        control = control_dir / 'keeper.sock'
++        guard_path = attempt / 'guard'
++        guard_fd = os.open(guard_path, os.O_CREAT | os.O_RDWR, 0o600)
++        fcntl.flock(guard_fd, fcntl.LOCK_EX)
++        observer = None
++        observer_image = self.cwd / 'legacy-observer-bin'
++        shutil.copy2(EXE, observer_image)
++        observer_image.chmod(0o700)
++        native = subprocess.Popen(['/bin/sleep', '30'], stdin=subprocess.DEVNULL,
++                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
++                                  env=self.environment)
++        proc_stat = pathlib.Path('/proc', str(native.pid), 'stat').read_text()
++        ticks = int(proc_stat.rsplit(')', 1)[1].split()[19])
++        boot = next(int(line.split()[1]) for line in pathlib.Path('/proc/stat').read_text().splitlines()
++                    if line.startswith('btime '))
++        (attempt / 'native.pid').write_text(f'{native.pid}\n')
++        (attempt / 'native.birth').write_bytes(
++            struct.pack('=i4xQQ', native.pid, ticks, boot))
++
++        fields = [
++            b'/bin/true\0',
++            os.fsencode(self.cwd),
++            os.fsencode(attempt / 'native.stderr'),
++            b'',
++            os.fsencode(observer_image) + b'\0',
++            os.fsencode(control),
++        ]
++        header = struct.pack('=8s6Q2I', b'BATONRP1',
++                             *(len(value) for value in fields), 0, 0)
++        manifest_bytes = header + b''.join(fields)
++        (attempt / 'manifest').write_bytes(manifest_bytes)
++        canonical = os.fsencode(attempt.resolve())
++        info = attempt.stat()
++        db_info = database.stat()
++        prefix = struct.pack('=8sII7Q', b'BATONAD1', 1, 0,
++                             db_info.st_dev, db_info.st_ino, 0, 0,
++                             info.st_dev, info.st_ino, len(canonical))
++        digest = 0xcbf29ce484222325
++        for byte in prefix + canonical:
++            digest = ((digest ^ byte) * 0x100000001b3) & 0xffffffffffffffff
++        (attempt / 'admission').write_bytes(prefix + struct.pack('=Q', digest) + canonical)
++
++        frame = struct.Struct('=IiQQq')
++        server_errors = []
++        server_events = []
++        initial_ready = threading.Event()
++        native_exited = False
++        server_events = []
++        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++        listener.bind(str(control))
++        listener.listen(2)
++        listener.settimeout(8)
++
++        def exact(connection, count):
++            parts = []
++            remaining = count
++            while remaining:
++                part = connection.recv(remaining)
++                if not part:
++                    raise EOFError('legacy recovery socket closed early')
++                parts.append(part)
++                remaining -= len(part)
++            return b''.join(parts)
++
++        def serve_legacy_keeper():
++            old_connection = None
++            try:
++                old_connection, _ = listener.accept()
++                first = exact(old_connection, frame.size)
++                op, error, serial, length, value = frame.unpack(first)
++                payload = exact(old_connection, length)
++                peer_pid = struct.unpack('3i', old_connection.getsockopt(
++                    socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))[0]
++                assert (op, error, serial, value) == (11, 0, 0, 0)
++                assert payload == os.fsencode(attempt.resolve()) + b'\0'
++                server_events.append(('initial-peer', peer_pid))
++                state = struct.pack('=5i', native.pid, int(native_exited), 0, 0,
++                                    int(native_exited))
++                hello = frame.pack(1, 0, 0, len(state), 2)
++                old_connection.sendmsg([hello], [
++                    (socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [guard_fd]))])
++                old_connection.sendall(state)
++                ready = frame.unpack(exact(old_connection, frame.size))
++                assert ready == (14, 0, 1, 0, 0), ready
++                old_connection.sendall(frame.pack(4, 0, 1, 0, 0))
++                initial_ready.set()
++
++                while True:
++                    replacement, _ = listener.accept()
++                    first = replacement.recv(1)
++                    if not first:
++                        replacement.close()  # recovery liveness probe
++                        continue
++                    break
++                with replacement:
++                    op, error, serial, length, value = frame.unpack(
++                        first + exact(replacement, frame.size - 1))
++                    payload = exact(replacement, length)
++                    assert (op, error, serial, value) == (11, 0, 0, peer_pid)
++                    assert payload == os.fsencode(attempt.resolve()) + b'\0'
++                    state = struct.pack('=5i', native.pid, int(native_exited), 0, 0,
++                                        int(native_exited))
++                    hello = frame.pack(1, 0, 0, len(state), 2)
++                    replacement.sendmsg([hello], [
++                        (socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [guard_fd]))])
++                    replacement.sendall(state)
++                    if not native_exited:
++                        try:
++                            exact(replacement, frame.size)
++                        except EOFError:
++                            server_events.append('refused-before-ready')
++                            old_connection.settimeout(10)
++                            try:
++                                while old_connection.recv(64):
++                                    pass
++                            except ConnectionResetError:
++                                pass
++                            return
++                        raise AssertionError('recovery accepted a keeper reporting a live native')
++                    old_connection.close()
++                    old_connection = None
++                    ready = frame.unpack(exact(replacement, frame.size))
++                    assert ready == (14, 0, 0, 0, 0), ready
++                    server_events.append('legacy-transfer-ready')
++                    replacement.sendall(frame.pack(2, 0, 0, 0, 0))
++                    replacement.settimeout(5)
++                    try:
++                        while replacement.recv(64):
++                            pass
++                    except ConnectionResetError:
++                        pass
++            except BaseException as error:
++                server_errors.append(error)
++            finally:
++                if old_connection is not None:
++                    old_connection.close()
++                listener.close()
++
++        server = threading.Thread(target=serve_legacy_keeper, daemon=True)
++        server.start()
++        observer = subprocess.Popen([str(observer_image), 'observer-hold', str(attempt)],
++                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
++                                    stderr=subprocess.PIPE, env=self.environment)
++        try:
++            if not initial_ready.wait(timeout=5):
++                if observer.poll() is not None:
++                    observer_out, observer_err = observer.communicate(timeout=2)
++                else:
++                    observer_out, observer_err = '<still-running>', '<no stderr>'
++                server.join(timeout=1)
++                self.fail(f'legacy observer did not attach: rc={observer.returncode}; '
++                          f'out={observer_out!r}; err={observer_err!r}; '
++                          f'server={server_errors!r}')
++            recovery = subprocess.run(
++                [str(EXE), 'recover-probe', str(database), str(attempt), str(observer.pid)],
++                text=True, capture_output=True, env=self.environment, timeout=20)
++            self.assertNotEqual(recovery.returncode, 0, recovery.stdout)
++            self.assertIn('16:', recovery.stderr)
++            self.assertIsNone(observer.poll(), 'live-native refusal retired the old observer')
++            self.assertIsNone(native.poll(), 'live-native refusal changed native process state')
++            observer.terminate()
++            self.assertEqual(observer.wait(timeout=10), -signal.SIGTERM)
++            server.join(timeout=6)
++            self.assertFalse(server.is_alive(), 'legacy keeper fixture did not close')
++            self.assertEqual(server_errors, [])
++            self.assertEqual(server_events, [('initial-peer', observer.pid), 'refused-before-ready'])
++            self.assertFalse((attempt / 'custody').exists())
++            self.assertFalse((attempt / 'status').exists())
++            self.assertFalse((attempt / 'released').exists())
++            self.assertFalse((attempt / 'acknowledged').exists())
++        finally:
++            if observer.poll() is None:
++                observer.terminate()
++                observer.wait(timeout=10)
++            if observer.stdin:
++                observer.stdin.close()
++            if observer.stdout:
++                observer.stdout.close()
++            if observer.stderr:
++                observer.stderr.close()
++            if native.poll() is None:
++                native.terminate()
++                native.wait(timeout=10)
++            os.close(guard_fd)
++            shutil.rmtree(control_dir, ignore_errors=True)
++
+     def test_observer_recovery_rejects_reused_pid_start_identity(self):
+         runtime = self.runtime
+         (runtime / 'baton2').mkdir(parents=True, mode=0o700)

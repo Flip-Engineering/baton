@@ -1,0 +1,160 @@
+From 89cbf921382f6007505876967b804031decde710 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 18:12:19 -0700
+Subject: [PATCH 1/2] Require an admission guard on the fork compiler launcher
+
+When the selected compiler is a shell launcher, refuse selection unless it
+contains the build-admission guard marker. Official ELF compilers are unchanged
+and keep their separate packaging path.
+---
+ .github/scripts/prepare-native-compiler.py | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/.github/scripts/prepare-native-compiler.py b/.github/scripts/prepare-native-compiler.py
+index 51176f02..bc1d6014 100644
+--- a/.github/scripts/prepare-native-compiler.py
++++ b/.github/scripts/prepare-native-compiler.py
+@@ -48,6 +48,10 @@ def main():
+     binary_sha = digest(compiler)
+     if 'binary_sha256' in identity:
+         require(binary_sha == identity['binary_sha256'], 'The selected compiler binary changed.')
++    if compiler.read_bytes()[:2] == b'#!':
++        launcher = compiler.read_text(errors='replace')
++        require('build-admission-required' in launcher,
++                'The fork compiler launcher lacks the build admission guard.')
+     selection = {'schema': 'baton2-linux-compiler-selection-v1', **identity,
+                  'selection': 'retained' if selected else 'downloaded',
+                  'compiler_archive_sha256': archive_sha, 'compiler_binary_sha256': binary_sha,
+-- 
+2.43.0
+
+
+From e283b383a28948fcc327711ec840a025a5191617 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 18:13:24 -0700
+Subject: [PATCH 2/2] Add native Bend2 lease and reservation decision
+
+Implement the full/focused/reuse class rules, exclusive full lease, aggregate
+reserved budget and refusal causes in Bend2. A focused native test entry
+compiles and prints the decision fixture outcomes.
+---
+ bend2/src/coordinator/build-admission.bend | 85 ++++++++++++++++++++++
+ bend2/test/build-admission.bend            | 14 ++++
+ 2 files changed, 99 insertions(+)
+ create mode 100644 bend2/src/coordinator/build-admission.bend
+ create mode 100644 bend2/test/build-admission.bend
+
+diff --git a/bend2/src/coordinator/build-admission.bend b/bend2/src/coordinator/build-admission.bend
+new file mode 100644
+index 00000000..54979b83
+--- /dev/null
++++ b/bend2/src/coordinator/build-admission.bend
+@@ -0,0 +1,85 @@
++import Base
++
++# Native lease and reservation decision for build admission. The host cgroup
++# and process effects live outside this module; these laws fix the class rules,
++# the exclusive full lease and the aggregate reservation arithmetic.
++
++type LeaseClass is Data:
++  Full{}
++  Focused{}
++  Reuse{}
++  Check{}
++
++type Lease is Data:
++  Lease{key: String, class: LeaseClass, reservedKib: U32}
++
++type Capacity is Data:
++  Capacity{maximumKib: U32, currentKib: U32}
++
++type Summary is Data:
++  Summary{reservedKib: U32, full: Bool}
++
++type Decision is Data:
++  Admitted{}
++  Refused{condition: String}
++
++def is_full(class: LeaseClass) -> Bool:
++  match class:
++    case Full{}: True{}
++    case Focused{}: False{}
++    case Reuse{}: False{}
++    case Check{}: False{}
++
++def summarize(leases: List<Lease>, acc: U32, full: Bool) -> Summary:
++  match leases:
++    case Nil{}: Summary{acc, full}
++    case Con{Lease{key, class, reservedKib}, rest}:
++      summarize(rest, U32.add(acc, reservedKib), Bool.or(full, is_full(class)))
++
++def decide_summary(maximumKib: U32, currentKib: U32, class: LeaseClass,
++                   reservedKib: U32, summary: Summary) -> Decision:
++  match summary:
++    case Summary{already, full}:
++      Bool.pick(Decision,
++        Bool.and(is_full(class), full),
++        Refused{"full-generation-in-flight"},
++        Bool.pick(Decision,
++          U32.is_le(U32.add(already, reservedKib), maximumKib),
++          Admitted{},
++          Refused{"capacity-exceeded"}))
++
++def decide_class(capacity: Capacity, leases: List<Lease>,
++                 class: LeaseClass, reservedKib: U32) -> Decision:
++  match capacity:
++    case Capacity{maximumKib, currentKib}:
++      decide_summary(maximumKib, currentKib, class, reservedKib,
++        summarize(leases, 0, False{}))
++
++def decide(capacity: Capacity, leases: List<Lease>, request: Lease) -> Decision:
++  match request:
++    case Lease{key, class, reservedKib}:
++      decide_class(capacity, leases, class, reservedKib)
++
++law focused_jobs_share_below_budget:
++  {decide(Capacity{100, 0}, Con{Lease{"a", Focused{}, 40}, Nil{}}, Lease{"b", Focused{}, 50}) == Admitted{} : Decision}
++
++def focused_jobs_share_below_budget():
++  {==}
++
++law over_budget_is_refused:
++  {decide(Capacity{100, 0}, Con{Lease{"a", Focused{}, 60}, Nil{}}, Lease{"b", Focused{}, 50}) == Refused{"capacity-exceeded"} : Decision}
++
++def over_budget_is_refused():
++  {==}
++
++law full_generation_is_exclusive:
++  {decide(Capacity{1000, 0}, Con{Lease{"a", Full{}, 400}, Nil{}}, Lease{"b", Full{}, 400}) == Refused{"full-generation-in-flight"} : Decision}
++
++def full_generation_is_exclusive():
++  {==}
++
++law reuse_is_cheap:
++  {decide(Capacity{10, 0}, Nil{}, Lease{"r", Reuse{}, 1}) == Admitted{} : Decision}
++
++def reuse_is_cheap():
++  {==}
+diff --git a/bend2/test/build-admission.bend b/bend2/test/build-admission.bend
+new file mode 100644
+index 00000000..71589167
+--- /dev/null
++++ b/bend2/test/build-admission.bend
+@@ -0,0 +1,14 @@
++import Base
++import ../src/coordinator/build-admission.bend as A
++
++def text(d: A.Decision) -> String:
++  match d:
++    case A.Admitted{}: "admitted"
++    case A.Refused{condition}: "refused:" ++ condition
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    a : Unit <- IO.print("focused=" ++ text(A.decide(A.Capacity{100, 0}, Con{A.Lease{"a", A.Focused{}, 40}, Nil{}}, A.Lease{"b", A.Focused{}, 50})))
++    b : Unit <- IO.print("over=" ++ text(A.decide(A.Capacity{100, 0}, Con{A.Lease{"a", A.Focused{}, 60}, Nil{}}, A.Lease{"b", A.Focused{}, 50})))
++    c : Unit <- IO.print("full=" ++ text(A.decide(A.Capacity{1000, 0}, Con{A.Lease{"a", A.Full{}, 400}, Nil{}}, A.Lease{"b", A.Full{}, 400})))
++    IO.print("reuse=" ++ text(A.decide(A.Capacity{10, 0}, Nil{}, A.Lease{"r", A.Reuse{}, 1})))
+-- 
+2.43.0
+

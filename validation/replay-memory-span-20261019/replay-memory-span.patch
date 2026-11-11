@@ -1,0 +1,681 @@
+diff --git a/bend2/src/coordinator/logs.bend b/bend2/src/coordinator/logs.bend
+index 29bd8e565..ffc2697e5 100644
+--- a/bend2/src/coordinator/logs.bend
++++ b/bend2/src/coordinator/logs.bend
+@@ -119,15 +119,10 @@ def first_failure(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U
+ def tab() -> Char:
+   Char.from_u32(9)
+ 
+-def first_field(fields: List<String>) -> String:
+-  match fields:
+-    case Nil{}: ""
+-    case Con{head, rest}: head
+-
+-def second_field(fields: List<String>) -> String:
+-  match fields:
+-    case Nil{}: ""
+-    case Con{head, rest}: first_field(rest)
++def before_tab(+s: String) -> String:
++  match s:
++    case SNil{}: ""
++    case SCon{c, +rest}: Bool.pick(String,Char.is_eq(c,tab()),"",SCon{c,SNil{}} ++ before_tab(rest))
+ 
+ def after_tab(+s: String) -> String:
+   match s:
+@@ -135,10 +130,10 @@ def after_tab(+s: String) -> String:
+     case SCon{c, +rest}: Bool.pick(String,Char.is_eq(c,tab()),rest,after_tab(rest))
+ 
+ def entry_kind(entry: String) -> String:
+-  first_field(Tx.split_tabs(entry))
++  before_tab(entry)
+ 
+ def entry_id(entry: String) -> String:
+-  second_field(Tx.split_tabs(entry))
++  before_tab(after_tab(entry))
+ 
+ def entry_line(entry: String) -> String:
+   after_tab(after_tab(entry))
+@@ -150,12 +145,12 @@ def entry_matches(+entry: String, +kind: String, +id: String) -> Bool:
+   Bool.and(String.eq(entry_kind(entry),kind),String.eq(entry_id(entry),id))
+ 
+ # The entries that stay when the ones this kind and identity name leave.
+-def keep_pair(matched: Bool, +entry: String, rest_result: List<String>) -> List<String>:
++def keep_pair(matched: Bool, +entry: String, rest_result: List<&2,String>) -> List<&2,String>:
+   match matched:
+     case True{}: rest_result
+     case False{}: Con{entry, rest_result}
+ 
+-def keep_walk(entries: List<String>, +kind: String, +id: String) -> List<String>:
++def keep_walk(entries: List<&2,String>, +kind: String, +id: String) -> List<&2,String>:
+   match entries:
+     case Nil{}: Nil{}
+     case Con{+entry, rest}: keep_pair(entry_matches(entry,kind,id),entry,keep_walk(rest,kind,id))
+@@ -166,27 +161,98 @@ def taken_pair(matched: Bool, +entry: String, rest_result: List<String>) -> List
+     case True{}: Con{entry_line(entry), rest_result}
+     case False{}: rest_result
+ 
+-def take_walk(entries: List<String>, +kind: String, +id: String) -> List<String>:
++def take_walk(entries: List<&2,String>, +kind: String, +id: String) -> List<String>:
+   match entries:
+     case Nil{}: Nil{}
+     case Con{+entry, rest}: taken_pair(entry_matches(entry,kind,id),entry,take_walk(rest,kind,id))
+ 
+-def all_walk(entries: List<String>) -> List<String>:
++def all_walk(entries: List<&2,String>) -> List<String>:
+   match entries:
+     case Nil{}: Nil{}
+     case Con{entry, rest}: Con{entry_line(entry), all_walk(rest)}
+ 
+-def held_put(held: String, +kind: String, +id: String, +line: String) -> String:
+-  Tx.join("\n",Con{entry_of(kind,id,line), keep_walk(Tx.split_lines(held),kind,id)})
++def shared_rows(entries: List<String>) -> List<&2,String>:
++  match entries:
++    case Nil{}: Nil{}
++    case Con{head,rest}: Con{head,shared_rows(rest)}
++
++def affine_rows(entries: List<&2,String>) -> List<String>:
++  match entries:
++    case Nil{}: Nil{}
++    case Con{head,rest}: Con{head,affine_rows(rest)}
++
++def held_rows(+held: String) -> List<&2,String>:
++  shared_rows(Tx.split_lines(held))
+ 
+-def held_drop(held: String, +kind: String, +id: String) -> String:
+-  Tx.join("\n",keep_walk(Tx.split_lines(held),kind,id))
++def held_text(entries: List<&2,String>) -> String:
++  Tx.join("\n",affine_rows(entries))
+ 
+-def held_lines(held: String, +kind: String, +id: String) -> List<String>:
+-  take_walk(Tx.split_lines(held),kind,id)
++def held_after_checkpoint(enabled: Bool, +materialized: String, pending: List<&2,String>, result: Result<&1,&1,U32 & String,Unit>) -> List<&2,String>:
++  match result:
++    case Fail{error}: pending
++    case Done{unit}: Bool.pick(List<&2,String>,enabled,held_rows(materialized),pending)
++
++def held_put(held: List<&2,String>, +kind: String, +id: String, +line: String) -> List<&2,String>:
++  Con{entry_of(kind,id,line), keep_walk(held,kind,id)}
++
++def drop_pair_found(+entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
++  (kept,changed)=result
++  (kept,True{})
++
++def drop_pair_missed(+entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
++  (kept,changed)=result
++  (Con{entry,kept},changed)
++
++def drop_pair(found: Bool, +entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
++  match found:
++    case True{}: drop_pair_found(entry,result)
++    case False{}: drop_pair_missed(entry,result)
++
++def drop_walk(entries: List<&2,String>, +kind: String, +id: String) -> List<&2,String> & Bool:
++  match entries:
++    case Nil{}: (Nil{},False{})
++    case Con{+entry, rest}: drop_pair(entry_matches(entry,kind,id),entry,drop_walk(rest,kind,id))
++
++def held_drop(held: List<&2,String>, +kind: String, +id: String) -> List<&2,String> & Bool:
++  drop_walk(held,kind,id)
++
++def take_keep_pair(found: Bool, +entry: String, taken: List<String>, kept: List<&2,String>, changed: Bool) -> List<String> & List<&2,String> & Bool:
++  match found:
++    case True{}: (Con{entry_line(entry),taken},kept,True{})
++    case False{}: (taken,Con{entry,kept},changed)
++
++def take_keep_cons(+entry: String, +kind: String, +id: String, result: List<String> & List<&2,String> & Bool) -> List<String> & List<&2,String> & Bool:
++  (taken,kept,changed)=result
++  take_keep_pair(entry_matches(entry,kind,id),entry,taken,kept,changed)
++
++def take_and_keep(entries: List<&2,String>, +kind: String, +id: String) -> List<String> & List<&2,String> & Bool:
++  match entries:
++    case Nil{}: (Nil{},Nil{},False{})
++    case Con{+entry, rest}: take_keep_cons(entry,kind,id,take_and_keep(rest,kind,id))
+ 
+-def held_all(held: String) -> List<String>:
+-  all_walk(Tx.split_lines(held))
++def message_entry_found(+entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
++  (kept,changed)=result
++  (kept,True{})
++
++def message_entry_missed(+entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
++  (kept,changed)=result
++  (Con{entry,kept},changed)
++
++def message_entry(found: Bool, +entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
++  match found:
++    case True{}: message_entry_found(entry,result)
++    case False{}: message_entry_missed(entry,result)
++
++def held_drop_message(entries: List<&2,String>, +id: String) -> List<&2,String> & Bool:
++  match entries:
++    case Nil{}: (Nil{},False{})
++    case Con{+entry, rest}: message_entry(Bool.and(String.eq(entry_id(entry),id),Bool.or(String.eq(entry_kind(entry),"message_start"),String.eq(entry_kind(entry),"message_update"))),entry,held_drop_message(rest,id))
++
++def held_lines(held: List<&2,String>, +kind: String, +id: String) -> List<String>:
++  take_walk(held,kind,id)
++
++def held_all(held: List<&2,String>) -> List<String>:
++  all_walk(held)
+ 
+ def reverse_held_rows(rows: List<String>, tail: List<String>) -> List<String>:
+   match rows:
+@@ -228,7 +294,7 @@ def frame_id_span_sql() -> String:
+ def frame_id_decoded(db: String, decoded: Frame.FrameDecoded) -> IO(String):
+   match decoded:
+     case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,frame_id_sql(line)))
+-    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,frame_id_span_sql()))
++    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span_memory(spool,offset,length,frame_id_span_sql()))
+     case Frame.InvalidFrame{line}: IO.pure(String,"")
+ 
+ def frame_id(db: String, decoded: Frame.FrameDecoded, omp: Bool) -> IO(String):
+@@ -412,76 +478,84 @@ def retained_from(compact: Bool, db: String, +line: String, event: String, +log:
+     case True{}: terminal_compact(db,line,event,log)
+     case False{}: IO.pure(String,line)
+ 
+-def quiet_keep(keep: Bool, +line: String, held: String) -> List<String> & String:
++def quiet_keep(keep: Bool, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match keep:
+-    case True{}: (Con{line,Nil{}},held)
+-    case False{}: (Nil{},held)
++    case True{}: (Con{line,Nil{}},held,False{})
++    case False{}: (Nil{},held,False{})
+ 
+-def step_quiet(+kind: String, +line: String, held: String) -> List<String> & String:
++def step_quiet(+kind: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   quiet_keep(Bool.or(terminal_kind(kind),String.is_empty(kind)),line,held)
+ 
+-def step_message_end(end: Bool, +kind: String, +id: String, +line: String, +held: String) -> List<String> & String:
++def finish_held_change(+line: String, result: List<&2,String> & Bool) -> List<String> & List<&2,String> & Bool:
++  (kept,changed)=result
++  (Con{line,Nil{}},kept,changed)
++
++def step_message_end(end: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match end:
+-    case True{}: (Con{line,Nil{}}, held_drop(held_drop(held,"message_start",id),"message_update",id))
+-    case False{}: (Con{line,Nil{}}, held)
++    case True{}: finish_held_change(line,held_drop_message(held,id))
++    case False{}: (Con{line,Nil{}},held,False{})
++
++def finish_tool_end(+line: String, result: List<String> & List<&2,String> & Bool) -> List<String> & List<&2,String> & Bool:
++  (taken,kept,changed)=result
++  (List.append(&1,String,taken,Con{line,Nil{}}),kept,changed)
+ 
+-def step_tool_end(end: Bool, +kind: String, +id: String, +line: String, +held: String) -> List<String> & String:
++def step_tool_end(end: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match end:
+-    case True{}: (List.append(&1,String,held_lines(held,"tool_execution_update",id),Con{line,Nil{}}), held_drop(held,"tool_execution_update",id))
++    case True{}: finish_tool_end(line,take_and_keep(held,"tool_execution_update",id))
+     case False{}: step_message_end(String.eq(kind,"message_end"),kind,id,line,held)
+ 
+-def step_prefix(identified: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
++def step_prefix(identified: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match identified:
+-    case True{}: (Nil{},held_put(held,kind,id,line))
+-    case False{}: (Con{line,Nil{}},held)
++    case True{}: (Nil{},held_put(held,kind,id,line),True{})
++    case False{}: (Con{line,Nil{}},held,False{})
+ 
+ # A message_update carries the running view of a message the provider resends;
+ # the newest one is held like any other prefix frame, so an assistant stream
+ # that dies before its message_end still leaves the text it had produced.
+-def step_snapshot(snapshot: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
++def step_snapshot(snapshot: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match snapshot:
+     case True{}: step_prefix(Bool.not(String.is_empty(id)),"message_update",id,line,held)
+     case False{}: step_tool_end(String.eq(kind,"tool_execution_end"),kind,id,line,held)
+ 
+-def step_start(start: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
++def step_start(start: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match start:
+     case True{}: step_prefix(Bool.not(String.is_empty(id)),"message_start",id,line,held)
+     case False{}: step_snapshot(String.eq(kind,"message_update"),kind,id,line,held)
+ 
+-def step_update(update: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
++def step_update(update: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match update:
+     case True{}: step_prefix(Bool.not(String.is_empty(id)),"tool_execution_update",id,line,held)
+     case False{}: step_start(String.eq(kind,"message_start"),kind,id,line,held)
+ 
+ # The lines a frame contributes at the default level.
+-def step_default(+kind: String, +id: String, +line: String, held: String) -> List<String> & String:
++def step_default(+kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   step_update(String.eq(kind,"tool_execution_update"),kind,id,line,held)
+ 
+-def step_quiet_or_default(quiet: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
++def step_quiet_or_default(quiet: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match quiet:
+     case True{}: step_quiet(kind,line,held)
+     case False{}: step_default(kind,id,line,held)
+ 
+-def step_codex_start(start: Bool, +level: String, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
++def step_codex_start(start: Bool, +level: String, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match start:
+     case True{}: step_prefix(Bool.not(String.is_empty(id)),"codex_command_start",id,line,held)
+     case False{}: step_quiet_or_default(String.eq(level,"quiet"),kind,id,line,held)
+ 
+ # The completed command is written immediately. Its held start is removed;
+ # unfinished starts remain available to flush and checkpoint restoration.
+-def step_codex_end(end: Bool, +level: String, +kind: String, +id: String, +line: String, +held: String) -> List<String> & String:
++def step_codex_end(end: Bool, +level: String, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match end:
+-    case True{}: (Con{line,Nil{}},held_drop(held,"codex_command_start",id))
++    case True{}: finish_held_change(line,held_drop(held,"codex_command_start",id))
+     case False{}: step_codex_start(String.eq(kind,"codex_command_start"),level,kind,id,line,held)
+ 
+-def step_choose_step(diagnostic: Bool, +level: String, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
++def step_choose_step(diagnostic: Bool, +level: String, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match diagnostic:
+-    case True{}: (Con{line,Nil{}},held)
++    case True{}: (Con{line,Nil{}},held,False{})
+     case False{}: step_codex_end(String.eq(kind,"codex_command_end"),level,kind,id,line,held)
+ 
+ # The lines one frame contributes to the live log and the prefix frames the turn
+ # still holds.
+-def frame_step(policy: Policy, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
++def frame_step(policy: Policy, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+   match policy:
+     case Policy{+level}: step_choose_step(String.eq(level,"diagnostic"),level,kind,id,line,held)
+ 
+@@ -495,28 +569,69 @@ def retained(db: String, policy: Policy, +kind: String, decoded: Frame.FrameDeco
+     case Policy{+level}:
+       retained_decoded(Bool.and(terminal_kind(kind),Bool.not(String.eq(level,"diagnostic"))),db,decoded,event,log)
+ 
+-def step_lines(step: List<String> & String) -> List<String>:
+-  (lines,held)=step
++def step_lines(step: List<String> & List<&2,String> & Bool) -> List<String>:
++  (lines,held,changed)=step
+   lines
+ 
+-def step_held(step: List<String> & String) -> String:
+-  (lines,held)=step
++def step_held(step: List<String> & List<&2,String> & Bool) -> List<&2,String>:
++  (lines,held,changed)=step
+   held
+ 
+ # Everything still held when the turn ends without the frame that supersedes it.
+-def flush(held: String) -> List<String>:
++def flush_rows(held: List<&2,String>) -> List<String>:
+   held_all(held)
+ 
++def flush(held: String) -> List<String>:
++  flush_rows(held_rows(held))
++
+ def entry_count(entries: List<String>) -> U32:
+   match entries:
+     case Nil{}: 0
+     case Con{head, rest}: U32.add(1,entry_count(rest))
+ 
++def entries_empty(entries: List<String>) -> Bool:
++  match entries:
++    case Nil{}: True{}
++    case other: False{}
++
+ # A turn that ends on a read failure writes what it held and names the episode,
+ # so the partial output it kept is not lost with the process.
++def summary_cons(summary: Bool & U32) -> Bool & U32:
++  (empty,count)=summary
++  (False{},U32.add(1,count))
++
++def entry_summary(entries: List<&2,String>) -> Bool & U32:
++  match entries:
++    case Nil{}: (True{},0)
++    case Con{head,rest}: summary_cons(entry_summary(rest))
++
++def interrupted_summary(summary: Bool & U32) -> List<String>:
++  (empty,count)=summary
++  match empty:
++    case True{}: Nil{}
++    case False{}: Con{"{\"type\":\"baton_log_interrupted\",\"held\":" ++ U32.show(count) ++ "}",Nil{}}
++
++def flush_summary_cons(+entry: String, result: List<String> & (Bool & U32)) -> List<String> & (Bool & U32):
++  (lines,summary)=result
++  (Con{entry_line(entry),lines},summary_cons(summary))
++
++def flush_summary(entries: List<&2,String>) -> List<String> & (Bool & U32):
++  match entries:
++    case Nil{}: (Nil{},(True{},0))
++    case Con{+entry,rest}: flush_summary_cons(entry,flush_summary(rest))
++
++def flush_interrupted_parts(result: List<String> & (Bool & U32)) -> List<String> & List<String>:
++  (lines,summary)=result
++  (lines,interrupted_summary(summary))
++
++def flush_interrupted(held: List<&2,String>) -> List<String> & List<String>:
++  flush_interrupted_parts(flush_summary(held))
++
++def interrupted_rows(held: List<&2,String>) -> List<String>:
++  interrupted_summary(entry_summary(held))
++
+ def interrupted(+held: String) -> List<String>:
+-  Bool.pick(List<String>,String.is_empty(held),Nil{},
+-    Con{"{\"type\":\"baton_log_interrupted\",\"held\":" ++ U32.show(entry_count(Tx.split_lines(held))) ++ "}",Nil{}})
++  interrupted_rows(held_rows(held))
+ 
+ def failed_now(previous: Bool, written: Result<&1,&1,U32 & String,Unit>) -> Bool:
+   match written:
+diff --git a/bend2/src/coordinator/turn.bend b/bend2/src/coordinator/turn.bend
+index eb0bf0223..88b6d7a44 100644
+--- a/bend2/src/coordinator/turn.bend
++++ b/bend2/src/coordinator/turn.bend
+@@ -137,9 +137,9 @@ def shared_result_io(-A: Data, action: IO(Result<&1,&1,U32 & String,A>)) -> IO(R
+     result : Result<&1,&1,U32 & String,A> <- action
+     IO.pure(Result<&2,&2,Sigma<&2,&2,U32,_ => String>,A>,shared_result(A,result))
+ 
+-def with_frame_step(-R: Type, step: List<String> & String, next: List<String> -> String -> IO(R)) -> IO(R):
++def with_frame_step(-R: Type, step: List<String> & List<&2,String> & Bool, next: List<String> -> List<&2,String> -> Bool -> IO(R)) -> IO(R):
+   match step:
+-    case (lines,held): next(lines,held)
++    case (lines,held,changed): next(lines,held,changed)
+ 
+ def delivery_result(+error: String) -> Result<&1,&1,U32 & String,Unit>:
+   Bool.pick(Result<&1,&1,U32 & String,Unit>,String.is_empty(error),Done{Unit{}},Fail{(1,error)})
+@@ -619,7 +619,7 @@ def omp_frame_kind_sql(+value: String) -> String:
+ def omp_frame_kind_decoded(+db: String, decoded: Frame.FrameDecoded) -> IO(String):
+   match decoded:
+     case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,omp_frame_kind_sql(C.q(line))))
+-    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,omp_frame_kind_sql("?1")))
++    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span_memory(spool,offset,length,omp_frame_kind_sql("?1")))
+     case Frame.InvalidFrame{line}: IO.pure(String,"")
+ 
+ def omp_frame_kind(+db: String, decoded: Frame.FrameDecoded, omp: Bool) -> IO(String):
+@@ -704,6 +704,16 @@ def checkpoint_written(written: Result<&1,&1,U32 & String,Unit>, enabled: Bool,
+     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+     case Done{unit}: checkpoint(enabled,log,held)
+ 
++def checkpoint_rows(enabled: Bool, +log: String, held: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
++  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Bool.or(Bool.not(enabled),String.is_empty(log)),
++    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
++    Checkpoint.LogCheckpoint.save(log ++ ".pending",Tx.join("\n",Logs.flush_rows(held))))
++
++def checkpoint_written_rows(written: Result<&1,&1,U32 & String,Unit>, enabled: Bool, +log: String, held: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
++  match written:
++    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
++    case Done{unit}: checkpoint_rows(enabled,log,held)
++
+ # A later direct turn appends an earlier observer's incomplete checkpoint
+ # before producing new frames. Removal follows the successful append.
+ def checkpoint_restore_read(found: Result<&1,&1,U32 & String,String>, +log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+@@ -734,7 +744,7 @@ def with_restore_result(-A: Type, result: Result<&1,&1,U32 & String,Unit>, next:
+ type WakeRead is Type:
+   AwakeEnd{notice: String, active: Bool}
+   AwakeLine{line: String, notice: String, active: Bool}
+-  Again{policy: Logs.Policy, held: String, log_failed: Bool, cursor: String, last_message: String, primary: String, current: String, terminal: String, filter: String, codex_log: String, first_error: String, checkpoint_state: Observer.State, incomplete: Bool, alive: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, next: Result<&1,&1,U32 & String,WakeRead>}
++  Again{policy: Logs.Policy, held: List<&2,String>, log_failed: Bool, cursor: String, last_message: String, primary: String, current: String, terminal: String, filter: String, codex_log: String, first_error: String, checkpoint_state: Observer.State, incomplete: Bool, alive: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, next: Result<&1,&1,U32 & String,WakeRead>}
+ 
+ def wake_read(line: Maybe<String>, notice: String, active: Bool) -> WakeRead:
+   match line:
+@@ -836,12 +846,12 @@ def next_wake(+spool: String, +read: U32, sub: U32, active: Bool, spanned: Bool)
+     case True{}: span_wake_line(spool,read,sub,active)
+ 
+ @unsafe
+-def consume_exhausted(+db: String, +player: String, +id: String, +log: String, +spool: String, held: String, +log_failed: Bool, +handle: U32, +harness: String, codex_log: String, terminal: String, filter: String, requested: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, wake_sub: U32, wake_on: Bool) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
++def consume_exhausted(+db: String, +player: String, +id: String, +log: String, +spool: String, held: List<&2,String>, +log_failed: Bool, +handle: U32, +harness: String, codex_log: String, terminal: String, filter: String, requested: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, wake_sub: U32, wake_on: Bool) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+     +wake_closed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,wake_close(wake_sub,wake_on))
+     +sent : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.join(Result<&1,&1,U32 & String,Unit>,sender))
+     +status : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,P.ProcessChild.wait(handle))
+-    output_lines : List<String> <- IO.pure(List<String>,List.append(&1,String,Logs.flush(held),filter_lines(filter,requested,String.eq(harness,"omp\n"))))
++    output_lines : List<String> <- IO.pure(List<String>,List.append(&1,String,Logs.flush_rows(held),filter_lines(filter,requested,String.eq(harness,"omp\n"))))
+     +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,output_lines,Observer.output(checkpoint_state),Bool.or(log_failed,Observer.output_done(checkpoint_state)),Bool.not(String.is_empty(attempt)),True{}))
+     +flushed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
+     +write_failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,flushed)))
+@@ -881,7 +891,7 @@ def question_frame_failed(result: Result<&1,&1,U32 & String,String>) -> Bool:
+     case Fail{error}: True{}
+ 
+ @unsafe
+-def consume_frame(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +spool: String, +spanned: Bool, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, +wake_sub: U32, +alive: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, +line: String, +notice: String) -> IO(WakeRead):
++def consume_frame(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: List<&2,String>, +log_failed: Bool, +handle: U32, +harness: String, +spool: String, +spanned: Bool, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, +wake_sub: U32, +alive: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, +line: String, +notice: String) -> IO(WakeRead):
+   do IO<WakeRead>:
+     +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
+     +decoded : Frame.FrameDecoded <- IO.pure(Frame.FrameDecoded,Frame.decode(line,spool,spanned))
+@@ -898,12 +908,12 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
+     +raw_event : String <- omp_terminal(db,decoded,message,activity,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")),Guidance.relevant(kind,String.eq(harness,"omp\n")))
+     +event : String <- dsh_event(db,line,Bool.and(dsh,Dsh.admitted(Tx.trim_nl(kind))),raw_event)
+     +kept : String <- Logs.retained(db,policy,Tx.trim_nl(kind),decoded,event,log)
+-    step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(policy,Tx.trim_nl(kind),frame_key,kept,held))
+-    with_frame_step(WakeRead,step,lines => next_held_value => do IO<WakeRead>:
+-      +next_held : String <- IO.pure(String,next_held_value)
++    step : List<String> & List<&2,String> & Bool <- IO.pure(List<String> & List<&2,String> & Bool,Logs.frame_step(policy,Tx.trim_nl(kind),frame_key,kept,held))
++    with_frame_step(WakeRead,step,lines => next_held_value => held_changed => do IO<WakeRead>:
++      +next_held : List<&2,String> <- IO.pure(List<&2,String>,next_held_value)
+       +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,lines,Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
+       +logged : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
+-      +saved_checkpoint : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,checkpoint_written(unshared_result(Unit,logged),Bool.and(String.is_empty(attempt),Bool.and(Bool.not(log_failed),Bool.not(String.eq(held,next_held)))),log,next_held))
++      +saved_checkpoint : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,checkpoint_written_rows(unshared_result(Unit,logged),Bool.and(String.is_empty(attempt),Bool.and(Bool.not(log_failed),held_changed)),log,next_held))
+       +written : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.first_failure(unshared_result(Unit,saved_checkpoint),unshared_result(Unit,logged))))
+       +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,written)))
+       +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
+@@ -929,11 +939,13 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
+       questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool <- NativeRequests.observe(db,player,id,attempt,question_frame,deliveries,question_needed)
+       +mode : String <- filter_mode(db,decoded,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"response")),requested)
+       +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
+-      +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.make_full(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held,activity,Logs.position(Observer.output(checkpoint_state),unshared_result(String,positioned)),episode))
++      +next_checkpoint_base : Observer.State <- IO.pure(Observer.State,Observer.make_full(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,Observer.held(checkpoint_state),activity,Logs.position(Observer.output(checkpoint_state),unshared_result(String,positioned)),episode))
+       NativeRequests.with_observation(WakeRead,questions,wakes => question_error => question_incomplete => do IO<WakeRead>:
+         +question_text : String <- IO.pure(String,question_error)
+         +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
+-        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame))))))))
++        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint_base,message_frame,terminal_selected,codex_frame))))))))
++        checkpoint_held : String <- IO.pure(String,Bool.pick(String,checkpoint_enabled,Logs.held_text(next_held),Observer.held(checkpoint_state)))
++        +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.with_held(next_checkpoint_base,checkpoint_held))
+         +next_checkpoint_state : Observer.State <- Observer.checkpoint_state(spool,next_checkpoint,checkpoint_enabled)
+         +checkpointed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,Observer.after_materialized_observation(db,handle,next_checkpoint_state,checkpoint_enabled,monitor,unshared_result(String,observed)))
+         checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,checkpoint_enabled,unshared_result(Unit,checkpointed))
+@@ -941,27 +953,31 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
+         +next_incomplete : Bool <- IO.pure(Bool,Bool.or(invalid,Bool.or(incomplete_observation,Bool.or(request_incomplete,Bool.or(question_frame_failed(question_result),Bool.or(observation_store_failed(unshared_result(String,observed)),Bool.or(checkpoint_write_failed(unshared_result(Unit,closed_input)),Bool.or(checkpoint_write_failed(unshared_result(Unit,checkpointed)),failed))))))))
+         +stopping : Bool <- IO.pure(Bool,Bool.or(invalid,Bool.not(String.is_empty(next_error))))
+         next : Result<&1,&1,U32 & String,WakeRead> <- Bool.pick(IO(Result<&1,&1,U32 & String,WakeRead>),stopping,IO.pure(Result<&1,&1,U32 & String,WakeRead>,Fail{(0,"stopping before the next span read after a failure")}),next_wake(spool,handle,wake_sub,alive,spanned))
+-        IO.pure(WakeRead,Again{policy,Observer.held_after_checkpoint(checkpoint_enabled,Observer.held(next_checkpoint_state),next_held,unshared_result(Unit,checkpointed)),failed,next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_error,next_checkpoint_state,next_incomplete,alive,wakes,next})))
++        IO.pure(WakeRead,Again{policy,Logs.held_after_checkpoint(checkpoint_enabled,Observer.held(next_checkpoint_state),next_held,unshared_result(Unit,checkpointed)),failed,next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_error,next_checkpoint_state,next_incomplete,alive,wakes,next})))
++
++def consume_failed(+db: String, +player: String, +id: String, +log: String, parts: List<String> & List<String>, +log_failed: Bool, +handle: U32, +harness: String, +terminal: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +wake_sub: U32, wake_on: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, error: U32 & String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
++  (output_lines,interrupted_line)=parts
++  do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
++    wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
++    closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
++    sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
++    +waited : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,P.ProcessChild.wait(handle))
++    +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,output_lines,Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
++    +flushed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
++    +write_failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,flushed)))
++    checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint(Bool.and(String.is_empty(attempt),Bool.not(write_failed)),log,"")
++    named_position : Result<&1,&1,U32 & String,String> <- Logs.write_positioned(log,interrupted_line,Logs.position(Observer.output(checkpoint_state),unshared_result(String,positioned)),write_failed,Bool.not(String.is_empty(attempt)),True{})
++    named : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,named_position))
++    read_error : String <- IO.pure(String,append_error(first_error,"Native output read failed: " ++ error_text(error)))
++    sent_error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(read_error,wake_closed),closed),sent))
++    waited_error : String <- IO.pure(String,append_store_error(sent_error,unshared_result(String,waited)))
++    final_error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(waited_error,unshared_result(Unit,flushed)),checkpoint_done),named))
++    IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,waited)),terminal,final_error,True{}},deliveries))
+ 
+ @unsafe
+-def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +spool: String, +spanned: Bool, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, +wake_sub: U32, wake_on: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
++def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: List<&2,String>, +log_failed: Bool, +handle: U32, +harness: String, +spool: String, +spanned: Bool, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, +wake_sub: U32, wake_on: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+   match result:
+-    case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+-      wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
+-      closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+-      sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
+-      +waited : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,P.ProcessChild.wait(handle))
+-      +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,Logs.flush(held),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
+-      +flushed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
+-      +write_failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,flushed)))
+-      checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint(Bool.and(String.is_empty(attempt),Bool.not(write_failed)),log,"")
+-      named_position : Result<&1,&1,U32 & String,String> <- Logs.write_positioned(log,Logs.interrupted(held),Logs.position(Observer.output(checkpoint_state),unshared_result(String,positioned)),write_failed,Bool.not(String.is_empty(attempt)),True{})
+-      named : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,named_position))
+-      read_error : String <- IO.pure(String,append_error(first_error,"Native output read failed: " ++ error_text(error)))
+-      sent_error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(read_error,wake_closed),closed),sent))
+-      waited_error : String <- IO.pure(String,append_store_error(sent_error,unshared_result(String,waited)))
+-      error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(waited_error,unshared_result(Unit,flushed)),checkpoint_done),named))
+-      IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,waited)),terminal,error,True{}},deliveries))
++    case Fail{error}: consume_failed(db,player,id,log,Logs.flush_interrupted(held),log_failed,handle,harness,terminal,first_error,sender,attempt,checkpoint_state,wake_sub,wake_on,deliveries,error)
+     case Done{Again{policy,held,log_failed,cursor,last_message,primary,current,terminal,filter,codex_log,first_error,checkpoint_state,incomplete,alive,deliveries,next}}: consume(db,player,id,log,policy,held,log_failed,handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete,monitor,wake_sub,alive,deliveries,next)
+     case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+       +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
+@@ -996,7 +1012,7 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
+         with_restore_result(Outcome,restored,restore_error => restore_failed => do IO<Outcome>:
+           sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness,level))
+           first : Result<&1,&1,U32 & String,WakeRead> <- plain_wake_line(handle)
+-          observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"",False{},"0\n","","","","","",requested,"",restore_error,sender,"",Observer.empty(),restore_failed,False{},0,False{},Nil{},first)
++          observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,Nil{},False{},handle,harness,"",False{},"0\n","","","","","",requested,"",restore_error,sender,"",Observer.empty(),restore_failed,False{},0,False{},Nil{},first)
+           direct_observed(observation))
+ 
+ # Monitor custody cannot report native completion because the keeper has no
+@@ -1040,7 +1056,7 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
+     filter : String <- IO.pure(String,Observer.filter_mode(checkpoint_state))
+     +requested : String <- IO.pure(String,Bool.pick(String,String.eq(supplied_requested,"unknown"),Omp.filter_requested(Observer.filter_mode(checkpoint_state)),supplied_requested))
+     codex_log : String <- IO.pure(String,Observer.codex_log(checkpoint_state))
+-    held : String <- IO.pure(String,Observer.held(checkpoint_state))
++    held : List<&2,String> <- IO.pure(List<&2,String>,Logs.held_rows(Observer.held(checkpoint_state)))
+     observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,held,False{},handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,resume_error,sender,attempt,checkpoint_state,resume_failed,monitor,wake_sub,wake_on,Nil{},first)
+     observed_result(monitor,observation)
+ 
+diff --git a/bend2/src/host/sqlite.bend b/bend2/src/host/sqlite.bend
+index a892348cc..4285b666d 100644
+--- a/bend2/src/host/sqlite.bend
++++ b/bend2/src/host/sqlite.bend
+@@ -9,6 +9,12 @@ def Sql.query(path: String, sql: String) -> IO(Result<&1, &1, U32 & String, Stri
+ def Sql.query_span(path: String, spool: String, offset: String, length: String, sql: String) -> IO(Result<&1, &1, U32 & String, String>):
+   import "./sqlite.c"
+ 
++# Runs frame SQL in an ephemeral SQLite memory database with the spool range
++# bound as parameter 1. The statement must be read-only and cannot access the
++# coordination database. Rows use the Sql.query format.
++def Sql.query_span_memory(spool: String, offset: String, length: String, sql: String) -> IO(Result<&1, &1, U32 & String, String>):
++  import "./sqlite.c"
++
+ # The same binding with `text` as parameter 2.
+ def Sql.query_span_text(path: String, spool: String, offset: String, length: String, sql: String, text: String) -> IO(Result<&1, &1, U32 & String, String>):
+   import "./sqlite.c"
+diff --git a/bend2/src/host/sqlite.c b/bend2/src/host/sqlite.c
+index ccd03be82..75764ac10 100644
+--- a/bend2/src/host/sqlite.c
++++ b/bend2/src/host/sqlite.c
+@@ -186,7 +186,7 @@ typedef struct {
+   char *path, *spool, *sql, *text, *text2, *output, *error;
+   size_t length, text_length, text2_length, map_length;
+   uint64_t offset, span_length;
+-  int code, params, spool_fd;
++  int code, params, spool_fd, ephemeral;
+   void *map;
+ } BatonSqlSpan;
+ 
+@@ -219,6 +219,17 @@ static int baton_sql_span_row(BatonSqlSpan *call, sqlite3_stmt *statement) {
+   return 0;
+ }
+ 
++static int baton_sql_span_memory_authorizer(void *context, int action, const char *first, const char *second, const char *database, const char *trigger) {
++  (void)context; (void)first; (void)second; (void)database; (void)trigger;
++  switch (action) {
++    case SQLITE_ATTACH: case SQLITE_DETACH: case SQLITE_PRAGMA:
++    case SQLITE_TRANSACTION: case SQLITE_SAVEPOINT:
++      return SQLITE_DENY;
++    default:
++      return SQLITE_OK;
++  }
++}
++
+ static void baton_sql_span_call(IoWork *w) {
+   BatonSqlSpan *call = (BatonSqlSpan *)w->data;
+   sqlite3 *db = NULL;
+@@ -256,15 +267,19 @@ static void baton_sql_span_call(IoWork *w) {
+       call->code = EILSEQ; call->error = strdup("stdout frame contains NUL"); return;
+     }
+   }
+-  call->code = sqlite3_open(call->path, &db);
++  call->code = sqlite3_open(call->ephemeral ? ":memory:" : call->path, &db);
+   if (call->code != SQLITE_OK) {
+     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
+   } else {
+     sqlite3_busy_handler(db, baton_sql_busy, NULL);
+     char *error = NULL;
+-    call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
+-    if (call->code == SQLITE_OK)
+-      call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
++    if (call->ephemeral)
++      call->code = sqlite3_set_authorizer(db, baton_sql_span_memory_authorizer, NULL);
++    if (call->code == SQLITE_OK && !call->ephemeral) {
++      call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
++      if (call->code == SQLITE_OK)
++        call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
++    }
+     const char *tail = call->sql;
+     while (call->code == SQLITE_OK && tail && *tail) {
+       sqlite3_stmt *statement = NULL;
+@@ -272,6 +287,11 @@ static void baton_sql_span_call(IoWork *w) {
+       call->code = sqlite3_prepare_v2(db, tail, -1, &statement, &next);
+       if (call->code != SQLITE_OK) break;
+       if (!statement) { tail = next; continue; }
++      if (call->ephemeral && !sqlite3_stmt_readonly(statement)) {
++        call->code = SQLITE_READONLY;
++        sqlite3_finalize(statement);
++        break;
++      }
+       int parameter_count = sqlite3_bind_parameter_count(statement);
+       if (parameter_count >= 1)
+         call->code = sqlite3_bind_text64(statement, 1, bytes, (sqlite3_uint64)call->span_length, SQLITE_STATIC, SQLITE_UTF8);
+@@ -315,21 +335,23 @@ static Term baton_sql_span_pack(Env e, IoWork *w) {
+   return result;
+ }
+ 
+-static Term baton_sql_span_run(Env e, Term *f, IoWork *w, int params) {
++static Term baton_sql_span_run(Env e, Term *f, IoWork *w, int params, int ephemeral) {
+   BatonSqlSpan *call = calloc(1, sizeof(*call));
+   if (!call) return io_fail(e, ENOMEM, NULL);
+   call->spool_fd = -1;
+   call->params = params;
++  call->ephemeral = ephemeral;
+   u64 path_n = 0, spool_n = 0, offset_n = 0, length_n = 0, sql_n = 0, text_n = 0, text2_n = 0;
+-  call->path = io_cstr(e, f[0], &path_n);
+-  call->spool = io_cstr(e, f[1], &spool_n);
+-  char *offset_text = io_cstr(e, f[2], &offset_n);
+-  char *length_text = io_cstr(e, f[3], &length_n);
+-  call->sql = io_cstr(e, f[4], &sql_n);
+-  if (params > 1) { call->text = io_cstr(e, f[5], &text_n); call->text_length = text_n; }
+-  if (params > 2) { call->text2 = io_cstr(e, f[6], &text2_n); call->text2_length = text2_n; }
+-  if (!call->path || !call->spool || !call->sql || !offset_text || !length_text ||
+-      strlen(call->path) != path_n || strlen(call->spool) != spool_n || strlen(call->sql) != sql_n ||
++  int base = ephemeral ? 0 : 1;
++  call->path = ephemeral ? strdup(":memory:") : io_cstr(e, f[0], &path_n);
++  call->spool = io_cstr(e, f[base], &spool_n);
++  char *offset_text = io_cstr(e, f[base + 1], &offset_n);
++  char *length_text = io_cstr(e, f[base + 2], &length_n);
++  call->sql = io_cstr(e, f[base + 3], &sql_n);
++  if (params > 1) { call->text = io_cstr(e, f[base + 4], &text_n); call->text_length = text_n; }
++  if (params > 2) { call->text2 = io_cstr(e, f[base + 5], &text2_n); call->text2_length = text2_n; }
++  if ((!ephemeral && !call->path) || !call->spool || !call->sql || !offset_text || !length_text ||
++      (!ephemeral && strlen(call->path) != path_n) || strlen(call->spool) != spool_n || strlen(call->sql) != sql_n ||
+       strlen(offset_text) != offset_n || strlen(length_text) != length_n) {
+     call->code = EINVAL; call->error = strdup("database path, spool path or SQL contains NUL");
+   } else {
+@@ -345,21 +367,28 @@ static Term baton_sql_span_run(Env e, Term *f, IoWork *w, int params) {
+ #endif
+ 
+ #ifdef CID_SQL_QUERY_SPAN
+-static Term baton_sql_query_span_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 1); }
++static Term baton_sql_query_span_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 1, 0); }
+ static void __attribute__((constructor)) baton_sql_query_span_use(void) {
+   io_eff(CID_SQL_QUERY_SPAN, baton_sql_query_span_run, 0);
+ }
+ #endif
+ 
++#ifdef CID_SQL_QUERY_SPAN_MEMORY
++static Term baton_sql_query_span_memory_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 1, 1); }
++static void __attribute__((constructor)) baton_sql_query_span_memory_use(void) {
++  io_eff(CID_SQL_QUERY_SPAN_MEMORY, baton_sql_query_span_memory_run, 0);
++}
++#endif
++
+ #ifdef CID_SQL_QUERY_SPAN_TEXT
+-static Term baton_sql_query_span_text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 2); }
++static Term baton_sql_query_span_text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 2, 0); }
+ static void __attribute__((constructor)) baton_sql_query_span_text_use(void) {
+   io_eff(CID_SQL_QUERY_SPAN_TEXT, baton_sql_query_span_text_run, 0);
+ }
+ #endif
+ 
+ #ifdef CID_SQL_QUERY_SPAN_2TEXT
+-static Term baton_sql_query_span_2text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 3); }
++static Term baton_sql_query_span_2text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 3, 0); }
+ static void __attribute__((constructor)) baton_sql_query_span_2text_use(void) {
+   io_eff(CID_SQL_QUERY_SPAN_2TEXT, baton_sql_query_span_2text_run, 0);
+ }

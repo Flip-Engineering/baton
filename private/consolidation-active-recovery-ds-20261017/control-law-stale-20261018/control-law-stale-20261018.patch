@@ -1,0 +1,51 @@
+From e2573d853f626ab8235843621b6c5a672614283d Mon Sep 17 00:00:00 2001
+From: batonci <batonci@localhost>
+Date: Sat, 17 Oct 2026 22:26:28 -0700
+Subject: [PATCH 1/2] Match the receiver admission law to stopped-refresh
+ behavior
+
+---
+ bend2/src/coordinator/control-laws.bend | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bend2/src/coordinator/control-laws.bend b/bend2/src/coordinator/control-laws.bend
+index 3542ebe40..2a67d5c4d 100644
+--- a/bend2/src/coordinator/control-laws.bend
++++ b/bend2/src/coordinator/control-laws.bend
+@@ -42,7 +42,7 @@ law native_receiver_checks_harness_stop_and_endpoint_admission:
+   for +session: String
+   for +endpoint: String
+   for +cwd: String
+-  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
++  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
+ 
+ def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint,cwd):
+   {==}
+-- 
+2.43.0
+
+
+From 000dea4186354c39f4578046af5187e6337d252d Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 22:42:52 -0700
+Subject: [PATCH 2/2] Match the delivery law to the launch-only dispatch path
+
+---
+ bend2/src/coordinator/control-laws.bend | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/bend2/src/coordinator/control-laws.bend b/bend2/src/coordinator/control-laws.bend
+index 2a67d5c4d..d2769522d 100644
+--- a/bend2/src/coordinator/control-laws.bend
++++ b/bend2/src/coordinator/control-laws.bend
+@@ -72,7 +72,6 @@ law detached_delivery_commits_before_launch_and_checks_refusals:
+   {Control.dispatch_body(db,id,sender,recipient,kind,body) == (do IO<String>:
+   +saved : String <- IO.try(String,Store.commit(db,C.Message{id,sender,recipient,kind,body}))
+   launched : String <- Control.dispatch_admitted(db,id,saved,Bool.or(Store.refused(saved),Tx.starts_with(saved,"{\"error\":\"session-stopped\"")))
+-  woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,id)
+   IO.pure(String,launched)) : IO(String)}
+ 
+ def detached_delivery_commits_before_launch_and_checks_refusals(db,id,sender,recipient,kind,body):
+-- 
+2.43.0
+

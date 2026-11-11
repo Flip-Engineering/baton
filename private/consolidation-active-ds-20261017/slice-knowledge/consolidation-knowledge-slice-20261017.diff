@@ -1,0 +1,727 @@
+diff --git a/bend2/src/coordinator/control.bend b/bend2/src/coordinator/control.bend
+index 0de7d4a9..7bb433e1 100644
+--- a/bend2/src/coordinator/control.bend
++++ b/bend2/src/coordinator/control.bend
+@@ -341,6 +341,10 @@ def read_snapshot(db: String, command: C.Command) -> IO(String):
+     case C.KnowledgeDetail{reader,id}: Knowledge.detail_value(db,reader,"all","",id)
+     case C.KnowledgeScopeIndex{reader,scope,subject}: Knowledge.index_value(db,reader,scope,subject,True{})
+     case C.KnowledgeScopeDetail{reader,scope,subject,id}: Knowledge.detail_value(db,reader,scope,subject,id)
++    case C.KnowledgeSearch{reader,scope,subject,query}:
++      Knowledge.graph_value(db,reader,scope,subject,query,True{},"both","",False{})
++    case C.KnowledgeTraverse{reader,scope,subject,reference,direction,relation,recursive}:
++      Knowledge.graph_value(db,reader,scope,subject,reference,False{},direction,relation,recursive)
+     case other: IO.try(String,Store.read(db,other))
+ 
+ def pretty(+db: String, command: C.Command) -> IO(String):
+diff --git a/bend2/src/coordinator/knowledge.bend b/bend2/src/coordinator/knowledge.bend
+index 1b0e7c99..d732a1e2 100644
+--- a/bend2/src/coordinator/knowledge.bend
++++ b/bend2/src/coordinator/knowledge.bend
+@@ -62,6 +62,19 @@ def reference_kind(+reference: String, +typed: Bool) -> String:
+   +kind = Bool.pick(String,typed,"kind","'finding'")
+   "CASE WHEN substr(" ++ reference ++ ",1,8)='finding:' THEN coalesce((SELECT " ++ kind ++ " FROM knowledge WHERE id=substr(" ++ reference ++ ",9)),'finding') WHEN substr(" ++ reference ++ ",1,8)='message:' THEN 'message' ELSE coalesce((SELECT " ++ kind ++ " FROM knowledge WHERE id=" ++ reference ++ "),'external') END"
+ 
++# Retained references resolve against the current database snapshot.
++def reference_resolution(+reference: String) -> String:
++  "CASE WHEN substr(" ++ reference ++ ",1,8)='message:' THEN CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=substr(" ++ reference ++ ",9)) THEN 'retained' ELSE 'missing' END WHEN substr(" ++ reference ++ ",1,8)='finding:' THEN CASE WHEN EXISTS(SELECT 1 FROM knowledge WHERE id=substr(" ++ reference ++ ",9)) THEN 'retained' ELSE 'missing' END ELSE 'external' END"
++
++def evidence_citation(+evidence: String) -> String:
++  "(substr(" ++ evidence ++ ",1,8)='message:' OR substr(" ++ evidence ++ ",1,8)='finding:' OR substr(" ++ evidence ++ ",1,5)='file:' OR substr(" ++ evidence ++ ",1,7)='http://' OR substr(" ++ evidence ++ ",1,8)='https://' OR substr(" ++ evidence ++ ",1,9)='external:')"
++
++def evidence_kind(+evidence: String, typed: Bool) -> String:
++  "CASE WHEN substr(" ++ evidence ++ ",1,8) IN('message:','finding:') THEN " ++ reference_kind(evidence,typed) ++ " ELSE 'external' END"
++
++def evidence_reference(+evidence: String, typed: Bool) -> String:
++  "CASE WHEN " ++ evidence_citation(evidence) ++ " THEN json_object('reference'," ++ evidence ++ ",'kind'," ++ evidence_kind(evidence,typed) ++ ",'resolution'," ++ reference_resolution(evidence) ++ ") ELSE NULL END"
++
+ def relation_item(+typed: Bool) -> String:
+   "json_object('id',r.id,'author',r.author,'source',r.source,'sourceReference'," ++ reference_sql("r.source") ++ ",'sourceKind'," ++ reference_kind("r.source",typed) ++ ",'relation',r.relation,'target',r.target,'targetReference'," ++ reference_sql("r.target") ++ ",'targetKind'," ++ reference_kind("r.target",typed) ++ ")"
+ 
+@@ -69,17 +82,40 @@ def knowledge_relations() -> String:
+   "(SELECT coalesce(json_group_array(" ++ relation_item(True{}) ++ "),json('[]')) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))"
+ 
+ def knowledge_item_with_types(+typed: Bool, groups: Bool) -> String:
+-  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations() ++ ",'promotions'," ++ knowledge_promotions(groups) ++ ",'relations'," ++ Bool.pick(String,typed,knowledge_relations(),"json('[]')") ++ ")"
++  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'claim',k.claim,'evidence',k.evidence,'evidenceReference'," ++ evidence_reference("k.evidence",typed) ++ ",'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations() ++ ",'promotions'," ++ knowledge_promotions(groups) ++ ",'relations'," ++ Bool.pick(String,typed,knowledge_relations(),"json('[]')") ++ ")"
+ 
+ def knowledge_item() -> String:
+   knowledge_item_with_types(True{},True{})
+ 
++def subject_error(subject: String) -> String:
++  Bool.pick(String,String.is_empty(subject),
++    "{\"error\":\"knowledge-subject-required\",\"condition\":\"worker and group scopes require a nonempty subject\"}","")
++
++def scope_error(scope: String, subject: String) -> String:
++  match scope:
++    case "worker": subject_error(subject)
++    case "group": subject_error(subject)
++    case "universal": ""
++    case "all": ""
++    case _: "{\"error\":\"knowledge-scope-invalid\",\"condition\":\"scope must be universal, worker, group or all\"}"
++
++def direction_error(direction: String) -> String:
++  match direction:
++    case "in": ""
++    case "out": ""
++    case "both": ""
++    case _: "{\"error\":\"knowledge-direction-invalid\",\"condition\":\"direction must be in, out or both\"}"
++
++def validate_read(+error: String) -> IO(Unit):
++  Bool.pick(IO(Unit),String.is_empty(error),IO.pure(Unit,Unit{}),IO.die(Unit,2,error))
++
+ def scope_holders_sql(scope: String, +subject: String) -> String:
+   match scope:
+     case "worker": "SELECT id FROM sessions WHERE id=" ++ C.q(subject)
+     case "group": "SELECT owner AS id FROM ensembles WHERE id=" ++ C.q(subject)
+     case "universal": "SELECT s.id FROM sessions s JOIN session_roles r ON r.session=s.id WHERE s.parent IS NULL AND r.role IN('principal-conductor','conductor') AND (" ++ C.q(subject) ++ "='' OR s.id=" ++ C.q(subject) ++ ")"
+-    case _: "SELECT id FROM sessions"
++    case "all": "SELECT id FROM sessions"
++    case _: "SELECT id FROM sessions WHERE 0"
+ 
+ def scope_findings_sql(+scope: String, +subject: String, +groups: Bool) -> String:
+   match scope:
+@@ -116,8 +152,9 @@ def relations_when_present(+db: String, reader: String, scope: String, subject:
+         typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+         IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject,groups,String.eq(typed,"1\n"))))
+ 
+-def relations_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
++def relations_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
+     relations_when_present(db,reader,scope,subject,String.eq(present,"1\n"))
+ 
+@@ -142,7 +179,7 @@ def detail_read(+reader: String, +scope: String, +subject: String, +scoped: Bool
+     "json_array('knowledge'," ++ C.q(reader) ++ ",'--id',k.id)")
+ 
+ def knowledge_index_item_with_types(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool) -> String:
+-  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'evidence',k.evidence,'claimBytes',length(CAST(k.claim AS BLOB)),'limitsBytes',length(CAST(k.limits AS BLOB)),'evidenceMessage'," ++ evidence_index() ++ ",'destinations'," ++ knowledge_destinations() ++ ",'promotionCount',(SELECT count(*) FROM knowledge_promotions p WHERE p.finding=k.id),'relationCount'," ++ Bool.pick(String,typed,"(SELECT count(*) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))","0") ++ ",'detailRead'," ++ detail_read(reader,scope,subject,scoped) ++ ")"
++  "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'evidence',k.evidence,'evidenceReference'," ++ evidence_reference("k.evidence",typed) ++ ",'claimBytes',length(CAST(k.claim AS BLOB)),'limitsBytes',length(CAST(k.limits AS BLOB)),'evidenceMessage'," ++ evidence_index() ++ ",'destinations'," ++ knowledge_destinations() ++ ",'promotionCount',(SELECT count(*) FROM knowledge_promotions p WHERE p.finding=k.id),'relationCount'," ++ Bool.pick(String,typed,"(SELECT count(*) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))","0") ++ ",'detailRead'," ++ detail_read(reader,scope,subject,scoped) ++ ")"
+ 
+ def scoped_index_sql(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool, groups: Bool) -> String:
+   "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_index_item_with_types(reader,scope,subject,scoped,typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups) ++ " ORDER BY k.rowid);"
+@@ -152,20 +189,23 @@ def scoped_detail_sql(+reader: String, +scope: String, +subject: String, +id: St
+ 
+ def index_value(+db: String, +reader: String, +scope: String, +subject: String, +scoped: Bool) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     groups : Bool <- promotion_groups_value(db)
+     IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups)))
+ 
+ def detail_value(+db: String, +reader: String, +scope: String, +subject: String, +id: String) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     groups : Bool <- promotion_groups_value(db)
+     IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
+ 
+ # A read of an older database retains its existing findings before any writer
+ # installs the new columns and relationship table.
+-def read_scope_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
++def read_scope_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     groups : Bool <- promotion_groups_value(db)
+     IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups)))
+@@ -177,13 +217,13 @@ def read_value(db: String, reader: String) -> IO(String):
+ # Knowledge references normalize bare stored IDs to finding:ID. Returned nodes
+ # retain their authored kind, complete content and literal detailRead argv.
+ def graph_nodes_sql(+reader: String, +scope: String, +subject: String, +typed: Bool, +groups: Bool) -> String:
+-  "SELECT k.id,'finding:'||k.id AS reference," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ " AS kind,k.claim,k.evidence,k.limits,json_patch(" ++ knowledge_index_item_with_types(reader,scope,subject,True{},typed) ++ ",json_patch(" ++ knowledge_item_with_types(typed,groups) ++ ",json_object('reference','finding:'||k.id))) AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups)
++  "SELECT k.id,'finding:'||k.id AS reference," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ " AS kind,k.claim,k.evidence,k.limits,json_set(json_patch(" ++ knowledge_index_item_with_types(reader,scope,subject,True{},typed) ++ ",json_patch(" ++ knowledge_item_with_types(typed,groups) ++ ",json_object('reference','finding:'||k.id))),'$.evidenceReference'," ++ evidence_reference("k.evidence",typed) ++ ") AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups)
+ 
+ def graph_edges_sql(+reader: String, scope: String, subject: String, groups: Bool, +typed: Bool, present: Bool) -> String:
+   Bool.pick(String,present,
+     "SELECT r.id,r.source,r.target,r.relation," ++ reference_sql("r.source") ++ " AS source_ref," ++ reference_sql("r.target") ++ " AS target_ref,json_patch(" ++ relation_item(typed) ++ ",json_object('source'," ++ reference_sql("r.source") ++ ",'target'," ++ reference_sql("r.target") ++ ",'provenance','authored')) AS item FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject,groups),
+     "SELECT '' AS id,'' AS source,'' AS target,'' AS relation,'' AS source_ref,'' AS target_ref,json('{}') AS item WHERE 0")
+-  ++ " UNION ALL SELECT 'citation:'||id,reference,evidence,'Cited',reference,evidence,json_object('id','citation:'||id,'author',json_extract(item,'$.author'),'source',reference,'sourceReference',reference,'sourceKind',kind,'relation','Cited','target',evidence,'targetReference',evidence,'targetKind'," ++ reference_kind("nodes.evidence",typed) ++ ",'provenance','recorded-evidence') FROM nodes WHERE substr(evidence,1,8)='message:' OR substr(evidence,1,8)='finding:' OR substr(evidence,1,5)='file:' OR substr(evidence,1,7)='http://' OR substr(evidence,1,8)='https://' OR substr(evidence,1,9)='external:'"
++  ++ " UNION ALL SELECT 'citation:'||id,reference,evidence,'Cited',reference,evidence,json_object('id','citation:'||id,'author',json_extract(item,'$.author'),'source',reference,'sourceReference',reference,'sourceKind',kind,'relation','Cited','target',evidence,'targetReference',evidence,'targetKind'," ++ evidence_kind("nodes.evidence",typed) ++ ",'targetResolution'," ++ reference_resolution("nodes.evidence") ++ ",'provenance','recorded-evidence') FROM nodes WHERE " ++ evidence_citation("nodes.evidence")
+ 
+ def graph_ctes(+reader: String, +scope: String, +subject: String, +typed: Bool, +groups: Bool, present: Bool) -> String:
+   "WITH RECURSIVE nodes AS (" ++ graph_nodes_sql(reader,scope,subject,typed,groups) ++ "), edges AS (" ++ graph_edges_sql(reader,scope,subject,groups,typed,present) ++ ")"
+@@ -202,7 +242,7 @@ def search_score(+query: String) -> String:
+   "CASE WHEN lower(id)=lower(" ++ C.q(query) ++ ") THEN 100 ELSE 0 END + CASE WHEN instr(lower(claim),lower(" ++ C.q(query) ++ "))>0 THEN 30 ELSE 0 END + CASE WHEN lower(kind)=lower(" ++ C.q(query) ++ ") THEN 10 ELSE 0 END + (SELECT count(*) FROM edges e WHERE e.source_ref=nodes.reference OR e.target_ref=nodes.reference)"
+ 
+ def graph_answer(reader: String, +scope: String, +subject: String, +selected: String, +edge_filter: String) -> String:
+-  ", selected_edges AS (SELECT * FROM edges e WHERE " ++ edge_filter ++ "), references_in_view AS (SELECT reference FROM selected UNION SELECT source_ref FROM selected_edges UNION SELECT target_ref FROM selected_edges) SELECT json_object('scope',json_object('kind'," ++ C.q(scope) ++ ",'id'," ++ C.q(subject) ++ "),'roots',(SELECT coalesce(json_group_array(reference),json('[]')) FROM selected),'nodes',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM nodes WHERE reference IN(SELECT reference FROM references_in_view)),'edges',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM selected_edges),'references',(SELECT coalesce(json_group_array(json_object('reference',reference,'kind',coalesce((SELECT json_extract(e.item,'$.sourceKind') FROM selected_edges e WHERE e.source_ref=reference LIMIT 1),(SELECT json_extract(e.item,'$.targetKind') FROM selected_edges e WHERE e.target_ref=reference LIMIT 1),CASE WHEN substr(reference,1,8)='message:' THEN 'message' WHEN substr(reference,1,8)='finding:' THEN 'finding' ELSE 'external' END),'detailRead',CASE WHEN substr(reference,1,8)='finding:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,9)) ELSE NULL END,'deliveryRead',CASE WHEN substr(reference,1,8)='message:' THEN json_array('delivery',substr(reference,9)) ELSE NULL END)),json('[]')) FROM references_in_view WHERE reference NOT IN(SELECT reference FROM nodes))" ++ selected ++ ");"
++  ", selected_edges AS (SELECT * FROM edges e WHERE " ++ edge_filter ++ "), references_in_view AS (SELECT reference FROM selected UNION SELECT source_ref FROM selected_edges UNION SELECT target_ref FROM selected_edges) SELECT json_object('scope',json_object('kind'," ++ C.q(scope) ++ ",'id'," ++ C.q(subject) ++ "),'roots',(SELECT coalesce(json_group_array(reference),json('[]')) FROM selected),'nodes',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM nodes WHERE reference IN(SELECT reference FROM references_in_view)),'edges',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM selected_edges),'references',(SELECT coalesce(json_group_array(json_object('reference',reference,'resolution'," ++ reference_resolution("reference") ++ ",'kind',coalesce((SELECT json_extract(e.item,'$.sourceKind') FROM selected_edges e WHERE e.source_ref=reference LIMIT 1),(SELECT json_extract(e.item,'$.targetKind') FROM selected_edges e WHERE e.target_ref=reference LIMIT 1),CASE WHEN substr(reference,1,8)='message:' THEN 'message' WHEN substr(reference,1,8)='finding:' THEN 'finding' ELSE 'external' END),'detailRead',CASE WHEN substr(reference,1,8)='finding:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,9)) ELSE NULL END,'deliveryRead',CASE WHEN substr(reference,1,8)='message:' THEN json_array('delivery',substr(reference,9)) ELSE NULL END)),json('[]')) FROM references_in_view WHERE reference NOT IN(SELECT reference FROM nodes))" ++ selected ++ ");"
+ 
+ def search_sql(+reader: String, +scope: String, +subject: String, +query: String, +typed: Bool, groups: Bool, present: Bool) -> String:
+   graph_ctes(reader,scope,subject,typed,groups,present)
+@@ -213,7 +253,8 @@ def traversal_join(+direction: String) -> String:
+   match direction:
+     case "out": "e.source_ref=w.reference"
+     case "in": "e.target_ref=w.reference"
+-    case _: "(e.source_ref=w.reference OR e.target_ref=w.reference)"
++    case "both": "(e.source_ref=w.reference OR e.target_ref=w.reference)"
++    case _: "0"
+ 
+ def traversal_relation(+relation: String) -> String:
+   "(" ++ C.q(relation) ++ "='' OR lower(replace(replace(e.relation,'_',''),'-',''))=lower(replace(replace(" ++ C.q(relation) ++ ",'_',''),'-','')))"
+@@ -233,12 +274,18 @@ def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: St
+   +edges = String.eq(present,"1\n")
+   Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
+ 
+-def graph_read(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
+-  do IO<Unit>:
++def graph_value(+db: String, +reader: String, +scope: String, +subject: String, +query: String, +search: Bool, +direction: String, relation: String, recursive: Bool) -> IO(String):
++  do IO<String>:
++    scope_checked : Unit <- validate_read(scope_error(scope,subject))
++    direction_checked : Unit <- validate_read(Bool.pick(String,search,"",direction_error(direction)))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     +groups : Bool <- promotion_groups_value(db)
+     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
+-    saved : String <- IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
++    IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
++
++def graph_read(db: String, reader: String, scope: String, subject: String, query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
++  do IO<Unit>:
++    saved : String <- graph_value(db,reader,scope,subject,query,search,direction,relation,recursive)
+     IO.write(saved)
+ 
+ # The stored finding, read back only when it is this invocation's own finding:
+@@ -263,37 +310,67 @@ def knowledge_conflict_sql(+name: String, +table: String, +id: String, +guards:
+ # The notice rides the existing question kind, so a parent already handed off or
+ # stopped still receives it under the dispatch family it already serves. It is
+ # written only for this invocation's own finding coordinates.
+-def notice_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
++def notice_statement_when(+id: String, +author: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
+   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_target(author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL"
+-  ++ " ON CONFLICT(id) DO NOTHING;"
+-  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
++  ++ " AND (" ++ allowed ++ ") ON CONFLICT(id) DO NOTHING;"
++  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),"(" ++ allowed ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
+ 
+-def finding_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
++def notice_statement(id: String, author: String, claim: String, evidence: String, limits: String) -> String:
++  notice_statement_when(id,author,claim,evidence,limits,"1")
++
++def finding_statement_when(+id: String, +author: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
+   "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
+-  ++ " ON CONFLICT(id) DO NOTHING;"
+-  ++ knowledge_conflict_sql("finding-id-conflict","knowledge",C.q(id),"EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")","author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits),"'author',author")
++  ++ " AND (" ++ allowed ++ ") ON CONFLICT(id) DO NOTHING;"
++  ++ knowledge_conflict_sql("finding-id-conflict","knowledge",C.q(id),"(" ++ allowed ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")","author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits),"'author',author")
++
++def finding_statement(id: String, author: String, claim: String, evidence: String, limits: String) -> String:
++  finding_statement_when(id,author,claim,evidence,limits,"1")
+ 
+ def record_statements(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
+   finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author,claim,evidence,limits) ++ knowledge_answer(id,author,claim,evidence,limits)
+ 
+-def typed_record_statements(+id: String, +author: String, kind: String, +claim: String, +evidence: String, +limits: String) -> String:
+-  finding_statement(id,author,claim,evidence,limits)
+-  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
+-  ++ notice_statement(id,author,claim,evidence,limits)
+-  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
++def typed_record_statements_when(+id: String, +author: String, kind: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
++  finding_statement_when(id,author,claim,evidence,limits,allowed)
++  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ " AND (" ++ allowed ++ ");"
++  ++ notice_statement_when(id,author,claim,evidence,limits,allowed)
++  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ " AND (" ++ allowed ++ ");"
++
++def typed_record_statements(id: String, author: String, kind: String, claim: String, evidence: String, limits: String) -> String:
++  typed_record_statements_when(id,author,kind,claim,evidence,limits,"1")
++
++def relation_coordinates(+author: String, source: String, relation: String, target: String) -> String:
++  "author=" ++ C.q(author) ++ " AND source=" ++ C.q(source) ++ " AND relation=" ++ C.q(relation) ++ " AND target=" ++ C.q(target)
++
++# A relation identity binds its author, source, relationship and target.
++# An identical retry returns the stored row.
++def relation_statements(+id: String, +author: String, +source: String, +relation: String, +target: String) -> String:
++  +same = relation_coordinates(author,source,relation,target)
++  +registered = "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
++  "INSERT INTO knowledge_relations(id,author,source,relation,target) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(source) ++ "," ++ C.q(relation) ++ "," ++ C.q(target) ++ " WHERE " ++ registered ++ " ON CONFLICT(id) DO NOTHING;"
++  ++ knowledge_conflict_sql("relation-id-conflict","knowledge_relations",C.q(id),registered,same,"'author',author,'source',source,'relation',relation,'target',target")
++  ++ "SELECT json_object('id',id,'author',author,'source',source,'relation',relation,'target',target) FROM knowledge_relations WHERE id=" ++ C.q(id) ++ " AND " ++ registered ++ " AND " ++ same ++ ";"
++
++# Preflight covers stored identities and conflicting duplicates in this input.
++# Every write in the linked record shares this transaction's admission result.
++def link_text(value: String, field: String) -> String:
++  "CAST(json_extract(" ++ value ++ ",'$." ++ field ++ "') AS TEXT)"
++
++def link_collisions_sql(+author: String, +links: String) -> String:
++  "SELECT r.id,r.author,r.source,r.relation,r.target FROM knowledge_relations r JOIN json_each(" ++ C.q(links) ++ ") j ON r.id=" ++ link_text("j.value","id") ++ " WHERE NOT (r.author=" ++ C.q(author) ++ " AND r.source IS " ++ link_text("j.value","source") ++ " AND r.relation IS " ++ link_text("j.value","relation") ++ " AND r.target IS " ++ link_text("j.value","target") ++ ")"
++  ++ " UNION ALL SELECT " ++ link_text("j.value","id") ++ " AS id," ++ C.q(author) ++ " AS author," ++ link_text("j.value","source") ++ " AS source," ++ link_text("j.value","relation") ++ " AS relation," ++ link_text("j.value","target") ++ " AS target FROM json_each(" ++ C.q(links) ++ ") j WHERE j.key IN (SELECT MIN(k.key) FROM json_each(" ++ C.q(links) ++ ") k GROUP BY " ++ link_text("k.value","id") ++ " HAVING COUNT(DISTINCT json_array(" ++ link_text("k.value","source") ++ "," ++ link_text("k.value","relation") ++ "," ++ link_text("k.value","target") ++ "))>1)"
+ 
+-# Source and target are ordinary reference strings. An agent can link findings,
+-# retained messages or external evidence and choose the relationship's name.
+-def relation_statements(+id: String, author: String, source: String, relation: String, target: String) -> String:
+-  "INSERT INTO knowledge_relations(id,author,source,relation,target) VALUES(" ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(source) ++ "," ++ C.q(relation) ++ "," ++ C.q(target) ++ ") ON CONFLICT(id) DO UPDATE SET author=excluded.author,source=excluded.source,relation=excluded.relation,target=excluded.target;"
+-  ++ "SELECT json_object('id',id,'author',author,'source',source,'relation',relation,'target',target) FROM knowledge_relations WHERE id=" ++ C.q(id) ++ ";"
++def link_conflict_answer(author: String, collisions: String) -> String:
++  "SELECT json_object('error','relation-id-conflict','id',id,'stored',json_object('author',author,'source',source,'relation',relation,'target',target),'condition','This relation identity is already supplied with different content.','next','Retain the existing relation and retry the new input under a different ID.') FROM (" ++ collisions ++ ") WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") ORDER BY id LIMIT 1;"
+ 
+ # A producer can commit a typed record and its authored relationships together.
+ # Each JSON link names id, source, relation and target. The notice is delivered
+ # after the complete record and links have committed.
+-def linked_record_statements(+id: String, +author: String, +kind: String, +claim: String, +evidence: String, +limits: String, links: String) -> String:
+-  typed_record_statements(id,author,kind,claim,evidence,limits)
+-  ++ "INSERT INTO knowledge_relations(id,author,source,relation,target) SELECT json_extract(j.value,'$.id')," ++ C.q(author) ++ ",json_extract(j.value,'$.source'),json_extract(j.value,'$.relation'),json_extract(j.value,'$.target') FROM json_each(" ++ C.q(links) ++ ") j WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND kind=" ++ C.q(kind) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") ON CONFLICT(id) DO UPDATE SET author=excluded.author,source=excluded.source,relation=excluded.relation,target=excluded.target;"
++def linked_record_statements(+id: String, +author: String, +kind: String, +claim: String, +evidence: String, +limits: String, +links: String) -> String:
++  +collisions = link_collisions_sql(author,links)
++  +allowed = "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") AND NOT EXISTS(" ++ collisions ++ ")"
++  link_conflict_answer(author,collisions)
++  ++ typed_record_statements_when(id,author,kind,claim,evidence,limits,allowed)
++  ++ "INSERT INTO knowledge_relations(id,author,source,relation,target) SELECT " ++ link_text("j.value","id") ++ "," ++ C.q(author) ++ "," ++ link_text("j.value","source") ++ "," ++ link_text("j.value","relation") ++ "," ++ link_text("j.value","target") ++ " FROM json_each(" ++ C.q(links) ++ ") j WHERE (" ++ allowed ++ ") AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND kind=" ++ C.q(kind) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") ON CONFLICT(id) DO NOTHING;"
+ 
+ # Session destinations notify that session; group destinations notify the
+ # recorded Ensemble owner.
+@@ -377,12 +454,12 @@ def record_linked(+db: String, +id: String, author: String, kind: String, claim:
+       answered(delivery))
+ 
+ def tool_help() -> String:
+-  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
++  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Worker and group scopes require a nonempty subject; contextual commands default the subject to the current session. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
+ 
+ def relate(db: String, id: String, author: String, source: String, relation: String, target: String) -> IO(Unit):
+   do IO<Unit>:
+-    saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(relation_statements(id,author,source,relation,target))))
+-    write_answer(saved)
++    +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(relation_statements(id,author,source,relation,target))))
++    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),write_answer(saved))
+ 
+ # Read: the shared findings as a JSON array. An unregistered reader receives the
+ # empty array.
+diff --git a/bend2/src/coordinator/messaging-laws.bend b/bend2/src/coordinator/messaging-laws.bend
+index 671f4721..c04c503e 100644
+--- a/bend2/src/coordinator/messaging-laws.bend
++++ b/bend2/src/coordinator/messaging-laws.bend
+@@ -162,7 +162,7 @@ law committed_message_routes_refuse_before_endpoint_delivery:
+   for db: String
+   for command: C.Command
+   for +saved: String
+-  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))))) : IO(Result<&1,&1,U32 & String,String>)}
++  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"relation-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""))))))))))) : IO(Result<&1,&1,U32 & String,String>)}
+ 
+ def committed_message_routes_refuse_before_endpoint_delivery(db,command,saved):
+   {==}
+diff --git a/bend2/src/coordinator/store.bend b/bend2/src/coordinator/store.bend
+index 7f51dbe9..c9505da4 100644
+--- a/bend2/src/coordinator/store.bend
++++ b/bend2/src/coordinator/store.bend
+@@ -31,10 +31,11 @@ def refused(+saved: String) -> Bool:
+       Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),
+         Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),
+           Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),
+-            Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
+-              Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),
+-                Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),
+-                  Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\"")))))))))
++            Bool.or(Tx.starts_with(saved,"{\"error\":\"relation-id-conflict\""),
++              Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
++                Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),
++                  Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),
++                    Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""))))))))))
+ 
+ # Change-publication contract for the coordinator queue. The projection
+ # installer runs before the writer's own transaction begins; the committed
+diff --git a/bend2/test/knowledge.py b/bend2/test/knowledge.py
+index 22712048..5cd17929 100644
+--- a/bend2/test/knowledge.py
++++ b/bend2/test/knowledge.py
+@@ -70,6 +70,85 @@ class Knowledge(unittest.TestCase):
+     def scoped(self, scope, subject=''):
+         return self.call('knowledge-scope', 'root', scope, subject)
+ 
++    def discovery_commands(self, scope, subject):
++        commands = (
++            ('knowledge-scope', 'root', scope, subject),
++            ('knowledge-relations', 'root', scope, subject),
++            ('knowledge-scope', 'root', scope, subject, '--index'),
++            ('knowledge-scope', 'root', scope, subject, '--id', 'scope-finding'),
++            ('knowledge-search', 'root', scope, subject, 'scope'),
++            ('knowledge-traverse', 'root', scope, subject,
++             'finding:scope-finding', 'both', '', 'neighbors'),
++        )
++        return tuple(variant for command in commands
++                     for variant in (command, (*command, '--pretty')))
++
++    def test_unknown_scope_refuses_every_discovery_read(self):
++        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
++        for scope in ('wrker', '', 'ALL'):
++            for command in self.discovery_commands(scope, 'worker'):
++                with self.subTest(command=command):
++                    result = self.call(*command, success=False)
++                    self.assertEqual(result.returncode, 2)
++                    self.assertEqual(result.stdout, '')
++                    self.assertEqual(json.loads(result.stderr)['error'],
++                                     'knowledge-scope-invalid')
++
++    def test_worker_and_group_scopes_require_subjects_on_every_discovery_read(self):
++        for scope in ('worker', 'group'):
++            for command in self.discovery_commands(scope, ''):
++                with self.subTest(command=command):
++                    result = self.call(*command, success=False)
++                    self.assertEqual(result.returncode, 2)
++                    self.assertEqual(result.stdout, '')
++                    self.assertEqual(json.loads(result.stderr)['error'],
++                                     'knowledge-subject-required')
++        self.assertEqual(self.scoped('universal'), [])
++        self.assertEqual(self.scoped('all'), [])
++
++    def test_unknown_traversal_direction_refuses_neighbors_and_recursive_reads(self):
++        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
++        for direction in ('inout', '', 'OUT'):
++            for mode in ('neighbors', 'recursive'):
++                for flags in ((), ('--pretty',)):
++                    with self.subTest(direction=direction, mode=mode, flags=flags):
++                        result = self.call('knowledge-traverse', 'root', 'worker', 'worker',
++                                           'finding:scope-finding', direction, '', mode,
++                                           *flags, success=False)
++                        self.assertEqual(result.returncode, 2)
++                        self.assertEqual(result.stdout, '')
++                        self.assertEqual(json.loads(result.stderr)['error'],
++                                         'knowledge-direction-invalid')
++
++    def test_pretty_graph_reads_keep_the_selected_scope_and_direction(self):
++        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
++        for command in (
++                ('knowledge-search', 'root', 'worker', 'worker', 'scope'),
++                ('knowledge-traverse', 'root', 'worker', 'worker',
++                 'finding:scope-finding', 'out', '', 'neighbors')):
++            with self.subTest(command=command):
++                plain = self.call(*command)
++                self.assertEqual(self.call(*command, '--pretty'), plain)
++                self.assertEqual(plain['scope'], {'kind': 'worker', 'id': 'worker'})
++                self.assertEqual(plain['roots'], ['finding:scope-finding'])
++
++    def test_contextual_knowledge_commands_report_the_same_validation_errors(self):
++        for command, error in (
++                (('read', '--scope', 'wrker'), 'knowledge-scope-invalid'),
++                (('search', '--query', 'scope', '--scope', 'wrker'),
++                 'knowledge-scope-invalid'),
++                (('traverse', '--reference', 'finding:scope-finding',
++                  '--direction', 'inout'), 'knowledge-direction-invalid'),
++                (('read', '--scope', 'worker', '--subject', ''),
++                 'knowledge-subject-required')):
++            with self.subTest(command=command):
++                rows = self.call('as', 'root', 'knowledge', *command)
++                self.assertEqual(len(rows), 1)
++                self.assertEqual(rows[0]['status'], 'failed')
++                self.assertEqual(rows[0]['waitStatus'], 'exit 2')
++                self.assertEqual(rows[0]['stdout'], '')
++                self.assertEqual(json.loads(rows[0]['stderr'])['error'], error)
++
+     def test_typed_evidence_and_corrections_follow_explicit_shared_holdings(self):
+         self.call('role', 'worker', 'associate-conductor')
+         self.call('ensemble', 'review-group', 'worker', 'tight')
+@@ -220,6 +299,155 @@ class Knowledge(unittest.TestCase):
+         self.assertEqual(self.call('knowledge-relations', 'root', 'all', ''), [])
+         self.assertEqual(self.call('inbox', 'worker'), [])
+ 
++    def relation_rows(self):
++        return self.call('knowledge-relations', 'root', 'all', '')
++
++    def test_identical_relation_retry_preserves_its_identity(self):
++        args = ('relate', 'relation-λ', 'grand', 'file:source λ', 'Supports',
++                'finding:target')
++        stored = self.call(*args)
++        self.assertEqual(self.call(*args), stored)
++        self.assertEqual(len(self.relation_rows()), 1)
++
++    def test_relation_identity_conflicts_preserve_every_stored_coordinate(self):
++        original = ('grand', 'file:source λ', 'Supports', 'finding:target')
++        stored = self.call('relate', 'fixed-relation', *original)
++        before = self.relation_rows()
++        for index, replacement in enumerate(('sibling', 'file:changed', 'Supersedes',
++                                             'finding:changed')):
++            changed = list(original)
++            changed[index] = replacement
++            with self.subTest(index=index):
++                refused = self.call('relate', 'fixed-relation', *changed, success=False)
++                self.assertEqual(refused.returncode, 2)
++                self.assertEqual(refused.stdout, '')
++                error = json.loads(refused.stderr)
++                self.assertEqual(error['error'], 'relation-id-conflict')
++                self.assertEqual(error['id'], 'fixed-relation')
++                self.assertEqual(error['stored'], {key: stored[key] for key in
++                                                   ('author', 'source', 'relation', 'target')})
++                self.assertEqual(self.relation_rows(), before)
++
++    def test_relation_author_must_be_registered(self):
++        refused = self.call('relate', 'unregistered-relation', 'absent',
++                            'file:source', 'Supports', 'finding:target', success=False)
++        self.assertEqual(refused.stdout, '')
++        self.assertEqual(self.relation_rows(), [])
++
++    def test_linked_relation_collision_preserves_record_links_and_notice_tables(self):
++        self.call('relate', 'occupied', 'worker', 'file:original', 'Supports',
++                  'finding:original')
++        before = self.relation_rows()
++        occupied = {'id': 'occupied', 'source': 'finding:new',
++                    'relation': 'Supersedes', 'target': 'finding:original'}
++        fresh = {'id': 'fresh', 'source': 'finding:new',
++                 'relation': 'Supports', 'target': 'file:other'}
++        for links in ([fresh, occupied], [occupied, fresh]):
++            with self.subTest(links=links):
++                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
++                                    'Proposed explanation', 'run:observation', '',
++                                    json.dumps(links), success=False)
++                self.assertEqual(refused.returncode, 2)
++                self.assertEqual(refused.stdout, '')
++                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++                self.assertEqual(self.read('root'), [])
++                self.assertEqual(self.relation_rows(), before)
++                self.assertEqual(self.call('inbox', 'worker'), [])
++
++    def test_linked_collision_preserves_an_existing_records_kind_and_notice(self):
++        evidence = self.evidence('kind-evidence', 'grand')
++        self.call('record-typed', 'existing', 'grand', 'observation',
++                  'Existing claim', evidence, '')
++        self.call('relate', 'occupied', 'worker', 'file:original', 'Supports',
++                  'finding:original')
++        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
++        links = [{'id': 'occupied', 'source': 'finding:existing',
++                  'relation': 'Supersedes', 'target': 'finding:original'}]
++        refused = self.call('record-linked', 'existing', 'grand', 'decision',
++                            'Existing claim', evidence, '', json.dumps(links), success=False)
++        self.assertEqual(refused.returncode, 2)
++        self.assertEqual(refused.stdout, '')
++        self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++        self.assertEqual((self.read('root'), self.relation_rows(),
++                          self.call('inbox', 'worker')), before)
++
++    def test_conflicting_duplicate_link_ids_refuse_the_complete_record(self):
++        first = {'id': 'duplicate', 'source': 'finding:new',
++                 'relation': 'Supports', 'target': 'file:first'}
++        for coordinate, value in (('source', 'finding:other'),
++                                  ('relation', 'Supersedes'), ('target', 'file:second')):
++            with self.subTest(coordinate=coordinate):
++                second = {**first, coordinate: value}
++                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
++                                    'Proposed explanation', 'run:observation', '',
++                                    json.dumps([first, second]), success=False)
++                self.assertEqual(refused.returncode, 2)
++                self.assertEqual(refused.stdout, '')
++                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++                self.assertEqual(self.read('root'), [])
++                self.assertEqual(self.relation_rows(), [])
++                self.assertEqual(self.call('inbox', 'worker'), [])
++
++    def test_identical_link_duplicates_and_record_retries_are_idempotent(self):
++        link = {'id': 'duplicate', 'source': 'finding:new',
++                'relation': 'Supports', 'target': 'file:source'}
++        args = ('record-linked', 'new', 'grand', 'hypothesis', 'Proposed explanation',
++                'run:observation', '', json.dumps([link, link]))
++        stored = self.call(*args)
++        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
++        self.assertEqual(self.call(*args), stored)
++        self.assertEqual((self.read('root'), self.relation_rows(),
++                          self.call('inbox', 'worker')), before)
++        self.assertEqual(len(before[1]), 1)
++        self.assertEqual([row['id'] for row in before[2]], ['new:notice'])
++
++    def test_link_id_text_affinity_detects_conflicting_payload_duplicates(self):
++        first = {'id': 1, 'source': 'finding:new',
++                 'relation': 'Supports', 'target': 'file:first'}
++        second = {**first, 'id': '1', 'target': 'file:second'}
++        for links in ([first, second], [second, first]):
++            with self.subTest(links=links):
++                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
++                                    'Proposed explanation', 'run:observation', '',
++                                    json.dumps(links), success=False)
++                self.assertEqual(refused.returncode, 2)
++                self.assertEqual(refused.stdout, '')
++                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++                self.assertEqual(self.read('root'), [])
++                self.assertEqual(self.relation_rows(), [])
++                self.assertEqual(self.call('inbox', 'worker'), [])
++
++    def test_link_coordinates_use_the_stored_text_affinity_for_retries(self):
++        stored = self.call('relate', '1', 'grand', '2', '3', '4')
++        relations = self.relation_rows()
++        numeric = {'id': 1, 'source': 2, 'relation': 3, 'target': 4}
++        text = {key: str(value) for key, value in numeric.items()}
++        args = ('record-linked', 'new', 'grand', 'hypothesis', 'Proposed explanation',
++                'run:observation', '', json.dumps([numeric, text]))
++        record = self.call(*args)
++        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
++        self.assertEqual(self.call(*args), record)
++        self.assertEqual((self.read('root'), self.relation_rows(),
++                          self.call('inbox', 'worker')), before)
++        self.assertEqual(before[1], relations)
++        self.assertEqual({key: relations[0][key] for key in stored}, stored)
++        self.assertEqual([row['id'] for row in before[2]], ['new:notice'])
++
++    def test_numeric_link_id_conflict_preserves_a_stored_text_identity(self):
++        self.call('relate', '1', 'grand', 'file:original', 'Supports', 'file:target')
++        before = self.relation_rows()
++        changed = {'id': 1, 'source': 'file:original',
++                   'relation': 'Supports', 'target': 'file:changed'}
++        refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
++                            'Proposed explanation', 'run:observation', '',
++                            json.dumps([changed]), success=False)
++        self.assertEqual(refused.returncode, 2)
++        self.assertEqual(refused.stdout, '')
++        self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
++        self.assertEqual(self.read('root'), [])
++        self.assertEqual(self.relation_rows(), before)
++        self.assertEqual(self.call('inbox', 'worker'), [])
++
+     def test_legacy_promotions_remain_session_holdings_before_and_after_migration(self):
+         self.call('ensemble', 'review-group', 'worker')
+         self.call('record', 'legacy-share', 'grand', 'Legacy finding', 'run:legacy', 'One run')
+@@ -435,6 +663,135 @@ class Knowledge(unittest.TestCase):
+                                success=False)
+         self.assertIn('No knowledge row was written', fabricated.stderr)
+ 
++    def test_missing_message_citation_resolves_when_the_message_is_retained(self):
++        message = "evidence λ ' pending"
++        reference = 'message:' + message
++        self.call('record-typed', 'pending-message', 'grand', 'observation',
++                  'Pending citation', reference, 'Before the report is stored')
++        missing = {'reference': reference, 'kind': 'message', 'resolution': 'missing'}
++        complete = self.call('knowledge', 'root', '--id', 'pending-message')[0]
++        index = self.call('knowledge', 'root', '--index')[0]
++        self.assertEqual(complete['evidenceReference'], missing)
++        self.assertIsNone(complete['evidenceMessage'])
++        self.assertEqual(index['evidenceReference'], missing)
++        graph = self.call('knowledge-traverse', 'root', 'all', '',
++                          'finding:pending-message', 'out', '', 'neighbors')
++        citation = next(edge for edge in graph['edges'] if edge['id'] == 'citation:pending-message')
++        self.assertEqual((citation['target'], citation['targetResolution']),
++                         (reference, 'missing'))
++        target = next(row for row in graph['references'] if row['reference'] == reference)
++        self.assertEqual(target['resolution'], 'missing')
++        self.assertEqual(target['deliveryRead'], ['delivery', message])
++        self.call('report', message, 'worker', 'Retained after the finding')
++        complete = self.call('knowledge', 'root', '--id', 'pending-message')[0]
++        self.assertEqual(complete['evidenceReference'], {**missing, 'resolution': 'retained'})
++        self.assertEqual(complete['evidenceMessage']['body'], 'Retained after the finding')
++        self.assertEqual(complete['evidence'], reference)
++        index = self.call('knowledge', 'root', '--index')[0]
++        self.assertEqual(index['evidenceReference'], complete['evidenceReference'])
++        graph = self.call('knowledge-traverse', 'root', 'all', '',
++                          'finding:pending-message', 'out', '', 'neighbors')
++        self.assertEqual(graph['edges'][0]['targetResolution'], 'retained')
++        self.assertEqual(graph['references'][0]['resolution'], 'retained')
++
++    def test_finding_citation_resolution_uses_the_retained_row_outside_the_scope(self):
++        self.call('record', 'citing', 'grand', 'Cites another finding',
++                  'finding:source', 'Before the source is stored')
++        self.call('promote', 'share-citing', 'root', 'grand', 'root', 'citing')
++        before = self.call('knowledge-search', 'root', 'universal', '', 'another finding')
++        target = next(row for row in before['references'] if row['reference'] == 'finding:source')
++        self.assertEqual(target['resolution'], 'missing')
++        self.call('record-typed', 'source', 'grand', 'measurement',
++                  'Retained source', 'run:source', 'One run')
++        after = self.call('knowledge-search', 'root', 'universal', '', 'another finding')
++        self.assertEqual(self.ids(after['nodes']), ['citing'])
++        target = next(row for row in after['references'] if row['reference'] == 'finding:source')
++        self.assertEqual((target['kind'], target['resolution']), ('measurement', 'retained'))
++        self.assertEqual(self.call(*target['detailRead'])[0]['id'], 'source')
++        self.assertEqual(after['nodes'][0]['evidenceReference'], {
++            'reference': 'finding:source', 'kind': 'measurement', 'resolution': 'retained'})
++
++    def test_legacy_citations_resolve_without_migrating_the_knowledge_table(self):
++        self.call('report', 'legacy-message', 'worker', 'Retained message body')
++        with sqlite3.connect(self.db) as db:
++            db.execute('DROP TABLE knowledge')
++            db.execute('DROP TABLE knowledge_relations')
++            db.execute('CREATE TABLE knowledge (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,'
++                       'claim TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL)')
++            db.executemany('INSERT INTO knowledge VALUES (?, ?, ?, ?, ?)', [
++                ('message-citation', 'root', 'Message citation', 'message:legacy-message', ''),
++                ('finding-citation', 'root', 'Finding citation', 'finding:message-citation', ''),
++                ('missing-citation', 'root', 'Missing citation', 'finding:absent', '')])
++        expected = {
++            'message-citation': {'reference': 'message:legacy-message', 'kind': 'message',
++                                 'resolution': 'retained'},
++            'finding-citation': {'reference': 'finding:message-citation', 'kind': 'finding',
++                                 'resolution': 'retained'},
++            'missing-citation': {'reference': 'finding:absent', 'kind': 'finding',
++                                 'resolution': 'missing'}}
++        complete = {row['id']: row for row in self.read('root')}
++        index = {row['id']: row for row in self.call('knowledge', 'root', '--index')}
++        for identity, reference in expected.items():
++            self.assertEqual(complete[identity]['evidenceReference'], reference)
++            self.assertEqual(index[identity]['evidenceReference'], reference)
++        graph = self.call('knowledge-search', 'root', 'all', '', 'citation')
++        self.assertEqual({edge['id']: edge['targetResolution'] for edge in graph['edges']},
++                         {'citation:' + identity: reference['resolution']
++                          for identity, reference in expected.items()})
++        with sqlite3.connect(self.db) as db:
++            self.assertNotIn('kind', {row[1] for row in db.execute('PRAGMA table_info(knowledge)')})
++            self.assertIsNone(db.execute(
++                "SELECT name FROM sqlite_master WHERE name='knowledge_relations'").fetchone())
++
++    def test_external_citation_prefixes_and_opaque_evidence_have_explicit_metadata(self):
++        external = ['file:source λ', 'http://example.invalid/source',
++                    'https://example.invalid/source', 'external:archive']
++        opaque = ['run:probe', 'git:' + self.base, 'the run said so', 'Message:absent', '']
++        for number, reference in enumerate(external + opaque):
++            with self.subTest(reference=reference):
++                identity = 'citation-' + str(number)
++                if reference in external:
++                    self.call('record-typed', reference, 'grand', 'measurement',
++                              'A finding with the same literal ID', 'run:collision', '')
++                self.call('record', identity, 'grand', identity, reference, 'Recorded text')
++                complete = self.call('knowledge', 'root', '--id', identity)[0]
++                index = next(row for row in self.call('knowledge', 'root', '--index')
++                             if row['id'] == identity)
++                graph = self.call('knowledge-traverse', 'root', 'all', '',
++                                  'finding:' + identity, 'out', '', 'neighbors')
++                if reference in external:
++                    expected = {'reference': reference, 'kind': 'external',
++                                'resolution': 'external'}
++                    self.assertEqual(complete['evidenceReference'], expected)
++                    self.assertEqual(index['evidenceReference'], expected)
++                    self.assertEqual(len(graph['edges']), 1)
++                    self.assertEqual(graph['edges'][0]['targetKind'], 'external')
++                    self.assertEqual(graph['edges'][0]['targetResolution'], 'external')
++                    target = next(row for row in graph['references'] if row['reference'] == reference)
++                    self.assertEqual((target['kind'], target['resolution']), ('external', 'external'))
++                else:
++                    self.assertIsNone(complete['evidenceReference'])
++                    self.assertIsNone(index['evidenceReference'])
++                    self.assertEqual(graph['edges'], [])
++                    self.assertEqual(graph['references'], [])
++                node = next(row for row in graph['nodes'] if row['id'] == identity)
++                self.assertEqual(node['evidenceReference'], complete['evidenceReference'])
++                search = self.call('knowledge-search', 'root', 'all', '', identity)
++                match = next(row for row in search['matches'] if row['id'] == identity)
++                self.assertEqual(match['evidenceReference'], complete['evidenceReference'])
++                self.assertEqual(complete['evidence'], reference)
++
++    def test_opaque_evidence_can_be_connected_by_an_authored_relation(self):
++        self.call('record', 'run-observation', 'grand', 'Observed a run', 'run:probe', '')
++        self.call('relate', 'run-link', 'grand', 'finding:run-observation', 'DerivedFrom',
++                  'run:probe')
++        graph = self.call('knowledge-traverse', 'root', 'all', '',
++                          'finding:run-observation', 'out', '', 'neighbors')
++        self.assertEqual([row['id'] for row in graph['edges']], ['run-link'])
++        self.assertEqual(graph['edges'][0]['provenance'], 'authored')
++        target = next(row for row in graph['references'] if row['reference'] == 'run:probe')
++        self.assertEqual((target['kind'], target['resolution']), ('external', 'external'))
++
+     def test_findings_accept_source_references_and_include_message_content(self):
+         shared = self.evidence('shared-report', 'sibling')
+         references = ['the run said so', 'git:' + self.base,
+diff --git a/docs/bend2/knowledge-context-2026-09-29.md b/docs/bend2/knowledge-context-2026-09-29.md
+index 0123d3e9..ddae835f 100644
+--- a/docs/bend2/knowledge-context-2026-09-29.md
++++ b/docs/bend2/knowledge-context-2026-09-29.md
+@@ -17,7 +17,19 @@ baton2 DATABASE promote-scoped PROMOTION_ID PROMOTER SOURCE_KIND SOURCE DESTINAT
+ 
+ `AUTHOR`, `READER` and `PROMOTER` are session IDs. `promote` uses session IDs for `SOURCE` and `DESTINATION`. `promote-scoped` identifies each endpoint as `session` or `group`; a group ID names a recorded Ensemble. `FINDING` names a stored finding. The finding ID identifies its author, claim, evidence reference, and limits. Repeating the same ID with those same values returns the stored finding; reusing it with different values fails.
+ 
+-`EVIDENCE` is stored as supplied reference text. If it has the form `message:ID` and that message exists, a read includes the message ID, sender, recipient, and body in `evidenceMessage`. Otherwise `evidenceMessage` is null. The finding row also contains `id`, `author`, `kind`, `claim`, `evidence`, `limits`, `destinations`, `promotions`, and `relations`. Existing records have kind `finding`.
++`EVIDENCE` is stored as supplied text. A registered author can record a reference before its target is retained. If the text has the form `message:ID` and that message exists, a read includes the message ID, sender, recipient, and body in `evidenceMessage`. Otherwise `evidenceMessage` is null. The finding row also contains `id`, `author`, `kind`, `claim`, `evidence`, `evidenceReference`, `limits`, `destinations`, `promotions`, and `relations`. Existing records have kind `finding`.
++
++The prefixes `message:`, `finding:`, `file:`, `http://`, `https://`, and `external:` identify evidence citations. Prefix matching is case-sensitive. Complete reads, metadata indexes, search results, and traversal nodes expose each citation as `evidenceReference`, with its exact `reference`, node `kind`, and current `resolution`:
++
++| Reference | Resolution |
++|---|---|
++| `message:ID` or `finding:ID` whose row exists | `retained` |
++| `message:ID` or `finding:ID` whose row is absent | `missing` |
++| `file:`, `http://`, `https://`, or `external:` | `external` |
++
++Resolution describes the current database snapshot. A retained message's delivery state is reported separately by its delivery record. External references expose their authored location for consumer retrieval. Other evidence text, including `run:ID`, has `evidenceReference: null` and remains available in complete reads and search. An author can connect that text through `relate` when it should participate in the graph.
++
++Search and traversal derive a `Cited` edge for each evidence citation. Its `provenance` is `recorded-evidence`, and `targetResolution` reports the target's resolution. References outside the returned nodes include the same `resolution` and their literal retrieval arguments. A `missing` target retains its identity and can resolve on a later read after its row is stored.
+ 
+ `KIND` and `RELATION` are descriptive strings chosen by the author. Examples include `observation`, `hypothesis`, `decision`, `correction`, `Supports`, `Causes`, `DerivedFrom`, and `Supersedes`. A relationship retains its ID, author, source, relationship name and target. References can name `finding:ID`, `message:ID`, a source file, a run or another external source. A correction can be recorded separately and linked to its earlier finding.
+ 

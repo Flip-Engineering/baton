@@ -1,0 +1,125 @@
+diff --git a/bend2/scripts/capped-run.py b/bend2/scripts/capped-run.py
+new file mode 100755
+index 00000000..89cb46cc
+--- /dev/null
++++ b/bend2/scripts/capped-run.py
+@@ -0,0 +1,105 @@
++#!/usr/bin/env python3
++"""Run a command with a resident-memory ceiling, an unlimited stack and a wall timeout.
++
++Self-hosted runners may not delegate a writable memory cgroup, and a virtual
++memory limit is not a resident limit: it also restricts the unlimited stack a
++Bend compiler needs. This wrapper samples the summed resident set of the
++command's process tree, kills the process group when the ceiling or timeout is
++reached, and prints one receipt line with the observed peak.
++
++Usage:
++  python3 bend2/scripts/capped-run.py --limit-bytes 8589934592 --timeout 240 -- COMMAND...
++"""
++import argparse
++import os
++import resource
++import signal
++import subprocess
++import sys
++import time
++
++
++def tree_pids(root):
++    pids = {root}
++    changed = True
++    while changed:
++        changed = False
++        for entry in os.listdir('/proc'):
++            if not entry.isdigit():
++                continue
++            pid = int(entry)
++            if pid in pids:
++                continue
++            try:
++                with open(f'/proc/{pid}/stat') as handle:
++                    ppid = int(handle.read().split()[3])
++            except (OSError, ValueError, IndexError):
++                continue
++            if ppid in pids:
++                pids.add(pid)
++                changed = True
++    return pids
++
++
++def resident_bytes(pid):
++    try:
++        with open(f'/proc/{pid}/status') as handle:
++            for line in handle:
++                if line.startswith('VmRSS:'):
++                    return int(line.split()[1]) * 1024
++    except OSError:
++        return 0
++    return 0
++
++
++def kill_group(pid):
++    try:
++        os.killpg(pid, signal.SIGKILL)
++    except ProcessLookupError:
++        pass
++
++
++def child_setup():
++    resource.setrlimit(resource.RLIMIT_STACK,
++                       (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument('--limit-bytes', type=int, required=True)
++    parser.add_argument('--timeout', type=float, required=True)
++    parser.add_argument('command', nargs=argparse.REMAINDER)
++    options = parser.parse_args()
++    command = options.command
++    if command and command[0] == '--':
++        command = command[1:]
++    if not command:
++        parser.error('a command is required after --')
++
++    started = time.monotonic()
++    child = subprocess.Popen(command, preexec_fn=child_setup,
++                             start_new_session=True)
++    peak = 0
++    cause = 'completed'
++    while child.poll() is None:
++        current = sum(resident_bytes(pid) for pid in tree_pids(child.pid))
++        peak = max(peak, current)
++        if current > options.limit_bytes:
++            cause = 'resident-cap-exceeded'
++            kill_group(child.pid)
++            child.wait()
++            break
++        if time.monotonic() - started > options.timeout:
++            cause = 'wall-timeout'
++            kill_group(child.pid)
++            child.wait()
++            break
++        time.sleep(0.05)
++    elapsed = time.monotonic() - started
++    print(f'capped-run cause={cause} exit={child.returncode} '
++          f'peak_rss_bytes={peak} elapsed_seconds={elapsed:.3f}', flush=True)
++    return 0 if cause == 'completed' and child.returncode == 0 else 1
++
++
++if __name__ == '__main__':
++    sys.exit(main())
+diff --git a/bend2/scripts/check-native.sh b/bend2/scripts/check-native.sh
+index 5bb74fc5..5bce2515 100644
+--- a/bend2/scripts/check-native.sh
++++ b/bend2/scripts/check-native.sh
+@@ -14,4 +14,9 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
+ .scratch/bend2/git-test
+ sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
+ .scratch/bend2/land-test
++"$PYTHON3" bend2/scripts/capped-run.py --limit-bytes 8589934592 --timeout 240 -- sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
++BATON2_EXE=.scratch/bend2/focused-reads "$PYTHON3" bend2/test/observed-usage.py
++BATON2_EXE=.scratch/bend2/focused-reads "$PYTHON3" bend2/test/harness-inventory.py
++"$PYTHON3" bend2/scripts/capped-run.py --limit-bytes 8589934592 --timeout 180 -- sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles
++.scratch/bend2/subscription-profiles
+ "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"

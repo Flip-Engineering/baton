@@ -1,0 +1,40 @@
+From 7303d406414ff5ab1c98012d0f34d07c4f471c21 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sun, 18 Oct 2026 00:03:44 -0700
+Subject: [PATCH 11/19] Require a digit in fractional reset seconds
+
+(cherry picked from commit b5501a788952fa76826616d8b5a7993c521ca0cb)
+---
+ bend2/src/coordinator/usage-windows.bend | 2 +-
+ bend2/test/usage-windows-store.bend      | 2 ++
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/bend2/src/coordinator/usage-windows.bend b/bend2/src/coordinator/usage-windows.bend
+index 28fc26bb8..8072a11ca 100644
+--- a/bend2/src/coordinator/usage-windows.bend
++++ b/bend2/src/coordinator/usage-windows.bend
+@@ -168,7 +168,7 @@ def explicit_zone(rest: String) -> Bool:
+ 
+ def fractional_zone(rest: String) -> Bool:
+   match rest:
+-    case SCon{'.',tail}: fractional_digits_zone(tail)
++    case SCon{'.',SCon{+head,tail}}: Bool.and(digit(head),fractional_digits_zone(tail))
+     case other: explicit_zone(rest)
+ 
+ def fractional_digits_zone(rest: String) -> Bool:
+diff --git a/bend2/test/usage-windows-store.bend b/bend2/test/usage-windows-store.bend
+index 254563d6e..2722b631e 100644
+--- a/bend2/test/usage-windows-store.bend
++++ b/bend2/test/usage-windows-store.bend
+@@ -72,6 +72,8 @@ def observe_cases(+db: String) -> IO(Unit):
+     expect("operator-reset-rejects-date-only",Bool.not(UW.operator_reset_token("2026-10-17")))
+     expect("operator-reset-rejects-offsetless",Bool.not(UW.operator_reset_token("2026-10-17T03:41:00")))
+     expect("operator-reset-rejects-short-offset",Bool.not(UW.operator_reset_token("2026-10-17T03:41:00+05")))
++    expect("operator-reset-rejects-empty-fraction",Bool.not(UW.operator_reset_token("2026-10-17T03:41:00.Z")))
++    expect("operator-reset-accepts-fraction",UW.operator_reset_token("2026-10-17T03:41:00.125Z"))
+     expect("operator-reset-rejects-sqlite-keyword",Bool.not(UW.operator_reset_token("now")))
+     expect("operator-reset-rejects-localtime-modifier",Bool.not(UW.operator_reset_token("localtime")))
+     expect("operator-reset-rejects-utc-modifier",Bool.not(UW.operator_reset_token("utc")))
+-- 
+2.43.0
+

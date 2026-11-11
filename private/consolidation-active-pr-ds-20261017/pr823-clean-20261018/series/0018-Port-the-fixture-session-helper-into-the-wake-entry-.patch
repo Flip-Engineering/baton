@@ -1,0 +1,36 @@
+From a66168e9a15cca082173dead7e29883002a64ce8 Mon Sep 17 00:00:00 2001
+From: batonci <batonci@localhost>
+Date: Sun, 18 Oct 2026 00:53:13 -0700
+Subject: [PATCH 18/19] Port the fixture session helper into the wake entry
+ (#797, #823)
+
+---
+ bend2/test/usage-windows-wake.bend | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/bend2/test/usage-windows-wake.bend b/bend2/test/usage-windows-wake.bend
+index e32545889..7f6d1d3f9 100644
+--- a/bend2/test/usage-windows-wake.bend
++++ b/bend2/test/usage-windows-wake.bend
+@@ -65,6 +65,9 @@ def window(+db: String, +session: String, +message: String, +ms_offset: String)
+ def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
+   query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
+ 
++def session(+db: String, +id: String) -> IO(Unit):
++  query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','omp'," ++ C.q(id ++ "-kimi/kimi-for-coding") ++ ",'high','','');")
++
+ def handled_case(+db: String, +self: String) -> IO(Unit):
+   do IO<Unit>:
+     +reset : String <- window(db,"wa","m-wa","2000")
+@@ -101,7 +104,7 @@ def stale_case(+db: String, +self: String) -> IO(Unit):
+ def far_case(+db: String, +self: String) -> IO(Unit):
+   do IO<Unit>:
+     +far : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+172800000 AS TEXT);")
+-    created : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('far2','root','omp','kimi-code/kimi-for-coding','high','','');")
++    created : Unit <- session(db,"far2")
+     window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','far2','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far window','m-far2');")
+     owed : Unit <- message(db,"far2","m-far2","")
+     held : Unit <- expect_gate(db,"far2","far2","held","far-continuation-held")
+-- 
+2.43.0
+

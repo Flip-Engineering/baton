@@ -1,0 +1,45 @@
+From c9b65dd587c662db354dd695cec3fa607cab332d Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 22:06:38 -0700
+Subject: [PATCH 6/9] Register the usage-window fixtures in the native check
+ gate (#797, #823)
+
+The gate builds and runs usage-windows.bend, usage-windows-long.bend and usage-windows-store.bend after the focused-reads entries, using the new executable bend2/test/fake-omp-usage as the recorded harness command. usage-windows.py stays out of the gate because it needs the coordinator Main binary. The store database is removed before the run so a repeated gate run starts clean. The gate adds no cap or timeout; the host allocation owns that.
+---
+ bend2/scripts/check-native.sh | 7 +++++++
+ bend2/test/fake-omp-usage     | 5 +++++
+ 2 files changed, 12 insertions(+)
+ create mode 100755 bend2/test/fake-omp-usage
+
+diff --git a/bend2/scripts/check-native.sh b/bend2/scripts/check-native.sh
+index fd0079791..7bc5e9d26 100644
+--- a/bend2/scripts/check-native.sh
++++ b/bend2/scripts/check-native.sh
+@@ -19,6 +19,13 @@ sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/
+ sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
+ BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/observed-usage.py
+ BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/harness-inventory.py
++sh bend2/scripts/build-native.sh bend2/test/usage-windows.bend .scratch/bend2/usage-windows-test
++.scratch/bend2/usage-windows-test
++sh bend2/scripts/build-native.sh bend2/test/usage-windows-long.bend .scratch/bend2/usage-windows-long-test
++.scratch/bend2/usage-windows-long-test
++sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
++rm -f .scratch/bend2/usage-windows-store.db
++.scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
+ "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
+ sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
+ BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
+diff --git a/bend2/test/fake-omp-usage b/bend2/test/fake-omp-usage
+new file mode 100755
+index 000000000..77706e07a
+--- /dev/null
++++ b/bend2/test/fake-omp-usage
+@@ -0,0 +1,5 @@
++#!/bin/sh
++# Recorded OMP usage report consumed by bend2/test/usage-windows-store.bend.
++# The fixture runs its recorded harness command as `<command> usage --json`;
++# this script ignores the arguments and prints the report the fixture asserts.
++printf '%s\n' '{"reports":[{"provider":"kimi-code","limits":[{"window":{"id":"5h","resetsAt":1893456000000},"amount":{"usedFraction":0.42}}]}]}'
+-- 
+2.43.0
+

@@ -1,0 +1,57 @@
+--- comp.ts
++++ comp.memo.ts
+@@ -607,7 +607,9 @@
+ 
+ const CONSTS: Map<HTerm, boolean> = new Map();
+ 
+-const LITS = new Map<HTerm, HTerm>();
++const LITS = new WeakMap<HTerm, HTerm>();
++
++const CONSTANTS = new WeakSet<HTerm>();
+ 
+ // Name
+ // ====
+@@ -674,8 +676,18 @@
+   return out;
+ }
+ 
++function weak_memo<K extends object, V>(m: WeakMap<K, V>, k: K, f: () => V): V {
++  const got = m.get(k);
++  if (got !== undefined) {
++    return got;
++  }
++  const out = f();
++  m.set(k, out);
++  return out;
++}
++
+ function memo_gc(): void {
+-  [OPENS, USES, FOLDS, SPINES, CONSTS, LITS].forEach((m) => m.clear());
++  [OPENS, USES, FOLDS, SPINES, CONSTS].forEach((m) => m.clear());
+ }
+ 
+ // Probe
+@@ -696,7 +708,7 @@
+ 
+ function term_force(t: HTerm): HTerm {
+   const s = Bend.term_force(t);
+-  return s.$ !== "Lit" ? s : memo(LITS, s, () => Bend.term_higher(
++  return s.$ !== "Lit" ? s : weak_memo(LITS, s, () => Bend.term_higher(
+     typeof s.v === "number" && s.v > Bend.NAT_LITERAL_MAX
+       ? Bend.App(Bend.Ref("U32.to_nat"), Bend.u32_to_term(s.v))
+       : Bend.lit_full(s)));
+@@ -822,7 +834,13 @@
+ 
+ function term_const(t: HTerm): boolean {
+   const s = term_strip(t);
+-  return s.$ === "Ctr" && memo(CONSTS, s, () => s.x.every(term_const));
++  return s.$ === "Ctr" && (CONSTANTS.has(s) || memo(CONSTS, s, () => {
++    const value = s.x.every(term_const);
++    if (value) {
++      CONSTANTS.add(s);
++    }
++    return value;
++  }));
+ }
+ 
+ function term_use(u: UMap, p: Probe): number {

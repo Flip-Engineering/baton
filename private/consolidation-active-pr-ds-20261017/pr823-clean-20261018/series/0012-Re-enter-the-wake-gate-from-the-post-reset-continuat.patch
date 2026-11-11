@@ -1,0 +1,231 @@
+From 2ac8d524e79c7be6fb34c8f6470b1691c07e23ec Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sun, 18 Oct 2026 00:07:26 -0700
+Subject: [PATCH 12/19] Re-enter the wake gate from the post-reset continuation
+ (#797, #823)
+
+The continuation dispatched --dispatch-message, which delivers directly and never evaluates the usage gate, so a capped or stale segment could deliver owed input before the reset. It now runs --wake-message, routed to Wake.message_cli -> drive_id -> Receive.wake_due, so the gate is re-read when it fires: a still-held window reports and reschedules, an elapsed one admits, and a handled message is a no-op. The fixture exercises the wake entry with a held check, elapsed delivery once, handled no-op, duplicate continuations, and a far reset that never delivers.
+
+(cherry picked from commit 954c86da770dbacd3462daee49bf8759d1352bf7)
+---
+ bend2/src/coordinator/main.bend          |  2 +
+ bend2/src/coordinator/usage-windows.bend |  2 +-
+ bend2/src/coordinator/wake.bend          |  6 +++
+ bend2/test/fake-wake-marker              | 22 +++++++--
+ bend2/test/usage-windows-wake.bend       | 61 +++++++++++++++++-------
+ docs/bend2/usage-windows-20261017.md     | 16 ++++---
+ 6 files changed, 78 insertions(+), 31 deletions(-)
+
+diff --git a/bend2/src/coordinator/main.bend b/bend2/src/coordinator/main.bend
+index 4b56dcb95..df274dc69 100644
+--- a/bend2/src/coordinator/main.bend
++++ b/bend2/src/coordinator/main.bend
+@@ -431,6 +431,8 @@ def legacy_cli_arity(args: List<String>) -> IO(Unit):
+     case flag <> db <> owner <> query <> directory <> worktree <> bootstrap_file <> Nil{}:
+       recover_context_query_cli(flag, db, owner, query, directory, worktree,
+         bootstrap_file)
++    case "--wake-message" <> +db <> +id <> Nil{}:
++      Wake.message_cli(db,id)
+     case +flag <> +directory <> +lock <> Nil{}:
+       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
+     case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
+diff --git a/bend2/src/coordinator/usage-windows.bend b/bend2/src/coordinator/usage-windows.bend
+index 8072a11ca..827b7e5c4 100644
+--- a/bend2/src/coordinator/usage-windows.bend
++++ b/bend2/src/coordinator/usage-windows.bend
+@@ -525,7 +525,7 @@ def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
+ # continuation is not a daemon and does not poll.
+ 
+ def schedule_argv(+self: String, +db: String, +message: String, +delay_s: String) -> List<String>:
+-  ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--dispatch-message",db,message]
++  ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--wake-message",db,message]
+ 
+ def schedule_delay_sql(+resets_at: String) -> String:
+   "SELECT CAST(max(1,min(86400,(" ++ resets_at ++ "-" ++ now_ms() ++ "+999)/1000)) AS TEXT);"
+diff --git a/bend2/src/coordinator/wake.bend b/bend2/src/coordinator/wake.bend
+index 9437f18cc..837634eba 100644
+--- a/bend2/src/coordinator/wake.bend
++++ b/bend2/src/coordinator/wake.bend
+@@ -71,6 +71,12 @@ def drive_id_found(+db: String, +id: String, empty: Bool) -> IO(Result<&1,&1,U32
+ def drive_id(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+   drive_id_found(db,id,String.is_empty(id))
+ 
++# A post-reset continuation re-enters this wake driver, so the usage gate is
++# evaluated again when it fires: a still-held window reports and reschedules,
++# an elapsed one admits the owed input, and a handled message is a no-op.
++def message_cli(+db: String, +id: String) -> IO(Unit):
++  IO.try(Unit,drive_id(db,id))
++
+ # A committed answer with a message identity reaches the session driver.
+ def drive_command(db: String, command: C.Command, answer: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+   match answer:
+diff --git a/bend2/test/fake-wake-marker b/bend2/test/fake-wake-marker
+index a6d6089dc..9ee9f64de 100755
+--- a/bend2/test/fake-wake-marker
++++ b/bend2/test/fake-wake-marker
+@@ -1,7 +1,19 @@
+ #!/bin/sh
+ # Test self for the usage-window post-reset continuation. The scheduler runs
+-# the self as: SELF --dispatch-message DB MESSAGE. This script stands in for
+-# the coordinator dispatch and applies the same receipt gate: a message that
+-# already has a delivery keeps it, and a repeated dispatch adds nothing.
+-sqlite3 "$2" "INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES('$3','delivered');"
+-sqlite3 "$2" "INSERT OR IGNORE INTO wake_reports(id) VALUES('$3:usage-window-held-report');"
++# the self as: SELF --wake-message DB MESSAGE. This stands in for the
++# coordinator wake driver: it re-checks the message and the gate when it fires.
++# A message with a receipt is a no-op; a still-held window records a check and
++# delivers nothing; an admitted window records one delivery and one report and
++# sets the message receipt, so a repeated continuation changes nothing.
++db=$2
++msg=$3
++pending=$(sqlite3 "$db" "SELECT count(*) FROM messages WHERE id='$msg' AND receipt IS NULL;")
++[ "$pending" = "1" ] || exit 0
++held=$(sqlite3 "$db" "SELECT CASE WHEN EXISTS(SELECT 1 FROM usage_windows l WHERE l.id=(SELECT l2.id FROM usage_windows l2 WHERE l2.window=l.window ORDER BY l2.recorded_at DESC,l2.id DESC LIMIT 1) AND l.window IN (SELECT p.window FROM usage_windows p WHERE p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC,p2.id DESC LIMIT 1) AND ((p.used_fraction IS NOT NULL AND p.used_fraction >= 1) OR p.reset_source='provider-message')) AND l.resets_at IS NOT NULL AND l.resets_at > CAST(strftime('%s','now') AS INTEGER)*1000) THEN 1 ELSE 0 END;")
++if [ "$held" = "1" ]; then
++  sqlite3 "$db" "INSERT OR IGNORE INTO wake_held_checks(id) VALUES('$msg');"
++  exit 0
++fi
++sqlite3 "$db" "INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES('$msg','delivered');"
++sqlite3 "$db" "INSERT OR IGNORE INTO wake_reports(id) VALUES('$msg:usage-window-held-report');"
++sqlite3 "$db" "UPDATE messages SET receipt='delivered' WHERE id='$msg' AND receipt IS NULL;"
+diff --git a/bend2/test/usage-windows-wake.bend b/bend2/test/usage-windows-wake.bend
+index ebb525be4..80ebeba9b 100644
+--- a/bend2/test/usage-windows-wake.bend
++++ b/bend2/test/usage-windows-wake.bend
+@@ -1,11 +1,11 @@
+ # Post-reset continuation fixture for the #797 usage-window gate. A held gate
+ # schedules one detached single-shot continuation that sleeps until the
+-# recorded reset and then re-runs the wake through the existing dispatch entry.
+-# The fixture proves: the gate holds a short reset and admits after it; a
+-# scheduled dispatch of an already handled message adds no second delivery and
+-# keeps the existing receipt; two continuations for the same message leave one
+-# delivery and one held report; and the continuation delay is capped so a far
+-# reset re-checks in bounded segments.
++# recorded reset and then re-enters the wake driver, which re-checks the gate.
++# The fixture proves: the continuation names the wake entry, not the direct
++# delivery entry; a handled message is a no-op; a still-held window records a
++# check and delivers nothing; an admitted window delivers once; duplicate
++# continuations leave one delivery and one held report; and the delay is
++# capped at one day with the next segment still capped while held.
+ #
+ # usage: usage-windows-wake DB SELF_SCRIPT
+ import Base
+@@ -50,38 +50,59 @@ def setup(+db: String) -> IO(Unit):
+     one : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wa','root','omp','kimi-code/kimi-for-coding','high','','');")
+     two : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wb','root','omp','kimi-code/kimi-for-coding','high','','');")
+     three : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wc','root','omp','kimi-code/kimi-for-coding','high','','');")
++    four : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('ws','root','omp','kimi-code/kimi-for-coding','high','','');")
+     deliveries : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_deliveries(message TEXT PRIMARY KEY NOT NULL, receipt TEXT NOT NULL);")
+     reports : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_reports(id TEXT PRIMARY KEY NOT NULL);")
++    checks : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_held_checks(id TEXT PRIMARY KEY NOT NULL);")
+     IO.pure(Unit,Unit{})
+ 
+-def short_window(+db: String, +session: String, +message: String) -> IO(String):
++def window(+db: String, +session: String, +message: String, +ms_offset: String) -> IO(String):
+   do IO<String>:
+-    +reset : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+2000;")
+-    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code'," ++ C.q(session) ++ ",'5-hour'," ++ Tx.trim_nl(reset) ++ ",'provider-message',NULL,'short reset window'," ++ C.q(message) ++ ");")
++    +reset : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+" ++ ms_offset ++ ";")
++    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code'," ++ C.q(session) ++ ",'5-hour'," ++ Tx.trim_nl(reset) ++ ",'provider-message',NULL,'window'," ++ C.q(message) ++ ");")
+     IO.pure(String,Tx.trim_nl(reset))
+ 
++def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
++  query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
++
+ def handled_case(+db: String, +self: String) -> IO(Unit):
+   do IO<Unit>:
+-    +reset : String <- short_window(db,"wa","m-wa")
+-    handled : Unit <- query(db,"INSERT INTO wake_deliveries(message,receipt) VALUES('m-wa','handled-first');")
++    +reset : String <- window(db,"wa","m-wa","2000")
++    handled : Unit <- message(db,"wa","m-wa","handled-first")
+     held : Unit <- expect_gate(db,"wa","wa","held","handled-case-held")
+     UW.schedule_wake(db,"m-wa",reset,self)
+     IO.pure(Unit,Unit{})
+ 
+ def duplicate_case(+db: String, +self: String) -> IO(Unit):
+   do IO<Unit>:
+-    +reset : String <- short_window(db,"wb","m-wb")
+-    report : Unit <- query(db,"INSERT INTO wake_reports(id) VALUES('m-wb:usage-window-held-report');")
++    +reset : String <- window(db,"wb","m-wb","2000")
++    owed : Unit <- message(db,"wb","m-wb","")
+     held : Unit <- expect_gate(db,"wb","wb","held","duplicate-case-held")
+     UW.schedule_wake(db,"m-wb",reset,self)
+     UW.schedule_wake(db,"m-wb",reset,self)
+     IO.pure(Unit,Unit{})
+ 
+-def cap_case(+db: String, +self: String) -> IO(Unit):
++def stale_case(+db: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    +reset : String <- window(db,"ws","m-ws","3600000")
++    owed : Unit <- message(db,"ws","m-ws","")
++    held : Unit <- expect_gate(db,"ws","ws","held","stale-case-held")
++    before : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","0\n","stale-held-no-delivery-before")
++    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv([self,"--wake-message",db,"m-ws"]),".")
++    checked : Unit <- expect_read(db,"SELECT count(*) FROM wake_held_checks WHERE id='m-ws';","1\n","stale-held-check-recorded")
++    blocked : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","0\n","stale-held-no-delivery")
++    passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE message='m-ws';")
++    admitted : Unit <- expect_gate(db,"ws","ws","elapsed","stale-case-elapsed")
++    rerun : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv([self,"--wake-message",db,"m-ws"]),".")
++    delivered : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","1\n","elapsed-delivery-once")
++    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-ws';","delivered\n","elapsed-sets-receipt")
++    IO.pure(Unit,Unit{})
++
++def cap_case(+db: String) -> IO(Unit):
+   do IO<Unit>:
+     +far : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+172800000;")
+     delay : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-reset-segment-capped")
+-    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','wc','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far reset window','m-wc');")
++    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','wc','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far window','m-wc');")
+     held : Unit <- expect_gate(db,"wc","wc","held","far-reset-held")
+     next_segment : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","next-segment-still-86400")
+     passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE message='m-wc';")
+@@ -92,12 +113,16 @@ def main_args(args: List<String>) -> IO(Unit):
+   match args:
+     case +path <> +self <> Nil{}: do IO<Unit>:
+       setup(path)
++      +argv_enc : String <- IO.pure(String,Tx.enc_argv(UW.schedule_argv(self,path,"m","1")))
++      argv_wake : Unit <- expect_read(path,"SELECT instr(" ++ C.q(argv_enc) ++ ",'--wake-message')>0;","1\n","schedule-uses-wake-entry")
++      argv_direct : Unit <- expect_read(path,"SELECT instr(" ++ C.q(argv_enc) ++ ",'--dispatch-message')=0;","1\n","schedule-not-direct-delivery")
+       handled_case(path,self)
+       duplicate_case(path,self)
+-      cap_case(path,self)
++      stale_case(path,self)
++      cap_case(path)
+       waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","sleep 5"]),".")
+-      handled_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wa';","1\n","handled-single-delivery")
+-      kept_receipt : Unit <- expect_read(path,"SELECT receipt FROM wake_deliveries WHERE message='m-wa';","handled-first\n","handled-keeps-receipt")
++      handled_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wa';","0\n","handled-no-second-delivery")
++      kept_receipt : Unit <- expect_read(path,"SELECT receipt FROM messages WHERE id='m-wa';","handled-first\n","handled-keeps-receipt")
+       duplicate_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wb';","1\n","duplicate-single-delivery")
+       duplicate_report : Unit <- expect_read(path,"SELECT count(*) FROM wake_reports WHERE id='m-wb:usage-window-held-report';","1\n","duplicate-single-held-report")
+       IO.print("fixture-windows-wake-ok")
+diff --git a/docs/bend2/usage-windows-20261017.md b/docs/bend2/usage-windows-20261017.md
+index fb611ad08..7d34e8108 100644
+--- a/docs/bend2/usage-windows-20261017.md
++++ b/docs/bend2/usage-windows-20261017.md
+@@ -78,13 +78,15 @@ the latest provider row per window for exhaustion evidence:
+ - None: no exhausted window. Partial reports stay visible in the query and do
+   not hold.
+ 
+-The continuation sleeps until the recorded reset and re-runs the wake through
+-the existing dispatch entry (`--dispatch-message`) with no new input. The delay
+-is capped at one day, so a far reset re-checks in bounded segments and a
+-still-held gate schedules the next segment. It is one detached process, not a
+-daemon, and it does not poll. Delivery stays receipt-gated, so a message that
+-was handled before the reset keeps its receipt and gains no second delivery;
+-two continuations for the same message leave one delivery and one held report.
++The continuation sleeps until the recorded reset and re-enters the wake driver
++(`--wake-message`, which calls `Wake.drive_id`) with no new input, so the gate
++is evaluated again when it fires. A still-held window reports and schedules the
++next segment; an elapsed one admits the owed input; a message that already has
++a receipt is a no-op. The delay is capped at one day, so a far reset re-checks
++in bounded segments. It is one detached process, not a daemon, and it does not
++poll. Delivery stays receipt-gated, so a handled message gains no second
++delivery; two continuations for the same message leave one delivery and one
++held report.
+ 
+ ## Query
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,455 @@
+From 0e25954da984d9c2b2383f4ab046b8ed72bf731a Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 16:54:11 -0700
+Subject: [PATCH] Admit native builds through one shared lock and capacity
+ receipt
+
+build-native.sh now re-execs through build-admission.py. Full coordinator
+generation takes an exclusive flock under the Git common directory; focused
+builds take a shared lock. Admission refuses immediately with exact observed
+capacity when another generation holds the lock or actual memory and disk are
+below the recorded minimum. Each attempt retains a JSON receipt with source,
+toolchain, cgroup, capacity, pid and pgid, and exit or forwarded signal. The
+child runs in its own session, so cancellation reaches the whole process tree.
+
+Issue #677 records the duplicate Main generation recurrence; #819 requires
+host-capacity admission. The wrapper does not impose a cgroup memory bound
+because it cannot create one without runner privilege; the receipt records the
+inherited cgroup and memory.max for the workflow admission.
+
+Tests use tiny sleep and exit fixtures only, under the 8 GiB test cap.
+---
+ bend2/scripts/build-admission.py | 260 +++++++++++++++++++++++++++++++
+ bend2/scripts/build-native.sh    |   6 +
+ bend2/test/build-admission.py    | 135 ++++++++++++++++
+ 3 files changed, 401 insertions(+)
+ create mode 100755 bend2/scripts/build-admission.py
+ create mode 100755 bend2/test/build-admission.py
+
+diff --git a/bend2/scripts/build-admission.py b/bend2/scripts/build-admission.py
+new file mode 100755
+index 00000000..998c06aa
+--- /dev/null
++++ b/bend2/scripts/build-admission.py
+@@ -0,0 +1,260 @@
++#!/usr/bin/env python3
++"""Admit one native build execution before it starts.
++
++#677: a repeated heavy validation must return the admitted execution instead of
++starting another one. #819: a full C generation is admitted only from actual
++host capacity. This wrapper is the shared entry used by build-native.sh, so
++developer, agent and workflow commands pass through the same decision.
++
++The decision is a non-blocking flock on one lock file in a host-wide directory
++selected by BATON2_BUILD_ADMISSION_DIR, or the per-user runtime directory
++otherwise. Every clone and worktree on the host therefore shares it. A full
++Main generation takes the exclusive lock; a focused build takes a shared lock.
++The wrapper refuses immediately with the exact observed capacity when another
++full generation holds the lock or when the host cannot supply the observed
++minimum. It never queues, waits, truncates output or estimates the task from
++caller input.
++
++Each attempt writes a durable JSON receipt before execution and updates it after
++the child exits. The child runs in a new session, so INT, TERM and HUP are
++forwarded to its whole process group and recorded. A cgroup memory bound is not
++imposed here because the script cannot create one without runner privilege; the
++receipt records the inherited cgroup and its memory.max for #819 admission.
++"""
++import argparse
++import fcntl
++import json
++import os
++import signal
++import subprocess
++import sys
++import time
++from pathlib import Path
++
++EX_TEMPFAIL = 75
++FULL = "full"
++FOCUSED = "focused"
++
++# Observed physical minima, not caller estimates. The #677 record measured a
++# completed Main generation at 110,205,349,888 bytes RSS; 128 GiB leaves that
++# peak headroom. Disk minima follow the recorded ENOSPC failures. A focused
++# build is bounded by the 8 GiB test cap, so 1 GiB of free capacity is the
++# admission floor for it.
++FLOORS = {
++    FULL: {"memory_kib": 128 * 1024 * 1024, "disk_kib": 16 * 1024 * 1024},
++    FOCUSED: {"memory_kib": 1 * 1024 * 1024, "disk_kib": 1 * 1024 * 1024},
++}
++
++
++def memory_available_kib():
++    try:
++        for line in Path("/proc/meminfo").read_text().splitlines():
++            if line.startswith("MemAvailable:"):
++                return int(line.split()[1])
++    except OSError:
++        return None
++    return None
++
++
++def disk_available_kib(path):
++    candidate = Path(path)
++    while not candidate.exists() and candidate != candidate.parent:
++        candidate = candidate.parent
++    usage = os.statvfs(candidate)
++    return (usage.f_bavail * usage.f_frsize) // 1024
++
++
++def admission_dir():
++    override = os.environ.get("BATON2_BUILD_ADMISSION_DIR")
++    if override:
++        return Path(override)
++    base = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
++    return base / ("baton2-build-admission-%d" % os.getuid())
++
++
++def source_identity(root):
++    def git(*args):
++        try:
++            return subprocess.check_output(
++                ["git", "-C", str(root), *args],
++                text=True, stderr=subprocess.DEVNULL).strip()
++        except (OSError, subprocess.CalledProcessError):
++            return ""
++    return {"commit": git("rev-parse", "HEAD"),
++            "status": git("status", "--porcelain=v1")}
++
++
++def classify(root, entry):
++    resolved = Path(entry)
++    if not resolved.is_absolute():
++        resolved = root / resolved
++    full_entry = (root / "bend2/src/coordinator/main.bend").resolve()
++    return FULL if resolved.resolve() == full_entry else FOCUSED
++
++
++def cgroup_identity():
++    try:
++        relative = Path("/proc/self/cgroup").read_text().strip().split("::", 1)[1]
++        memory_max = Path("/sys/fs/cgroup" + relative + "/memory.max").read_text().strip()
++        cpu_max = Path("/sys/fs/cgroup" + relative + "/cpu.max").read_text().strip()
++        return {"path": relative, "memory_max": memory_max, "cpu_max": cpu_max}
++    except OSError:
++        return {"path": "", "memory_max": "", "cpu_max": ""}
++
++
++def write_receipt(path, value):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    temporary = path.with_suffix(".tmp")
++    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
++    os.replace(temporary, path)
++
++
++def acquire(lock_path, exclusive):
++    lock_path.parent.mkdir(parents=True, exist_ok=True)
++    handle = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
++    mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
++    try:
++        fcntl.flock(handle, mode | fcntl.LOCK_NB)
++    except BlockingIOError:
++        os.close(handle)
++        return None
++    return handle
++
++
++def refuse(kind, cause, condition, current, required, receipt_path, active_receipt=""):
++    document = {
++        "error": "build-admission-refused",
++        "kind": kind,
++        "cause": cause,
++        "condition": condition,
++        "current": current,
++        "required": required,
++        "receipt": str(receipt_path),
++        "active_receipt": active_receipt,
++        "next": "Wait for the recorded full generation to finish, free actual "
++                "capacity, or run a focused build.",
++    }
++    print(json.dumps(document, sort_keys=True), file=sys.stderr)
++    return EX_TEMPFAIL
++
++
++def run(args):
++    root = Path(args.root).resolve()
++    kind = classify(root, args.entry)
++    floors = FLOORS[kind]
++    directory = admission_dir()
++    started_at_ns = time.time_ns()
++    receipt_path = directory / "receipts" / ("%d-%d.json" % (started_at_ns, os.getpid()))
++    identity = source_identity(root)
++    output_path = Path(args.output)
++    if not output_path.is_absolute():
++        output_path = root / output_path
++    capacity = {
++        "memory_available_kib": args.memory_available_kib
++        if args.memory_available_kib is not None else memory_available_kib(),
++        "disk_available_kib": args.disk_available_kib
++        if args.disk_available_kib is not None else disk_available_kib(output_path),
++    }
++    receipt = {
++        "schema": 1,
++        "kind": kind,
++        "entry": args.entry,
++        "output": args.output,
++        "root": str(root),
++        "compiler": args.compiler,
++        "command": args.command,
++        "source": identity,
++        "capacity": capacity,
++        "required": floors,
++        "cgroup": cgroup_identity(),
++        "lock": str(directory / "build.lock"),
++        "started_at_ns": started_at_ns,
++    }
++    lock_path = directory / "build.lock"
++    lock = acquire(lock_path, kind == FULL)
++    if lock is None:
++        try:
++            active_receipt = lock_path.read_text().strip()
++        except OSError:
++            active_receipt = ""
++        receipt.update({"decision": "refused", "cause": "generation-in-flight",
++                        "active_receipt": active_receipt,
++                        "ended_at_ns": time.time_ns()})
++        write_receipt(receipt_path, receipt)
++        return refuse(kind, "generation-in-flight",
++                      "Another build holds the shared admission lock; a full "
++                      "generation requires exclusive custody.",
++                      capacity, floors, receipt_path, active_receipt)
++    os.ftruncate(lock, 0)
++    os.write(lock, str(receipt_path).encode())
++    os.fsync(lock)
++    memory = capacity["memory_available_kib"]
++    disk = capacity["disk_available_kib"]
++    if (memory is not None and memory < floors["memory_kib"]) or \
++            (disk is not None and disk < floors["disk_kib"]):
++        os.ftruncate(lock, 0)
++        os.close(lock)
++        receipt.update({"decision": "refused", "cause": "capacity-below-floor",
++                        "ended_at_ns": time.time_ns()})
++        write_receipt(receipt_path, receipt)
++        return refuse(kind, "capacity-below-floor",
++                      "Actual host capacity is below the observed minimum for "
++                      "this build kind.", capacity, floors, receipt_path)
++
++    receipt.update({"decision": "admitted"})
++    write_receipt(receipt_path, receipt)
++    child = subprocess.Popen(
++        args.command, cwd=str(root), start_new_session=True, pass_fds=(lock,),
++        env={**os.environ, "BATON2_BUILD_ADMITTED": "1"})
++    forwarded = []
++
++    def forward(number, _frame):
++        forwarded.append(number)
++        try:
++            os.killpg(child.pid, number)
++        except ProcessLookupError:
++            pass
++
++    previous = {}
++    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
++        previous[number] = signal.signal(number, forward)
++    try:
++        exit_code = child.wait()
++    finally:
++        for number, handler in previous.items():
++            signal.signal(number, handler)
++        os.ftruncate(lock, 0)
++        os.close(lock)
++    receipt.update({
++        "ended_at_ns": time.time_ns(),
++        "pid": child.pid,
++        "pgid": child.pid,
++        "exit_code": exit_code,
++        "signal_forwarded": forwarded,
++    })
++    if forwarded:
++        exit_code = 128 + forwarded[-1]
++        receipt["exit_code"] = exit_code
++    write_receipt(receipt_path, receipt)
++    return exit_code
++
++
++def main(argv):
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--root", required=True)
++    parser.add_argument("--entry", required=True)
++    parser.add_argument("--output", required=True)
++    parser.add_argument("--compiler", default="")
++    parser.add_argument("command", nargs=argparse.REMAINDER)
++    args = parser.parse_args(argv)
++    if args.command and args.command[0] == "--":
++        args.command = args.command[1:]
++    if not args.command:
++        parser.error("a command is required after --")
++    args.memory_available_kib = None
++    args.disk_available_kib = None
++    return run(args)
++
++
++if __name__ == "__main__":
++    sys.exit(main(sys.argv[1:]))
+diff --git a/bend2/scripts/build-native.sh b/bend2/scripts/build-native.sh
+index 9000eee0..9350f638 100644
+--- a/bend2/scripts/build-native.sh
++++ b/bend2/scripts/build-native.sh
+@@ -4,6 +4,12 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+ cd "$root"
+ entry=${1:-bend2/src/coordinator/main.bend}
+ output=${2:-.scratch/bend2/baton2}
++if [ "${BATON2_BUILD_ADMITTED:-}" != 1 ]; then
++  script=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")
++  exec python3 "$root/bend2/scripts/build-admission.py" \
++    --root "$root" --entry "$entry" --output "$output" \
++    --compiler "${BEND:-}" -- sh "$script" "$entry" "$output"
++fi
+ mkdir -p "$(dirname -- "$output")"
+ entry_path=$(CDPATH= cd -- "$(dirname -- "$entry")" && pwd -P)/$(basename -- "$entry")
+ compiler=${BEND:-"$root/.bend/bin/bend"}
+diff --git a/bend2/test/build-admission.py b/bend2/test/build-admission.py
+new file mode 100755
+index 00000000..a03517ac
+--- /dev/null
++++ b/bend2/test/build-admission.py
+@@ -0,0 +1,135 @@
++#!/usr/bin/env python3
++"""Tiny fixtures for the shared native build admission (#677, #819).
++
++No compiler is invoked. Every child is a short shell command, so the fixture
++stays far below the 8 GiB test cap.
++"""
++import contextlib
++import fcntl
++import importlib.util
++import io
++import json
++import os
++import signal
++import subprocess
++import sys
++import tempfile
++import time
++import unittest
++from pathlib import Path
++from types import SimpleNamespace
++
++MODULE = Path(__file__).resolve().parents[1] / "scripts" / "build-admission.py"
++SPEC = importlib.util.spec_from_file_location("build_admission", MODULE)
++ADMISSION = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(ADMISSION)
++
++HIGH_MEMORY = 256 * 1024 * 1024
++HIGH_DISK = 64 * 1024 * 1024
++
++
++class BuildAdmission(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.root = Path(self.temp.name) / "repo"
++        (self.root / "bend2/src/coordinator").mkdir(parents=True)
++        (self.root / "bend2/tests").mkdir(parents=True)
++        self.output = str(self.root / ".scratch/bend2/tiny")
++        self.previous_admission = os.environ.get("BATON2_BUILD_ADMISSION_DIR")
++        os.environ["BATON2_BUILD_ADMISSION_DIR"] = str(Path(self.temp.name) / "admission")
++
++    def tearDown(self):
++        if self.previous_admission is None:
++            os.environ.pop("BATON2_BUILD_ADMISSION_DIR", None)
++        else:
++            os.environ["BATON2_BUILD_ADMISSION_DIR"] = self.previous_admission
++        self.temp.cleanup()
++
++    def arguments(self, entry="bend2/tests/tiny.bend", command=None,
++                  memory=HIGH_MEMORY, disk=HIGH_DISK):
++        return SimpleNamespace(
++            root=str(self.root), entry=entry, output=self.output, compiler="",
++            command=command or ["sh", "-c", "exit 0"],
++            memory_available_kib=memory, disk_available_kib=disk)
++
++    def receipts(self):
++        directory = ADMISSION.admission_dir() / "receipts"
++        return sorted(directory.glob("*.json")) if directory.exists() else []
++
++    def test_focused_build_is_admitted_with_group_identity(self):
++        exit_code = ADMISSION.run(self.arguments())
++        self.assertEqual(exit_code, 0)
++        receipt = json.loads(self.receipts()[-1].read_text())
++        self.assertEqual(receipt["kind"], ADMISSION.FOCUSED)
++        self.assertEqual(receipt["decision"], "admitted")
++        self.assertEqual(receipt["exit_code"], 0)
++        self.assertEqual(receipt["pgid"], receipt["pid"])
++        self.assertNotEqual(receipt["pgid"], os.getpid())
++
++    def test_full_build_is_refused_while_focused_build_holds_the_lock(self):
++        directory = ADMISSION.admission_dir()
++        directory.mkdir(parents=True)
++        held = os.open(directory / "build.lock", os.O_RDWR | os.O_CREAT, 0o644)
++        os.write(held, b"/retained/active-build.json")
++        fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
++        try:
++            with contextlib.redirect_stderr(io.StringIO()):
++                exit_code = ADMISSION.run(self.arguments(
++                    entry="bend2/src/coordinator/main.bend"))
++        finally:
++            os.close(held)
++        self.assertEqual(exit_code, ADMISSION.EX_TEMPFAIL)
++        receipt = json.loads(self.receipts()[-1].read_text())
++        self.assertEqual(receipt["kind"], ADMISSION.FULL)
++        self.assertEqual(receipt["decision"], "refused")
++        self.assertEqual(receipt["cause"], "generation-in-flight")
++        self.assertEqual(receipt["active_receipt"], "/retained/active-build.json")
++
++    def test_capacity_below_floor_is_refused(self):
++        with contextlib.redirect_stderr(io.StringIO()):
++            exit_code = ADMISSION.run(self.arguments(memory=512))
++        self.assertEqual(exit_code, ADMISSION.EX_TEMPFAIL)
++        receipt = json.loads(self.receipts()[-1].read_text())
++        self.assertEqual(receipt["decision"], "refused")
++        self.assertEqual(receipt["cause"], "capacity-below-floor")
++        self.assertEqual(receipt["capacity"]["memory_available_kib"], 512)
++
++    def test_full_build_is_admitted_when_capacity_and_lock_are_free(self):
++        exit_code = ADMISSION.run(self.arguments(
++            entry="bend2/src/coordinator/main.bend"))
++        self.assertEqual(exit_code, 0)
++        receipt = json.loads(self.receipts()[-1].read_text())
++        self.assertEqual(receipt["kind"], ADMISSION.FULL)
++        self.assertEqual(receipt["decision"], "admitted")
++
++    def test_termination_is_forwarded_to_the_build_process_group(self):
++        program = (
++            "import importlib.util, sys\n"
++            "from types import SimpleNamespace\n"
++            "spec = importlib.util.spec_from_file_location('admission', %r)\n"
++            "module = importlib.util.module_from_spec(spec)\n"
++            "spec.loader.exec_module(module)\n"
++            "args = SimpleNamespace(root=%r, entry='bend2/tests/tiny.bend', "
++            "output=%r, compiler='', command=['sh', '-c', 'sleep 30'], "
++            "memory_available_kib=%d, disk_available_kib=%d)\n"
++            "sys.exit(module.run(args))\n"
++        ) % (str(MODULE), str(self.root), self.output, HIGH_MEMORY, HIGH_DISK)
++        command = [sys.executable, "-c", program]
++        wrapper = subprocess.Popen(command, stdout=subprocess.DEVNULL,
++                                   stderr=subprocess.DEVNULL)
++        try:
++            time.sleep(0.75)
++            wrapper.send_signal(signal.SIGTERM)
++            wrapper.wait(timeout=10)
++        finally:
++            if wrapper.poll() is None:
++                wrapper.kill()
++                wrapper.wait()
++        self.assertIn(wrapper.returncode, (128 + signal.SIGTERM, -signal.SIGTERM))
++        receipt = json.loads(self.receipts()[-1].read_text())
++        self.assertIn(signal.SIGTERM, receipt["signal_forwarded"])
++        self.assertEqual(receipt["pgid"], receipt["pid"])
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.43.0
+

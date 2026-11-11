@@ -1,0 +1,556 @@
+From 38c0d16fe4e8a3ca312d6fea9ce47b1a72214bed Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 22:29:58 -0700
+Subject: [PATCH 7/9] Gate only exhausted usage windows and wake automatically
+ after the reset (#797, #823)
+
+Exhaustion comes from the latest provider row per window: a limit message or usedFraction >= 1. A partial report with a future reset is open and admitted. The gate evaluates every window, holds on any exhausted future reset, reports elapsed after the reset, and treats a limit message without a reset as unknown without blocking. A held wake schedules one detached single-shot continuation at the earliest reset; it sleeps and re-runs the existing dispatch entry with no new input, the delay is capped at one day, and delivery stays receipt-gated so a handled message gains no second delivery and duplicate continuations leave one delivery and one held report. The query adds the open state. Fixtures cover partial admission, multiwindow hold/elapsed, limit unknown, handled-before-reset, duplicate continuations and the segment cap; each new case fails on c9b65dd58.
+---
+ bend2/scripts/check-native.sh            |   3 +
+ bend2/src/coordinator/receive.bend       |   1 +
+ bend2/src/coordinator/usage-windows.bend |  94 +++++++++++++++++---
+ bend2/test/fake-wake-marker              |   7 ++
+ bend2/test/usage-windows-store.bend      |  51 ++++++++---
+ bend2/test/usage-windows-wake.bend       | 108 +++++++++++++++++++++++
+ bend2/test/usage-windows.py              |  37 +++++++-
+ docs/bend2/usage-windows-20261017.md     |  66 +++++++++-----
+ 8 files changed, 317 insertions(+), 50 deletions(-)
+ create mode 100755 bend2/test/fake-wake-marker
+ create mode 100644 bend2/test/usage-windows-wake.bend
+
+diff --git a/bend2/scripts/check-native.sh b/bend2/scripts/check-native.sh
+index 7bc5e9d26..82dbc72cb 100644
+--- a/bend2/scripts/check-native.sh
++++ b/bend2/scripts/check-native.sh
+@@ -26,6 +26,9 @@ sh bend2/scripts/build-native.sh bend2/test/usage-windows-long.bend .scratch/ben
+ sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
+ rm -f .scratch/bend2/usage-windows-store.db
+ .scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
++sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake.bend .scratch/bend2/usage-windows-wake-test
++rm -f .scratch/bend2/usage-windows-wake.db
++.scratch/bend2/usage-windows-wake-test .scratch/bend2/usage-windows-wake.db bend2/test/fake-wake-marker
+ "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
+ sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
+ BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
+diff --git a/bend2/src/coordinator/receive.bend b/bend2/src/coordinator/receive.bend
+index a2c528db6..3e618755c 100644
+--- a/bend2/src/coordinator/receive.bend
++++ b/bend2/src/coordinator/receive.bend
+@@ -312,6 +312,7 @@ def wake_fenced_gate(+db: String, +session: String, +cursor: String, launch: Str
+     case UW.GateHeld{+window,+resets_at,+source,+receipt}: do IO<Result<&1,&1,U32 & String,Unit>>:
+       +found : String <- wake_found(db,session,cursor)
+       held : Unit <- UW.report_held(db,session,Tx.trim_nl(found),UW.GateHeld{window,resets_at,source,receipt})
++      scheduled : Unit <- UW.schedule_held(db,Tx.trim_nl(found),resets_at)
+       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+     case other: wake_fenced_owed(db,session,cursor,launch,lock,gate)
+diff --git a/bend2/src/coordinator/usage-windows.bend b/bend2/src/coordinator/usage-windows.bend
+index ed2de7321..0e1c260ba 100644
+--- a/bend2/src/coordinator/usage-windows.bend
++++ b/bend2/src/coordinator/usage-windows.bend
+@@ -17,6 +17,8 @@ import ./usage.bend as Usage
+ import ../json/canonical.bend as J
+ import ../git/text.bend as Tx
+ import ../host/sqlite.bend as DB
++import ../host/control.bend as Host
++import ../host/session-lock.bend as Lock
+ import ./store.bend as Store
+ 
+ type Gate is Data:
+@@ -376,7 +378,7 @@ def query_none(+session: String, +account: String) -> String:
+   "{\"schema\":\"baton2-usage-windows-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"account\":" ++ J.string_literal(account) ++ ",\"windows\":\"none recorded\",\"condition\":\"noProviderQualifiedModel\"}"
+ 
+ def query_answer_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
+-  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
++  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN NOT ((w.used_fraction IS NOT NULL AND w.used_fraction >= 1) OR w.reset_source='provider-message') THEN 'open' WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+ 
+ def query_bound(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Unit):
+   do IO<Unit>:
+@@ -395,23 +397,58 @@ def query(+db: String, +session: String, +account: String) -> IO(Unit):
+ 
+ # --- the wake gate -----------------------------------------------------------
+ #
+-# One verdict query reads the newest matching observation: no row admits
+-# (GateNone), a NULL reset admits with its source kept visible (GateUnknown),
+-# a future reset holds the wake (GateHeld), and a past reset admits with
+-# restoration evidence (GateElapsed). The gate never blocks on an unknown.
++# Each window is represented by its latest row for state and reset, and by its
++# latest provider row for exhaustion evidence. A window is exhausted when the
++# provider said so: the latest provider row is a limit message or reports a used
++# fraction at or above 1. A partial provider report with a future reset is not
++# exhaustion and does not hold. An operator-observed reset keeps the window's
++# provider exhaustion and supplies the reset time. The gate holds when any
++# exhausted window's reset is still in the future, is elapsed when one has
++# passed, is unknown when the only exhausted evidence carries no reset, and is
++# none otherwise.
++
++def exhausted_sql(+alias: String) -> String:
++  "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
++
++def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1)"
++
++def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
++
++def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
++  "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
++
++def window_state_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  latest_rows_sql(harness,provider,account) ++ " AND w.window IN (" ++ exhausted_windows_sql(harness,provider,account) ++ ")"
++
++def held_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NOT NULL AND w.resets_at > " ++ now_ms()
++
++def elapsed_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NOT NULL AND w.resets_at <= " ++ now_ms()
++
++def unknown_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NULL"
+ 
+ def gate_verdict_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
+-  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM usage_windows WHERE " ++ window_match_sql(harness,provider,account) ++ ") THEN 'none' ELSE (SELECT CASE WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " ORDER BY w.recorded_at DESC, w.id DESC LIMIT 1) END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
++  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM (" ++ exhausted_windows_sql(harness,provider,account) ++ ")) THEN 'none' WHEN EXISTS(SELECT 1 FROM (" ++ held_rows_sql(harness,provider,account) ++ ")) THEN 'held' WHEN EXISTS(SELECT 1 FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ")) THEN 'elapsed' WHEN EXISTS(SELECT 1 FROM (" ++ unknown_rows_sql(harness,provider,account) ++ ")) THEN 'unknown' ELSE 'none' END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
++
++def gate_detail_rows_sql(+harness: String, +provider: String, +account: String, +verdict: String) -> String:
++  match verdict:
++    case "held": "SELECT * FROM (" ++ held_rows_sql(harness,provider,account) ++ ") ORDER BY resets_at ASC, recorded_at DESC, id DESC LIMIT 1"
++    case "elapsed": "SELECT * FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ") ORDER BY recorded_at DESC, id DESC LIMIT 1"
++    case _: "SELECT * FROM (" ++ unknown_rows_sql(harness,provider,account) ++ ") ORDER BY recorded_at DESC, id DESC LIMIT 1"
+ 
+-def gate_detail_sql(+harness: String, +provider: String, +account: String, +field: String) -> String:
+-  "SELECT " ++ field ++ " FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " ORDER BY w.recorded_at DESC, w.id DESC LIMIT 1;"
++def gate_detail_sql(+harness: String, +provider: String, +account: String, +verdict: String, +field: String) -> String:
++  "SELECT " ++ field ++ " FROM (" ++ gate_detail_rows_sql(harness,provider,account,verdict) ++ ");"
+ 
+ def gate_details(+db: String, +harness: String, +provider: String, +account: String, +verdict: String) -> IO(Gate):
+   do IO<Gate>:
+-    +window : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,"w.window")))
+-    +source : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,"w.reset_source")))
+-    +receipt : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,"w.receipt")))
+-    +resets : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,"coalesce(CAST(w.resets_at AS TEXT),'-')")))
++    +window : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"window")))
++    +source : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"reset_source")))
++    +receipt : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"receipt")))
++    +resets : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"coalesce(CAST(resets_at AS TEXT),'-')")))
+     IO.pure(Gate,Bool.pick(Gate,String.eq(verdict,"unknown"),GateUnknown{Tx.trim_nl(window),Tx.trim_nl(source),Tx.trim_nl(receipt)},Bool.pick(Gate,String.eq(verdict,"held"),GateHeld{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)},GateElapsed{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)})))
+ 
+ def gate_verdicted(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Gate):
+@@ -430,6 +467,39 @@ def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
+     gate : Gate <- window_gate_model(db,session,Tx.trim_nl(harness),Tx.trim_nl(model),Tx.trim_nl(account))
+     IO.pure(Gate,gate)
+ 
++# --- the post-reset continuation ---------------------------------------------
++#
++# A held wake leaves the input owed and launches one detached single-shot
++# continuation. It sleeps until the earliest held reset and re-runs the wake
++# through the existing dispatch entry, which drives the retained input with no
++# new message. The delay is capped at one day, so a far reset re-checks in
++# bounded segments and the still-held gate schedules the next segment. The
++# continuation is not a daemon and does not poll.
++
++def schedule_argv(+self: String, +db: String, +message: String, +delay_s: String) -> List<String>:
++  ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--dispatch-message",db,message]
++
++def schedule_delay_sql(+resets_at: String) -> String:
++  "SELECT CAST(max(1,min(86400,(" ++ resets_at ++ "-" ++ now_ms() ++ "+999)/1000)) AS TEXT);"
++
++def schedule_launch(+db: String, +message: String, +delay_s: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    launched : String <- IO.try(String,Host.Control.launch(Tx.enc_argv(schedule_argv(self,db,message,delay_s)),db,message ++ ":usage-window-wake"))
++    IO.pure(Unit,Unit{})
++
++def schedule_wake(+db: String, +message: String, +resets_at: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    delay : String <- IO.try(String,DB.Sql.read(db,schedule_delay_sql(resets_at)))
++    launch : Unit <- schedule_launch(db,message,Tx.trim_nl(delay),self)
++    IO.pure(Unit,Unit{})
++
++def schedule_held(+db: String, +message: String, +resets_at: String) -> IO(Unit):
++  do IO<Unit>:
++    +self : String <- IO.try(String,Lock.SessionLock.executable())
++    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
++    scheduled : Unit <- schedule_wake(canonical,message,resets_at,self)
++    IO.pure(Unit,Unit{})
++
+ # --- held and restored reports ------------------------------------------------
+ #
+ # A held wake reports to the session and its conductor with one deterministic
+diff --git a/bend2/test/fake-wake-marker b/bend2/test/fake-wake-marker
+new file mode 100755
+index 000000000..a6d6089dc
+--- /dev/null
++++ b/bend2/test/fake-wake-marker
+@@ -0,0 +1,7 @@
++#!/bin/sh
++# Test self for the usage-window post-reset continuation. The scheduler runs
++# the self as: SELF --dispatch-message DB MESSAGE. This script stands in for
++# the coordinator dispatch and applies the same receipt gate: a message that
++# already has a delivery keeps it, and a repeated dispatch adds nothing.
++sqlite3 "$2" "INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES('$3','delivered');"
++sqlite3 "$2" "INSERT OR IGNORE INTO wake_reports(id) VALUES('$3:usage-window-held-report');"
+diff --git a/bend2/test/usage-windows-store.bend b/bend2/test/usage-windows-store.bend
+index 481a0c30e..eb993f251 100644
+--- a/bend2/test/usage-windows-store.bend
++++ b/bend2/test/usage-windows-store.bend
+@@ -1,8 +1,10 @@
+ # Store and gate fixture for the #797 usage-window module. It drives the real
+ # record_cause, observe, refresh, query and gate functions over a temporary
+-# coordination database, so the extraction, the SQL store, the binding match
+-# and the held/elapsed/unknown gate are exercised without a coordinator Main
+-# generation.
++# coordination database. The gate holds only exhausted windows: a partial
++# provider report with a future reset is admitted and visible; exhaustion is a
++# provider limit message or a used fraction at or above 1; multiple windows are
++# evaluated per window; a limit message without a reset stays unknown and does
++# not hold.
+ #
+ # usage: usage-windows-store DB HARNESS_SCRIPT
+ # HARNESS_SCRIPT is an executable that prints the OMP usage report JSON and
+@@ -41,6 +43,9 @@ def expect_gate(+db: String, +session: String, +account: String, +expected: Stri
+     gate : UW.Gate <- UW.window_gate(db,session,account)
+     expect(label,String.eq(gate_class(gate),expected))
+ 
++def state_sql(+window: String, +account: String) -> String:
++  "SELECT CASE WHEN NOT ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') THEN 'open' WHEN resets_at IS NULL THEN 'unknown' WHEN resets_at > CAST(strftime('%s','now') AS INTEGER)*1000 THEN 'held' ELSE 'elapsed' END FROM usage_windows WHERE account=" ++ C.q(account) ++ " AND window=" ++ C.q(window) ++ " ORDER BY recorded_at DESC, id DESC LIMIT 1;"
++
+ def kimi_cause() -> String:
+   "You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends."
+ 
+@@ -51,15 +56,19 @@ def setup(+db: String) -> IO(Unit):
+     leaf : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('leaf','root','omp','kimi-code/kimi-for-coding','high','','');")
+     IO.pure(Unit,Unit{})
+ 
++def session(+db: String, id: String) -> IO(Unit):
++  query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','omp','kimi-code/kimi-for-coding','high','','');")
++
+ def observe_cases(+db: String) -> IO(Unit):
+   do IO<Unit>:
++    UW.record_cause(db,"leaf","m-leaf","",kimi_cause())
+     observed_unknown : Unit <- UW.observe(db,"leaf","5-hour","unknown","kimi console shows none","")
+-    expect_gate(db,"leaf","","unknown","unknown-reset-gate")
++    expect_gate(db,"leaf","","unknown","limit-then-operator-unknown")
+     observed_held : Unit <- UW.observe(db,"leaf","5-hour","2999-01-01T00:00:00Z","kimi console web ui","")
+-    expect_gate(db,"leaf","","held","future-reset-gate")
++    expect_gate(db,"leaf","","held","operator-observed-reset-holds")
+     held_row : Unit <- expect_read(db,"SELECT window || ':' || reset_source || ':' || (resets_at IS NOT NULL) FROM usage_windows ORDER BY id DESC LIMIT 1;","5-hour:operator-observation:1\n","operator-observation-row")
+     observed_elapsed : Unit <- UW.observe(db,"leaf","5-hour","2020-01-01T00:00:00Z","kimi console web ui","")
+-    expect_gate(db,"leaf","","elapsed","past-reset-gate")
++    expect_gate(db,"leaf","","elapsed","operator-observed-reset-elapsed")
+     IO.pure(Unit,Unit{})
+ 
+ def report_cases(+db: String) -> IO(Unit):
+@@ -89,22 +98,40 @@ def refresh_cases(+db: String, script: String) -> IO(Unit):
+     window : Unit <- expect_read(db,"SELECT window FROM usage_windows WHERE reset_source='provider-report';","5-hour\n","provider-report-window")
+     reset : Unit <- expect_read(db,"SELECT CAST(resets_at AS TEXT) FROM usage_windows WHERE reset_source='provider-report';","1893456000000\n","provider-report-reset")
+     fraction : Unit <- expect_read(db,"SELECT CAST(used_fraction AS TEXT) FROM usage_windows WHERE reset_source='provider-report';","0.42\n","provider-report-fraction")
+-    expect_gate(db,"leaf","","held","provider-report-gate")
++    admitted : Unit <- expect_gate(db,"leaf","","none","partial-report-not-held")
++    visible : Unit <- expect_read(db,state_sql("5-hour",""),"open\n","partial-report-visible-open")
++    IO.pure(Unit,Unit{})
+ 
+-def cause_case(+db: String) -> IO(Unit):
++def multiwindow_cases(+db: String) -> IO(Unit):
+   do IO<Unit>:
+-    UW.record_cause(db,"leaf","m2","",kimi_cause())
+-    kimi_row : Unit <- expect_read(db,"SELECT window || ':' || provider || ':' || reset_source || ':' || coalesce(CAST(resets_at AS TEXT),'NULL') FROM usage_windows WHERE message='m2';","5-hour:kimi-code:provider-message:NULL\n","kimi-cause-row")
+-    expect_gate(db,"leaf","","unknown","kimi-cause-gate")
++    created : Unit <- session(db,"multi")
++    five : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','multi','5-hour',CAST(strftime('%s','now') AS INTEGER)*1000+3600000,'provider-message',NULL,'a 5-hour message','');")
++    seven : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','multi','7-day',CAST(strftime('%s','now') AS INTEGER)*1000+7200000,'provider-report',0.5,'a 7-day report','');")
++    thirty : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','multi','30-day',CAST(strftime('%s','now') AS INTEGER)*1000+86400000,'provider-report',0.2,'a 30-day report','');")
++    held : Unit <- expect_gate(db,"multi","multi","held","multiwindow-held-by-5-hour")
++    held_window : Unit <- expect_read(db,"SELECT window FROM (SELECT * FROM usage_windows WHERE account='multi' AND resets_at > CAST(strftime('%s','now') AS INTEGER)*1000 AND ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') ORDER BY resets_at ASC LIMIT 1);","5-hour\n","held-window-is-5-hour")
++    passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE account='multi' AND window='5-hour';")
++    elapsed : Unit <- expect_gate(db,"multi","multi","elapsed","multiwindow-elapsed-after-5-hour")
++    seven_open : Unit <- expect_read(db,"SELECT CASE WHEN ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') THEN 'exhausted' ELSE 'open' END FROM usage_windows WHERE account='multi' AND window='7-day';","open\n","partial-window-not-exhausted")
++    IO.pure(Unit,Unit{})
++
++def limit_case(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"limit")
++    UW.record_cause(db,"limit","m-limit","limit",kimi_cause())
++    unknown : Unit <- expect_gate(db,"limit","limit","unknown","limit-without-reset-unknown")
++    visible : Unit <- expect_read(db,state_sql("5-hour","limit"),"unknown\n","limit-row-visible-unknown")
++    IO.pure(Unit,Unit{})
+ 
+ def main_args(args: List<String>) -> IO(Unit):
+   match args:
+     case +path <> script <> Nil{}: do IO<Unit>:
+       setup(path)
+-      cause_case(path)
++      limit_case(path)
+       observe_cases(path)
+       report_cases(path)
+       refresh_cases(path,script)
++      multiwindow_cases(path)
+       IO.print("fixture-windows-store-ok")
+     case other: IO.die(Unit,2,"usage: usage-windows-store DB HARNESS_SCRIPT")
+ 
+diff --git a/bend2/test/usage-windows-wake.bend b/bend2/test/usage-windows-wake.bend
+new file mode 100644
+index 000000000..26e7101db
+--- /dev/null
++++ b/bend2/test/usage-windows-wake.bend
+@@ -0,0 +1,108 @@
++# Post-reset continuation fixture for the #797 usage-window gate. A held gate
++# schedules one detached single-shot continuation that sleeps until the
++# recorded reset and then re-runs the wake through the existing dispatch entry.
++# The fixture proves: the gate holds a short reset and admits after it; a
++# scheduled dispatch of an already handled message adds no second delivery and
++# keeps the existing receipt; two continuations for the same message leave one
++# delivery and one held report; and the continuation delay is capped so a far
++# reset re-checks in bounded segments.
++#
++# usage: usage-windows-wake DB SELF_SCRIPT
++import Base
++import ../src/coordinator/commands.bend as C
++import ../src/coordinator/usage-windows.bend as UW
++import ../src/host/sqlite.bend as DB
++import ../src/git/text.bend as Tx
++import ../src/git/process.bend as Proc
++
++def expect(+label: String, is_ok: Bool) -> IO(Unit):
++  Bool.pick(IO(Unit),is_ok,IO.print("fixture-window-wake " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window-wake " ++ label ++ ": refused"))
++
++def query(+db: String, +text: String) -> IO(Unit):
++  do IO<Unit>:
++    ignore : String <- IO.try(String,DB.Sql.query(db,text))
++    IO.pure(Unit,Unit{})
++
++def read(+db: String, +text: String) -> IO(String):
++  IO.try(String,DB.Sql.read(db,text))
++
++def expect_read(+db: String, +text: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    value : String <- read(db,text)
++    expect(label,String.eq(value,expected))
++
++def gate_class(gate: UW.Gate) -> String:
++  match gate:
++    case UW.GateNone{}: "none"
++    case UW.GateUnknown{window,source,receipt}: "unknown"
++    case UW.GateHeld{window,resets_at,source,receipt}: "held"
++    case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
++
++def expect_gate(+db: String, +session: String, +account: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    gate : UW.Gate <- UW.window_gate(db,session,account)
++    expect(label,String.eq(gate_class(gate),expected))
++
++def setup(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    made : String <- IO.try(String,DB.Sql.query(db,C.schema()))
++    root : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('root',NULL,'omp','','','','');")
++    one : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wa','root','omp','kimi-code/kimi-for-coding','high','','');")
++    two : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wb','root','omp','kimi-code/kimi-for-coding','high','','');")
++    three : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wc','root','omp','kimi-code/kimi-for-coding','high','','');")
++    deliveries : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_deliveries(message TEXT PRIMARY KEY NOT NULL, receipt TEXT NOT NULL);")
++    reports : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_reports(id TEXT PRIMARY KEY NOT NULL);")
++    IO.pure(Unit,Unit{})
++
++def short_window(+db: String, +session: String, +message: String) -> IO(String):
++  do IO<String>:
++    +reset : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+2000;")
++    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code'," ++ C.q(session) ++ ",'5-hour'," ++ Tx.trim_nl(reset) ++ ",'provider-message',NULL,'short reset window'," ++ C.q(message) ++ ");")
++    IO.pure(String,Tx.trim_nl(reset))
++
++def handled_case(+db: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    +reset : String <- short_window(db,"wa","m-wa")
++    handled : Unit <- query(db,"INSERT INTO wake_deliveries(message,receipt) VALUES('m-wa','handled-first');")
++    held : Unit <- expect_gate(db,"wa","wa","held","handled-case-held")
++    UW.schedule_wake(db,"m-wa",reset,self)
++    IO.pure(Unit,Unit{})
++
++def duplicate_case(+db: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    +reset : String <- short_window(db,"wb","m-wb")
++    report : Unit <- query(db,"INSERT INTO wake_reports(id) VALUES('m-wb:usage-window-held-report');")
++    held : Unit <- expect_gate(db,"wb","wb","held","duplicate-case-held")
++    UW.schedule_wake(db,"m-wb",reset,self)
++    UW.schedule_wake(db,"m-wb",reset,self)
++    IO.pure(Unit,Unit{})
++
++def cap_case(+db: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    +far : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+172800000;")
++    delay : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-reset-segment-capped")
++    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','wc','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far reset window','m-wc');")
++    held : Unit <- expect_gate(db,"wc","wc","held","far-reset-held")
++    passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE message='m-wc';")
++    elapsed : Unit <- expect_gate(db,"wc","wc","elapsed","far-reset-elapsed")
++    IO.pure(Unit,Unit{})
++
++def main_args(args: List<String>) -> IO(Unit):
++  match args:
++    case +path <> +self <> Nil{}: do IO<Unit>:
++      setup(path)
++      handled_case(path,self)
++      duplicate_case(path,self)
++      cap_case(path,self)
++      waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","sleep 5"]),".")
++      handled_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wa';","1\n","handled-single-delivery")
++      kept_receipt : Unit <- expect_read(path,"SELECT receipt FROM wake_deliveries WHERE message='m-wa';","handled-first\n","handled-keeps-receipt")
++      duplicate_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wb';","1\n","duplicate-single-delivery")
++      duplicate_report : Unit <- expect_read(path,"SELECT count(*) FROM wake_reports WHERE id='m-wb:usage-window-held-report';","1\n","duplicate-single-held-report")
++      IO.print("fixture-windows-wake-ok")
++    case other: IO.die(Unit,2,"usage: usage-windows-wake DB SELF_SCRIPT")
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    args : List<String> <- IO.args()
++    main_args(args)
+diff --git a/bend2/test/usage-windows.py b/bend2/test/usage-windows.py
+index 0372012f0..59764025b 100644
+--- a/bend2/test/usage-windows.py
++++ b/bend2/test/usage-windows.py
+@@ -73,10 +73,23 @@ class UsageWindows(unittest.TestCase):
+     def windows(self):
+         return self.call('usage-windows', 'leaf')
+ 
++    def limit(self, window='5-hour'):
++        with closing(sqlite3.connect(self.db)) as db:
++            db.execute("INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
++                       "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','',?,NULL,'provider-message',NULL,'limit message','')",
++                       (window,))
++
++    def reported(self, window='5-hour', used=0.42, ms=1893456000000):
++        with closing(sqlite3.connect(self.db)) as db:
++            db.execute("INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
++                       "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','',?,?,'provider-report',?,'report','')",
++                       (window, ms, used))
++
+     def test_observed_reset_holds_and_latest_observation_wins(self):
+         self.recruit()
++        self.limit()
+         held = self.observe('5-hour', '2999-01-01T00:00:00Z', 'kimi console web ui')
+-        self.assertEqual(held['state'], 'recorded')
++        self.assertEqual(held['resetsAt'], 32472144000000)
+         answer = self.windows()
+         rows = {row['window']: row for row in answer['windows']}
+         self.assertEqual(rows['5-hour']['state'], 'held')
+@@ -84,18 +97,36 @@ class UsageWindows(unittest.TestCase):
+         self.assertEqual(rows['5-hour']['resetsAtText'], '2999-01-01T00:00:00Z')
+         self.assertIn('kimi console web ui', rows['5-hour']['receipt'])
+         elapsed = self.observe('5-hour', '2020-01-01T00:00:00Z', 'kimi console web ui')
+-        self.assertEqual(elapsed['state'], 'recorded')
++        self.assertEqual(elapsed['resetsAt'], 1577836800000)
+         rows = {row['window']: row for row in self.windows()['windows']}
+         self.assertEqual(rows['5-hour']['state'], 'elapsed')
+ 
+     def test_unknown_reset_stays_explicit(self):
+         self.recruit()
++        self.limit()
+         observed = self.observe('5-hour', 'unknown', 'kimi console shows none')
+-        self.assertEqual(observed['state'], 'recorded')
++        self.assertIsNone(observed['resetsAt'])
+         rows = {row['window']: row for row in self.windows()['windows']}
+         self.assertEqual(rows['5-hour']['state'], 'unknown')
+         self.assertIsNone(rows['5-hour']['resetsAt'])
+ 
++    def test_partial_provider_report_is_open_and_not_held(self):
++        self.recruit()
++        self.reported()
++        rows = {row['window']: row for row in self.windows()['windows']}
++        self.assertEqual(rows['5-hour']['state'], 'open')
++        self.assertEqual(rows['5-hour']['usedFraction'], 0.42)
++
++    def test_multiwindow_gate_uses_the_exhausted_window(self):
++        self.recruit()
++        self.limit()
++        self.reported('7-day', used=0.5, ms=1893456000000 + 3600000)
++        self.reported('monthly', used=0.2, ms=1893456000000 + 7200000)
++        rows = {row['window']: row for row in self.windows()['windows']}
++        self.assertEqual(rows['5-hour']['state'], 'unknown')
++        self.assertEqual(rows['7-day']['state'], 'open')
++        self.assertEqual(rows['monthly']['state'], 'open')
++
+     def test_unparseable_reset_refuses_without_recording(self):
+         self.recruit()
+         refused = self.observe('5-hour', 'next monday maybe', 'console', ok=False)
+diff --git a/docs/bend2/usage-windows-20261017.md b/docs/bend2/usage-windows-20261017.md
+index d1c69a98e..75c2787f5 100644
+--- a/docs/bend2/usage-windows-20261017.md
++++ b/docs/bend2/usage-windows-20261017.md
+@@ -55,34 +55,54 @@ Three sources write observations:
+ 
+ ## The wake gate
+ 
+-The wake driver (`wake_fenced` in `bend2/src/coordinator/receive.bend`) asks
+-for the newest observation matching the session's harness, provider, and
+-account label (an empty label also matches account-wide rows):
+-
+-- No row, or a NULL reset: the wake proceeds. An unknown reset never blocks.
+-- A future reset: the wake reports `usage-window-held` to the session and its
+-  conductor with the window, reset time, source, and receipt, releases the
+-  lock, and leaves the input owed. Eligible work routes to an available
+-  configured account or model through the existing handoff and route
+-  machinery.
+-- A past reset after a hold: the wake reports `usage-window-restored` once per
+-  message and admits the owed input on the retained assignment and account.
+-
+-Restoration needs no timer: the next wake after the reset admits the work
+-automatically, and the held report tells the conductor exactly when that is.
++The wake driver asks the gate for the session's harness, provider prefix, and
++account label. The gate reads the latest row per window for state and reset and
++the latest provider row per window for exhaustion evidence:
++
++- A window is exhausted when its latest provider row is a limit message or
++  reports `usedFraction` at or above 1. A partial provider report with a
++  future reset is not exhaustion.
++- An operator-observed reset keeps the window's provider exhaustion and
++  supplies the reset time; this is the Kimi Code Console path.
++- Held: an exhausted window's reset is in the future. The wake reports
++  `usage-window-held` to the session and its conductor with the window, reset
++  time, source, and receipt, releases the lock, leaves the input owed, and
++  schedules one detached single-shot continuation at the earliest held reset.
++  Eligible work routes to an available configured account or model through the
++  existing handoff and route machinery.
++- Elapsed: no window is held and an exhausted window's reset has passed. The
++  wake reports `usage-window-restored` once per message and admits the owed
++  input on the retained assignment and account.
++- Unknown: the only exhausted evidence is a limit message with no reset. The
++  wake proceeds; an unknown reset never blocks.
++- None: no exhausted window. Partial reports stay visible in the query and do
++  not hold.
++
++The continuation sleeps until the recorded reset and re-runs the wake through
++the existing dispatch entry (`--dispatch-message`) with no new input. The delay
++is capped at one day, so a far reset re-checks in bounded segments and a
++still-held gate schedules the next segment. It is one detached process, not a
++daemon, and it does not poll. Delivery stays receipt-gated, so a message that
++was handled before the reset keeps its receipt and gains no second delivery;
++two continuations for the same message leave one delivery and one held report.
+ 
+ ## Query
+ 
+ `usage-windows SESSION` prints the newest observation per window with its
+-current state (`held`, `elapsed`, `unknown`), the reset time in milliseconds
+-and as UTC text, the source, and the receipt. No matching row reads back
+-`none recorded`; a model without a provider prefix reports
+-`noProviderQualifiedModel`.
++current state: `held`, `elapsed`, and `unknown` for exhausted windows, and
++`open` for a row without exhaustion evidence (a partial report or an
++operator-only record). The reset time is printed in milliseconds and UTC text
++with its source and receipt. No matching row reads back `none recorded`; a
++model without a provider prefix reports `noProviderQualifiedModel`.
+ 
+ ## Verification
+ 
+ `bend2/test/usage-windows.bend` drives the real extraction functions over the
+-observed Kimi, ZAI, and Claude wordings. `bend2/test/usage-windows.py`
+-exercises the command surface against a recruited session fixture. The wake
+-gate's held and restored branches run in the receive integration fixtures on
+-remote validation runners.
++observed Kimi, ZAI, and Claude wordings. `bend2/test/usage-windows-store.bend`
++drives the store, gate, reports, refresh, and multiwindow state over a
++temporary database. `bend2/test/usage-windows-long.bend` bounds the reset scan
++on a long provider message. `bend2/test/usage-windows-wake.bend` proves the
++post-reset continuation, handled-message idempotence, duplicate continuations,
++and the one-day segment cap. `bend2/test/usage-windows.py` exercises the
++command surface against a recruited session fixture on remote validation
++runners.
+-- 
+2.43.0
+

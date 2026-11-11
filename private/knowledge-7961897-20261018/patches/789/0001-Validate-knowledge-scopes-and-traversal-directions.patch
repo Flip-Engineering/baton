@@ -1,0 +1,237 @@
+From e4f0aecb86ad9f841905cab11956b08829aa7a93 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Fri, 16 Oct 2026 14:29:05 -0700
+Subject: [PATCH 1/2] Validate knowledge scopes and traversal directions
+
+---
+ bend2/src/coordinator/control.bend   |  4 ++
+ bend2/src/coordinator/knowledge.bend | 50 +++++++++++++++---
+ bend2/test/knowledge.py              | 79 ++++++++++++++++++++++++++++
+ 3 files changed, 125 insertions(+), 8 deletions(-)
+
+diff --git a/bend2/src/coordinator/control.bend b/bend2/src/coordinator/control.bend
+index 1ef15b8f0..4fead88f6 100644
+--- a/bend2/src/coordinator/control.bend
++++ b/bend2/src/coordinator/control.bend
+@@ -341,6 +341,10 @@ def read_snapshot(db: String, command: C.Command) -> IO(String):
+     case C.KnowledgeDetail{reader,id}: Knowledge.detail_value(db,reader,"all","",id)
+     case C.KnowledgeScopeIndex{reader,scope,subject}: Knowledge.index_value(db,reader,scope,subject,True{})
+     case C.KnowledgeScopeDetail{reader,scope,subject,id}: Knowledge.detail_value(db,reader,scope,subject,id)
++    case C.KnowledgeSearch{reader,scope,subject,query}:
++      Knowledge.graph_value(db,reader,scope,subject,query,True{},"both","",False{})
++    case C.KnowledgeTraverse{reader,scope,subject,reference,direction,relation,recursive}:
++      Knowledge.graph_value(db,reader,scope,subject,reference,False{},direction,relation,recursive)
+     case other: IO.try(String,Store.read(db,other))
+ 
+ def pretty(+db: String, command: C.Command) -> IO(String):
+diff --git a/bend2/src/coordinator/knowledge.bend b/bend2/src/coordinator/knowledge.bend
+index 1b0e7c992..59c448d85 100644
+--- a/bend2/src/coordinator/knowledge.bend
++++ b/bend2/src/coordinator/knowledge.bend
+@@ -74,12 +74,35 @@ def knowledge_item_with_types(+typed: Bool, groups: Bool) -> String:
+ def knowledge_item() -> String:
+   knowledge_item_with_types(True{},True{})
+ 
++def subject_error(subject: String) -> String:
++  Bool.pick(String,String.is_empty(subject),
++    "{\"error\":\"knowledge-subject-required\",\"condition\":\"worker and group scopes require a nonempty subject\"}","")
++
++def scope_error(scope: String, subject: String) -> String:
++  match scope:
++    case "worker": subject_error(subject)
++    case "group": subject_error(subject)
++    case "universal": ""
++    case "all": ""
++    case _: "{\"error\":\"knowledge-scope-invalid\",\"condition\":\"scope must be universal, worker, group or all\"}"
++
++def direction_error(direction: String) -> String:
++  match direction:
++    case "in": ""
++    case "out": ""
++    case "both": ""
++    case _: "{\"error\":\"knowledge-direction-invalid\",\"condition\":\"direction must be in, out or both\"}"
++
++def validate_read(+error: String) -> IO(Unit):
++  Bool.pick(IO(Unit),String.is_empty(error),IO.pure(Unit,Unit{}),IO.die(Unit,2,error))
++
+ def scope_holders_sql(scope: String, +subject: String) -> String:
+   match scope:
+     case "worker": "SELECT id FROM sessions WHERE id=" ++ C.q(subject)
+     case "group": "SELECT owner AS id FROM ensembles WHERE id=" ++ C.q(subject)
+     case "universal": "SELECT s.id FROM sessions s JOIN session_roles r ON r.session=s.id WHERE s.parent IS NULL AND r.role IN('principal-conductor','conductor') AND (" ++ C.q(subject) ++ "='' OR s.id=" ++ C.q(subject) ++ ")"
+-    case _: "SELECT id FROM sessions"
++    case "all": "SELECT id FROM sessions"
++    case _: "SELECT id FROM sessions WHERE 0"
+ 
+ def scope_findings_sql(+scope: String, +subject: String, +groups: Bool) -> String:
+   match scope:
+@@ -116,8 +139,9 @@ def relations_when_present(+db: String, reader: String, scope: String, subject:
+         typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+         IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject,groups,String.eq(typed,"1\n"))))
+ 
+-def relations_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
++def relations_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
+     relations_when_present(db,reader,scope,subject,String.eq(present,"1\n"))
+ 
+@@ -152,20 +176,23 @@ def scoped_detail_sql(+reader: String, +scope: String, +subject: String, +id: St
+ 
+ def index_value(+db: String, +reader: String, +scope: String, +subject: String, +scoped: Bool) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     groups : Bool <- promotion_groups_value(db)
+     IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups)))
+ 
+ def detail_value(+db: String, +reader: String, +scope: String, +subject: String, +id: String) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     groups : Bool <- promotion_groups_value(db)
+     IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
+ 
+ # A read of an older database retains its existing findings before any writer
+ # installs the new columns and relationship table.
+-def read_scope_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
++def read_scope_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
+   do IO<String>:
++    checked : Unit <- validate_read(scope_error(scope,subject))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     groups : Bool <- promotion_groups_value(db)
+     IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups)))
+@@ -213,7 +240,8 @@ def traversal_join(+direction: String) -> String:
+   match direction:
+     case "out": "e.source_ref=w.reference"
+     case "in": "e.target_ref=w.reference"
+-    case _: "(e.source_ref=w.reference OR e.target_ref=w.reference)"
++    case "both": "(e.source_ref=w.reference OR e.target_ref=w.reference)"
++    case _: "0"
+ 
+ def traversal_relation(+relation: String) -> String:
+   "(" ++ C.q(relation) ++ "='' OR lower(replace(replace(e.relation,'_',''),'-',''))=lower(replace(replace(" ++ C.q(relation) ++ ",'_',''),'-','')))"
+@@ -233,12 +261,18 @@ def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: St
+   +edges = String.eq(present,"1\n")
+   Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
+ 
+-def graph_read(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
+-  do IO<Unit>:
++def graph_value(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, +direction: String, relation: String, recursive: Bool) -> IO(String):
++  do IO<String>:
++    scope_checked : Unit <- validate_read(scope_error(scope,subject))
++    direction_checked : Unit <- validate_read(Bool.pick(String,search,"",direction_error(direction)))
+     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
+     +groups : Bool <- promotion_groups_value(db)
+     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
+-    saved : String <- IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
++    IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
++
++def graph_read(db: String, reader: String, scope: String, subject: String, query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
++  do IO<Unit>:
++    saved : String <- graph_value(db,reader,scope,subject,query,search,direction,relation,recursive)
+     IO.write(saved)
+ 
+ # The stored finding, read back only when it is this invocation's own finding:
+@@ -377,7 +411,7 @@ def record_linked(+db: String, +id: String, author: String, kind: String, claim:
+       answered(delivery))
+ 
+ def tool_help() -> String:
+-  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
++  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Worker and group scopes require a nonempty subject; contextual commands default the subject to the current session. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
+ 
+ def relate(db: String, id: String, author: String, source: String, relation: String, target: String) -> IO(Unit):
+   do IO<Unit>:
+diff --git a/bend2/test/knowledge.py b/bend2/test/knowledge.py
+index 227120484..95a5ac0dd 100644
+--- a/bend2/test/knowledge.py
++++ b/bend2/test/knowledge.py
+@@ -70,6 +70,85 @@ class Knowledge(unittest.TestCase):
+     def scoped(self, scope, subject=''):
+         return self.call('knowledge-scope', 'root', scope, subject)
+ 
++    def discovery_commands(self, scope, subject):
++        commands = (
++            ('knowledge-scope', 'root', scope, subject),
++            ('knowledge-relations', 'root', scope, subject),
++            ('knowledge-scope', 'root', scope, subject, '--index'),
++            ('knowledge-scope', 'root', scope, subject, '--id', 'scope-finding'),
++            ('knowledge-search', 'root', scope, subject, 'scope'),
++            ('knowledge-traverse', 'root', scope, subject,
++             'finding:scope-finding', 'both', '', 'neighbors'),
++        )
++        return tuple(variant for command in commands
++                     for variant in (command, (*command, '--pretty')))
++
++    def test_unknown_scope_refuses_every_discovery_read(self):
++        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
++        for scope in ('wrker', '', 'ALL'):
++            for command in self.discovery_commands(scope, 'worker'):
++                with self.subTest(command=command):
++                    result = self.call(*command, success=False)
++                    self.assertEqual(result.returncode, 2)
++                    self.assertEqual(result.stdout, '')
++                    self.assertEqual(json.loads(result.stderr)['error'],
++                                     'knowledge-scope-invalid')
++
++    def test_worker_and_group_scopes_require_subjects_on_every_discovery_read(self):
++        for scope in ('worker', 'group'):
++            for command in self.discovery_commands(scope, ''):
++                with self.subTest(command=command):
++                    result = self.call(*command, success=False)
++                    self.assertEqual(result.returncode, 2)
++                    self.assertEqual(result.stdout, '')
++                    self.assertEqual(json.loads(result.stderr)['error'],
++                                     'knowledge-subject-required')
++        self.assertEqual(self.scoped('universal'), [])
++        self.assertEqual(self.scoped('all'), [])
++
++    def test_unknown_traversal_direction_refuses_neighbors_and_recursive_reads(self):
++        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
++        for direction in ('inout', '', 'OUT'):
++            for mode in ('neighbors', 'recursive'):
++                for flags in ((), ('--pretty',)):
++                    with self.subTest(direction=direction, mode=mode, flags=flags):
++                        result = self.call('knowledge-traverse', 'root', 'worker', 'worker',
++                                           'finding:scope-finding', direction, '', mode,
++                                           *flags, success=False)
++                        self.assertEqual(result.returncode, 2)
++                        self.assertEqual(result.stdout, '')
++                        self.assertEqual(json.loads(result.stderr)['error'],
++                                         'knowledge-direction-invalid')
++
++    def test_pretty_graph_reads_keep_the_selected_scope_and_direction(self):
++        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
++        for command in (
++                ('knowledge-search', 'root', 'worker', 'worker', 'scope'),
++                ('knowledge-traverse', 'root', 'worker', 'worker',
++                 'finding:scope-finding', 'out', '', 'neighbors')):
++            with self.subTest(command=command):
++                plain = self.call(*command)
++                self.assertEqual(self.call(*command, '--pretty'), plain)
++                self.assertEqual(plain['scope'], {'kind': 'worker', 'id': 'worker'})
++                self.assertEqual(plain['roots'], ['finding:scope-finding'])
++
++    def test_contextual_knowledge_commands_report_the_same_validation_errors(self):
++        for command, error in (
++                (('read', '--scope', 'wrker'), 'knowledge-scope-invalid'),
++                (('search', '--query', 'scope', '--scope', 'wrker'),
++                 'knowledge-scope-invalid'),
++                (('traverse', '--reference', 'finding:scope-finding',
++                  '--direction', 'inout'), 'knowledge-direction-invalid'),
++                (('read', '--scope', 'worker', '--subject', ''),
++                 'knowledge-subject-required')):
++            with self.subTest(command=command):
++                rows = self.call('as', 'root', 'knowledge', *command)
++                self.assertEqual(len(rows), 1)
++                self.assertEqual(rows[0]['status'], 'failed')
++                self.assertEqual(rows[0]['waitStatus'], 'exit 2')
++                self.assertEqual(rows[0]['stdout'], '')
++                self.assertEqual(json.loads(rows[0]['stderr'])['error'], error)
++
+     def test_typed_evidence_and_corrections_follow_explicit_shared_holdings(self):
+         self.call('role', 'worker', 'associate-conductor')
+         self.call('ensemble', 'review-group', 'worker', 'tight')
+-- 
+2.43.0
+

@@ -1,0 +1,459 @@
+diff --git a/impl/src/context-call.mjs b/impl/src/context-call.mjs
+new file mode 100644
+index 0000000..daa7151
+--- /dev/null
++++ b/impl/src/context-call.mjs
+@@ -0,0 +1,438 @@
++import { createHash } from 'node:crypto';
++
++import { normalizeContextMapCall } from './context-map.mjs';
++
++const DIGEST = /^[a-f0-9]{64}$/u;
++const TREE_SHA = /^[a-f0-9]{40}$/u;
++const SESSION_ID = /^context-session:[a-f0-9]{64}$/u;
++const CELL_ID = /^cell:[a-f0-9]{64}$/u;
++const PLAN_ID = /^plan:[a-f0-9]{64}$/u;
++const SAFE_ID = /^[A-Za-z0-9._:@/-]+$/u;
++const MAX_TEXT_BYTES = 16 * 1024;
++const MAX_UNITS = 1_024;
++
++const CALL_FIELDS = Object.freeze([
++  'authority', 'generation', 'inheritedChildren', 'instruction', 'kind', 'operator',
++  'predecessorCall', 'role', 'schemaVersion', 'source', 'units',
++]);
++const CALL_DERIVED_FIELDS = Object.freeze([
++  ...CALL_FIELDS, 'callDigest', 'callId', 'executionUnitIds', 'requestDigest', 'requestId',
++]);
++const AUTHORITY_FIELDS = Object.freeze([
++  'contextPrincipal', 'definitionDigest', 'environmentDigest', 'manifestDigest',
++  'policyDigest', 'predecessorPlan', 'profileDigest', 'requester', 'roleCatalogDigest',
++  'sessionId', 'treeSha',
++]);
++const CONTEXT_PRINCIPAL_FIELDS = Object.freeze(['actor', 'principalId', 'repoId', 'runId']);
++const REQUESTER_FIELDS = Object.freeze([
++  'authorizationDigest', 'commandDigest', 'principalId', 'sessionId',
++]);
++const PLAN_FIELDS = Object.freeze(['digest', 'planId', 'version']);
++const CELL_SOURCE_FIELDS = Object.freeze([
++  'admissionDigest', 'coordinateDigest', 'evidenceRef', 'id', 'itemCount', 'kind',
++  'outputLineageDigest', 'outputRef', 'settlementDigest',
++]);
++const CALL_SOURCE_FIELDS = Object.freeze([
++  'callDigest', 'coordinateDigest', 'evidenceRef', 'generation', 'id', 'itemCount',
++  'kind', 'outputLineageDigest', 'outputRef', 'settlementDigest',
++]);
++const ARTIFACT_FIELDS = Object.freeze(['bytes', 'digest', 'handle', 'kind', 'mediaType']);
++const UNIT_FIELDS = Object.freeze(['coordinateDigest', 'index', 'inputs', 'lineageDigest']);
++const UNIT_DERIVED_FIELDS = Object.freeze([
++  ...UNIT_FIELDS, 'inputSetDigest', 'unitDigest', 'unitId',
++]);
++const INPUT_FIELDS = Object.freeze(['index', 'itemDigest', 'lineageDigest']);
++const OUTPUT_MEDIA = 'application/vnd.baton.context-value+json';
++const EVIDENCE_MEDIA = 'application/vnd.baton.context-cell-evidence+json';
++
++function contextCallError(message, code = 'context_call_invalid') {
++  return Object.assign(new TypeError(message), { code });
++}
++
++function canonical(value) {
++  if (Array.isArray(value)) return value.map(canonical);
++  if (!value || typeof value !== 'object') return value;
++  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
++}
++
++function stable(value) { return JSON.stringify(canonical(value)); }
++
++function digest(value) {
++  return createHash('sha256').update(stable(value)).digest('hex');
++}
++
++function clone(value) {
++  if (typeof structuredClone === 'function') return structuredClone(value);
++  return JSON.parse(JSON.stringify(value));
++}
++
++function deepFreeze(value) {
++  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
++  for (const child of Object.values(value)) deepFreeze(child);
++  return Object.freeze(value);
++}
++
++function exact(value, fields, label, code = 'context_call_invalid') {
++  if (!value || typeof value !== 'object' || Array.isArray(value)
++    || Object.keys(value).sort().join(',') !== [...fields].sort().join(',')) {
++    throw contextCallError(`${label} is malformed`, code);
++  }
++}
++
++function normalizedText(value, label, maxBytes = MAX_TEXT_BYTES) {
++  if (typeof value !== 'string' || value.includes('\0')) {
++    throw contextCallError(`${label} is invalid`);
++  }
++  const normalized = value.normalize('NFKC').trim();
++  if (normalized.length === 0 || Buffer.byteLength(normalized) > maxBytes) {
++    throw contextCallError(`${label} is invalid`);
++  }
++  return normalized;
++}
++
++function safeId(value, label) {
++  const normalized = normalizedText(value, label, 512);
++  if (!SAFE_ID.test(normalized)) throw contextCallError(`${label} is invalid`);
++  return normalized;
++}
++
++function sha(value, label, pattern = DIGEST) {
++  if (typeof value !== 'string' || !pattern.test(value)) {
++    throw contextCallError(`${label} is invalid`);
++  }
++  return value;
++}
++
++function planRef(value) {
++  exact(value, PLAN_FIELDS, 'Context call predecessor Plan');
++  if (!PLAN_ID.test(value.planId ?? '')
++    || !Number.isSafeInteger(value.version) || value.version <= 0) {
++    throw contextCallError('Context call predecessor Plan is invalid');
++  }
++  return deepFreeze({
++    planId: value.planId,
++    version: value.version,
++    digest: sha(value.digest, 'Context call predecessor Plan digest'),
++  });
++}
++
++function normalizeAuthority(value) {
++  exact(value, AUTHORITY_FIELDS, 'Context call authority');
++  exact(value.contextPrincipal, CONTEXT_PRINCIPAL_FIELDS, 'Context service principal');
++  exact(value.requester, REQUESTER_FIELDS, 'Context authenticated requester');
++  const contextPrincipal = {
++    actor: safeId(value.contextPrincipal.actor, 'Context service actor'),
++    principalId: safeId(value.contextPrincipal.principalId, 'Context service principal'),
++    repoId: safeId(value.contextPrincipal.repoId, 'Context service repository'),
++    runId: safeId(value.contextPrincipal.runId, 'Context service Run'),
++  };
++  if (contextPrincipal.actor !== 'deployment:context') {
++    throw contextCallError('Context service actor is invalid');
++  }
++  const requester = {
++    principalId: safeId(value.requester.principalId, 'Context requester principal'),
++    sessionId: safeId(value.requester.sessionId, 'Context requester session'),
++    authorizationDigest: sha(
++      value.requester.authorizationDigest, 'Context requester authorization',
++    ),
++    commandDigest: sha(value.requester.commandDigest, 'Context requester command'),
++  };
++  return deepFreeze({
++    contextPrincipal,
++    requester,
++    sessionId: sha(value.sessionId, 'Context call session', SESSION_ID),
++    manifestDigest: sha(value.manifestDigest, 'Context call manifest'),
++    treeSha: sha(value.treeSha, 'Context call tree', TREE_SHA),
++    environmentDigest: sha(value.environmentDigest, 'Context call environment'),
++    policyDigest: sha(value.policyDigest, 'Context call policy'),
++    definitionDigest: sha(value.definitionDigest, 'Context call Workflow definition'),
++    roleCatalogDigest: sha(value.roleCatalogDigest, 'Context call role catalog'),
++    profileDigest: sha(value.profileDigest, 'Context call profile'),
++    predecessorPlan: planRef(value.predecessorPlan),
++  });
++}
++
++function artifactRef(value, kind, mediaType, label) {
++  exact(value, ARTIFACT_FIELDS, label);
++  const artifactDigest = sha(value.digest, `${label} digest`);
++  if (value.kind !== kind || value.mediaType !== mediaType
++    || value.handle !== `art:sha256:${artifactDigest}`
++    || !Number.isSafeInteger(value.bytes) || value.bytes <= 0) {
++    throw contextCallError(`${label} is invalid`);
++  }
++  return deepFreeze({
++    kind, mediaType, handle: value.handle, digest: artifactDigest, bytes: value.bytes,
++  });
++}
++
++function sourceArtifacts(value) {
++  return {
++    outputRef: artifactRef(
++      value.outputRef, 'context_value', OUTPUT_MEDIA, 'Context call output ref',
++    ),
++    evidenceRef: artifactRef(
++      value.evidenceRef, 'context_evidence', EVIDENCE_MEDIA, 'Context call evidence ref',
++    ),
++  };
++}
++
++function itemCount(value) {
++  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_UNITS) {
++    throw contextCallError('Context call source item count is invalid');
++  }
++  return value;
++}
++
++function normalizeSource(value, operator) {
++  if (!value || typeof value !== 'object' || Array.isArray(value)) {
++    throw contextCallError('Context call source is malformed');
++  }
++  if (operator === 'map') {
++    exact(value, CELL_SOURCE_FIELDS, 'Context call cell source');
++    if (value.kind !== 'cell') throw contextCallError('Context map requires a completed v2 cell source');
++    return deepFreeze({
++      kind: 'cell',
++      id: sha(value.id, 'Context call source cell', CELL_ID),
++      admissionDigest: sha(value.admissionDigest, 'Context call source admission'),
++      settlementDigest: sha(value.settlementDigest, 'Context call source settlement'),
++      ...sourceArtifacts(value),
++      itemCount: itemCount(value.itemCount),
++      coordinateDigest: sha(value.coordinateDigest, 'Context call source coordinates'),
++      outputLineageDigest: sha(value.outputLineageDigest, 'Context call source output lineage'),
++    });
++  }
++  exact(value, CALL_SOURCE_FIELDS, 'Context call completed call source');
++  if (value.kind !== 'call') throw contextCallError('Context reduce requires a completed call source');
++  const callDigest = sha(value.callDigest, 'Context call source call digest');
++  if (value.id !== `context-call:${callDigest}` || value.generation !== 1) {
++    throw contextCallError('Context reduce completed call source identity is invalid');
++  }
++  return deepFreeze({
++    kind: 'call', id: value.id, callDigest, generation: 1,
++    settlementDigest: sha(value.settlementDigest, 'Context call source settlement'),
++    ...sourceArtifacts(value),
++    itemCount: itemCount(value.itemCount),
++    coordinateDigest: sha(value.coordinateDigest, 'Context call source coordinates'),
++    outputLineageDigest: sha(value.outputLineageDigest, 'Context call source output lineage'),
++  });
++}
++
++function normalizeInput(value, source) {
++  exact(value, INPUT_FIELDS, 'Context call unit input');
++  if (!Number.isSafeInteger(value.index) || value.index < 0 || value.index >= source.itemCount) {
++    throw contextCallError('Context call unit input index is invalid');
++  }
++  return deepFreeze({
++    index: value.index,
++    itemDigest: sha(value.itemDigest, 'Context call unit input item'),
++    lineageDigest: sha(value.lineageDigest, 'Context call unit input lineage'),
++  });
++}
++
++function normalizeUnit(value, context, hasDerived) {
++  exact(value, hasDerived ? UNIT_DERIVED_FIELDS : UNIT_FIELDS, 'Context call unit');
++  if (!Number.isSafeInteger(value.index) || value.index < 0 || value.index >= MAX_UNITS
++    || !Array.isArray(value.inputs) || value.inputs.length === 0
++    || value.inputs.length > context.source.itemCount) {
++    throw contextCallError('Context call unit grouping is invalid');
++  }
++  const inputs = value.inputs.map((input) => normalizeInput(input, context.source));
++  if (inputs.some((input, index) => index > 0 && input.index <= inputs[index - 1].index)) {
++    throw contextCallError('Context call unit inputs are not in canonical order');
++  }
++  const inputSetDigest = digest(inputs);
++  const coordinateDigest = sha(value.coordinateDigest, 'Context call unit coordinates');
++  const lineageDigest = sha(value.lineageDigest, 'Context call unit lineage');
++  const core = {
++    index: value.index,
++    inputs,
++    inputSetDigest,
++    coordinateDigest,
++    lineageDigest,
++  };
++  const unitDigest = digest({
++    operator: context.operator,
++    source: context.source,
++    role: context.role,
++    instructionDigest: context.instructionDigest,
++    ...core,
++  });
++  const normalized = deepFreeze({
++    ...core, unitId: `context-unit:${unitDigest}`, unitDigest,
++  });
++  if (hasDerived && (value.inputSetDigest !== inputSetDigest
++    || value.unitDigest !== unitDigest || value.unitId !== normalized.unitId)) {
++    throw contextCallError('Context call unit identity changed', 'context_call_unit_substitution');
++  }
++  return normalized;
++}
++
++function validateGrouping(operator, source, units) {
++  if (units.some((unit, index) => unit.index !== index)) {
++    throw contextCallError('Context call units are not a canonical contiguous set');
++  }
++  if (new Set(units.map(({ unitId }) => unitId)).size !== units.length) {
++    throw contextCallError('Context call units do not have unique identities');
++  }
++  if (operator === 'map') {
++    if (units.some((unit) => unit.inputs.length !== 1)
++      || units.some((unit, index) => (
++        index > 0 && unit.inputs[0].index <= units[index - 1].inputs[0].index
++      ))) {
++      throw contextCallError('Context map requires canonical one-input units');
++    }
++    return;
++  }
++  if (units.length !== 1 || units[0].index !== 0
++    || units[0].inputs.length !== source.itemCount
++    || units[0].inputs.some((input, index) => input.index !== index)) {
++    throw contextCallError(
++      'Context reduce requires one unit selecting every completed call source output in canonical order',
++    );
++  }
++}
++
++function normalizeCall(value) {
++  const topDerived = ['callDigest', 'callId', 'executionUnitIds', 'requestDigest', 'requestId']
++    .some((field) => Object.hasOwn(value ?? {}, field));
++  const unitDerived = Array.isArray(value?.units) && value.units.some((unit) => (
++    ['inputSetDigest', 'unitDigest', 'unitId'].some((field) => Object.hasOwn(unit ?? {}, field))
++  ));
++  const hasDerived = topDerived || unitDerived;
++  exact(value, hasDerived ? CALL_DERIVED_FIELDS : CALL_FIELDS, 'Context effect call');
++  if (value.schemaVersion !== 1 || value.kind !== 'baton.context_effect_call'
++    || !['map', 'reduce'].includes(value.operator)
++    || value.generation !== 1 || value.predecessorCall !== null
++    || !Array.isArray(value.inheritedChildren) || value.inheritedChildren.length !== 0) {
++    throw contextCallError('Context effect call header is invalid');
++  }
++  const operator = value.operator;
++  const authority = normalizeAuthority(value.authority);
++  const source = normalizeSource(value.source, operator);
++  const role = safeId(value.role, 'Context call role');
++  const instruction = normalizedText(value.instruction, 'Context call instruction');
++  const instructionDigest = digest(instruction);
++  if (!Array.isArray(value.units) || value.units.length === 0 || value.units.length > MAX_UNITS) {
++    throw contextCallError('Context call must contain a bounded unit set');
++  }
++  const unitContext = { operator, source, role, instructionDigest };
++  const units = value.units.map((unit) => normalizeUnit(unit, unitContext, hasDerived));
++  validateGrouping(operator, source, units);
++  const requestCore = { operator, source, role, instruction, units };
++  const requestDigest = digest(requestCore);
++  const requestId = `context-request:${requestDigest}`;
++  const executionUnitIds = units.map(({ unitId }) => unitId);
++  const callCore = {
++    requestId,
++    generation: 1,
++    predecessorCall: null,
++    authority,
++    executionUnitIds,
++    inheritedChildren: [],
++  };
++  const callDigest = digest(callCore);
++  const normalized = deepFreeze({
++    schemaVersion: 1,
++    kind: 'baton.context_effect_call',
++    operator,
++    requestId,
++    requestDigest,
++    generation: 1,
++    predecessorCall: null,
++    executionUnitIds,
++    inheritedChildren: [],
++    authority,
++    source,
++    role,
++    instruction,
++    units,
++    callId: `context-call:${callDigest}`,
++    callDigest,
++  });
++  if (hasDerived && (value.requestId !== requestId || value.requestDigest !== requestDigest
++    || stable(value.executionUnitIds) !== stable(executionUnitIds)
++    || value.callId !== normalized.callId || value.callDigest !== callDigest)) {
++    throw contextCallError('Context effect call identity changed', 'context_call_substitution');
++  }
++  return normalized;
++}
++
++function publicNormalize(value) {
++  try {
++    return normalizeCall(clone(value));
++  } catch (error) {
++    if (error?.code?.startsWith('context_call_')) throw error;
++    throw Object.assign(contextCallError('Context effect call is invalid'), { cause: error });
++  }
++}
++
++export function normalizeContextEffectCall(value) { return publicNormalize(value); }
++
++export function contextEffectCallIdentity(value) { return publicNormalize(value); }
++
++function same(left, right) { return stable(left) === stable(right); }
++
++/** Project a durable Phase 84 v2 map call into the generic CLR3 authority envelope. */
++export function contextMapCallToEffectCall(mapValue, authorityValue) {
++  let map;
++  let authority;
++  try {
++    map = normalizeContextMapCall(clone(mapValue));
++    authority = normalizeAuthority(clone(authorityValue));
++  } catch (error) {
++    if (error?.code?.startsWith('context_call_')) throw error;
++    throw Object.assign(contextCallError(
++      'Context map compatibility authority is invalid', 'context_call_adapter_invalid',
++    ), { cause: error });
++  }
++  if (map.schemaVersion !== 2
++    || authority.contextPrincipal.repoId !== map.source.repoId
++    || authority.contextPrincipal.runId !== map.source.runId
++    || authority.sessionId !== map.source.sessionId
++    || authority.manifestDigest !== map.source.manifestDigest
++    || authority.treeSha !== map.source.treeSha
++    || authority.environmentDigest !== map.source.environmentDigest
++    || authority.policyDigest !== map.source.policyDigest
++    || authority.definitionDigest !== map.source.definitionDigest
++    || authority.profileDigest !== map.source.profileDigest
++    || !same(authority.predecessorPlan, map.source.predecessorPlan)) {
++    throw contextCallError(
++      'Context map compatibility authority differs from its durable source',
++      'context_call_adapter_substitution',
++    );
++  }
++  return contextEffectCallIdentity({
++    schemaVersion: 1,
++    kind: 'baton.context_effect_call',
++    operator: 'map',
++    generation: 1,
++    predecessorCall: null,
++    inheritedChildren: [],
++    authority,
++    source: {
++      kind: 'cell',
++      id: map.source.cellId,
++      admissionDigest: map.source.cellAdmissionDigest,
++      settlementDigest: map.source.cellSettlementDigest,
++      outputRef: map.source.outputRef,
++      evidenceRef: map.source.evidenceRef,
++      itemCount: map.partitions.length,
++      coordinateDigest: map.source.coordinateDigest,
++      outputLineageDigest: map.source.outputLineageDigest,
++    },
++    role: map.role,
++    instruction: map.instruction,
++    units: map.partitions.map((partition) => ({
++      index: partition.index,
++      inputs: [{
++        index: partition.index,
++        itemDigest: partition.itemDigest,
++        lineageDigest: partition.lineageDigest,
++      }],
++      coordinateDigest: partition.coordinateDigest,
++      lineageDigest: partition.lineageDigest,
++    })),
++  });
++}
++
++export const CONTEXT_CALL_LIMITS = Object.freeze({ maxUnits: MAX_UNITS });
+diff --git a/impl/src/index.mjs b/impl/src/index.mjs
+index 545100c..77688a7 100644
+--- a/impl/src/index.mjs
++++ b/impl/src/index.mjs
+@@ -93,6 +93,10 @@ export {
+   contextCellIdentity, contextProgramInputRefs, contextProgramIsPure, contextSessionIdentity,
+   normalizeContextArtifactRef,
+ } from './context-authority.mjs';
++export {
++  CONTEXT_CALL_LIMITS, contextEffectCallIdentity, contextMapCallToEffectCall,
++  normalizeContextEffectCall,
++} from './context-call.mjs';
+ export { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority, WorktreeCapacityError } from './worktree-capacity.mjs';
+ // SC2: the session tier IS the product surface — constructible from the entry point.
+ export { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';

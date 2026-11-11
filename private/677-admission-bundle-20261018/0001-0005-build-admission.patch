@@ -1,0 +1,1063 @@
+From 9d0851d5e1e692330d0ce6b0c752cca785d32483 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 17:19:07 -0700
+Subject: [PATCH 1/6] Stop automatic push validation before shared build
+ admission
+
+Merge 70620ed triggered run 39081684984 and two unlimited full Main
+generators. Cancellation did not stop those launches. Remove the push
+trigger until the shared host admission from #677/#819 is installed, and
+add an exact source_commit dispatch input used by BATON2_SOURCE_SHA.
+
+Pull-request and dispatched runs keep their existing jobs. Automatic
+merge-triggered validation returns after admission is reviewed.
+---
+ .github/workflows/bend2-native.yml | 28 +++++++---------------------
+ 1 file changed, 7 insertions(+), 21 deletions(-)
+
+diff --git a/.github/workflows/bend2-native.yml b/.github/workflows/bend2-native.yml
+index f62541d2..d710e0dd 100644
+--- a/.github/workflows/bend2-native.yml
++++ b/.github/workflows/bend2-native.yml
+@@ -21,31 +21,17 @@ name: bend2-native-development
+       - 'bend2/context/**'
+       - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
+       - 'docs/bend2/reference/upstream/LICENSE'
+-  push:
+-    branches: [bend2-rewrite, main]
+-    paths:
+-      - '.github/workflows/bend2-native.yml'
+-      - '.github/scripts/record-native-checks.py'
+-      - '.github/scripts/reuse-native-target.py'
+-      - '.github/scripts/reuse-native-main.py'
+-      - '.github/scripts/prepare-native-compiler.py'
+-      - 'LICENSE'
+-      - 'NOTICE'
+-      - 'bend2/src/**'
+-      - 'bend2/scripts/build-native.sh'
+-      - 'bend2/scripts/package-native.py'
+-      - 'bend2/scripts/smoke-native-artifact.py'
+-      - 'bend2/scripts/*.mjs'
+-      - 'bend2/harness/**'
+-      - 'bend2/ui/**'
+-      - 'bend2/context/**'
+-      - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
+-      - 'docs/bend2/reference/upstream/LICENSE'
++# Push-triggered automatic validation stays disabled until the shared host
++# admission from #677/#819 is installed. Dispatch an exact source commit.
+   workflow_dispatch:
+     inputs:
+       release_version:
+         description: 'Release archive version; leave blank for a development archive'
+         required: false
++        type: string
++      source_commit:
++        description: 'Exact candidate source commit; leave blank for the dispatched ref'
++        required: false
+         default: ''
+         type: string
+       target_commit:
+@@ -86,7 +72,7 @@ permissions:
+   contents: read
+ 
+ env:
+-  BATON2_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
++  BATON2_SOURCE_SHA: ${{ inputs.source_commit || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
+ 
+ jobs:
+   linux-candidate:
+-- 
+2.43.0
+
+
+From 05593f5f3d0b43fe30006faef8c093d64fe5556c Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 17:20:05 -0700
+Subject: [PATCH 2/6] Document pure Bend2 build admission and bootstrap
+ boundary
+
+Record the canonical shared cgroup slice, aggregate capacity decision,
+RLIMIT_AS and process-tree enforcement, compiler runner entry, direct
+check-only coverage, cancellation, receipts, workflow guard and the exact
+bootstrap dependency for #677/#819.
+---
+ docs/bend2/build-admission.md | 161 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 161 insertions(+)
+ create mode 100644 docs/bend2/build-admission.md
+
+diff --git a/docs/bend2/build-admission.md b/docs/bend2/build-admission.md
+new file mode 100644
+index 00000000..622b6042
+--- /dev/null
++++ b/docs/bend2/build-admission.md
+@@ -0,0 +1,161 @@
++# Native build admission
++
++Status: design for #677 and #819. The current branch carries a workflow guard.
++The Bend2 source changes below are not compiled in this branch. The host slice and
++the runner bootstrap are prerequisites owned by root.
++
++## Scope
++
++One admission decision covers every native compiler execution: the coordinator
++Main generation, focused test builds, packaging, fixture compilers and direct
++`bend --check-only` calls. The decision uses actual host capacity and actual
++aggregate memory use. A repeated request for the same source, toolchain, entry
++and output returns the retained execution or its receipt.
++
++## Canonical host admission
++
++The canonical admission object is a systemd cgroup v2 slice at
++`/sys/fs/cgroup/baton2-build.slice`. Root creates it with a real `MemoryMax`
++budget and `Delegate=yes`, and grants both runner accounts write access to the
++delegated subtree. The path is host-wide: it does not depend on a clone, a
++worktree, a user ID, `XDG_RUNTIME_DIR`, a temporary directory or a mount
++namespace. `/sys/fs/cgroup` is mounted in both runner services today; the
++runner must refuse with `slice-unavailable` when it is not.
++
++Each admitted execution creates a unique sub-cgroup under the slice, writes its
++`memory.max` budget, moves the runner into it, and then starts the compiler.
++Compiler children inherit the sub-cgroup, so the whole process tree is bounded
++by the same allocation. The slice's `memory.max` bounds the sum of all
++sub-cgroups.
++
++There is no per-user fallback and no guessed global floor. When the slice is
++missing or unlimited, admission refuses and reports the exact paths and values
++it read. Root owns the slice budget.
++
++## Decision inputs
++
++- `memory.max` and `memory.current` of the slice: actual aggregate capacity and
++  actual aggregate use.
++- A demand in KiB from the exact build manifest for full generation. The
++  manifest records measured peak RSS for the same source commit, compiler
++  digest, entry and output. A manifest that does not match refuses with
++  `manifest-mismatch`; a missing manifest refuses with `manifest-absent`.
++- A declared focused budget from the workflow or caller for a focused build.
++- A retained-C manifest for the `reuse` class. A matching retained-C manifest
++  admits the copy and link step with a small focused budget; it does not require
++  full-generation capacity.
++
++Admission admits when `memory.current + demand <= memory.max`. Focused builds
++may run concurrently while the sum of their budgets and current use stays within
++the slice. Full generation and focused builds use the same aggregate rule; the
++class changes the demand source, not the lock order.
++
++## Resource enforcement
++
++Before the compiler starts, the host boundary sets `RLIMIT_AS` to the admitted
++budget for the runner and its descendants. `RLIMIT_AS` needs no privilege and
++is inherited across `exec`. The sub-cgroup `memory.max` enforces the aggregate
++process-tree budget against actual allocation. `memory.peak`, `memory.swap.max`
++and `memory.events` are read into the receipt.
++
++The runner writes its own PID into the sub-cgroup `cgroup.procs` before it
++spawns the compiler. No compiler or compiler child starts outside the
++sub-cgroup.
++
++## Compiler entry and runner contract
++
++The `bend` entry used by builds is a runner, not the raw compiler binary. The
++runner command is:
++
++```
++baton2 build-admission --entry ENTRY --output OUTPUT --class CLASS \
++  --demand-kib N --receipt PATH --real-bend REAL_BEND -- ARGS...
++```
++
++All arguments pass through, including `--check-only`, `-o`, `--version` and
++direct fixture invocations. The toolchain installation places this runner at
++the `bend` path used by `BEND`, `.bend/bin/bend` and the workflow toolchain
++directory. The build script, `prepare-native-compiler.py`, `package-native.py`,
++`accept-native-receive.py`, `trial-start.sh` and direct test invocations use
++that entry. A raw compiler path remains available only to the bootstrap step.
++
++## Bootstrap dependency
++
++The runner is a product command in the Baton binary. The bootstrap is the single
++compiler invocation that builds a Baton binary containing the admission command
++from a source tree that does not yet have it. The bootstrap rule:
++
++1. Use the installed Baton release binary whose `build-admission` action is
++   present, with its recorded executable digest and version.
++2. Run that bootstrap build with `RLIMIT_AS` set to 8 GiB for the build process
++   tree and, when available, inside the shared slice.
++3. Record the source commit, compiler digest, command, limits and exit status in
++   the bootstrap receipt.
++
++When no released Baton binary contains the command, root supplies an approved
++runner binary and its digest. The bootstrap is the only compiler path outside
++the runner. Every later build, including `--check-only`, uses the runner.
++
++## Cancellation
++
++The sub-cgroup path is written into the receipt before the compiler starts.
++On SIGINT, SIGTERM or SIGHUP the runner writes `1` to the sub-cgroup
++`cgroup.kill`, records the signal, and leaves the receipt in place. The workflow
++job timeout and step cancellation therefore terminate the whole compiler tree,
++not only the step shell. A runner lost by SIGKILL leaves the sub-cgroup and the
++start receipt; the next admission reads `memory.current` and `cgroup.procs` and
++reports the retained execution.
++
++## Receipts
++
++Each attempt writes one JSON receipt before execution and updates it after exit.
++Fields: schema, class, decision, cause, source commit and status, compiler path
++and digest, entry, output, command, slice path, sub-cgroup path, `memory.max`,
++`memory.current`, `memory.peak`, `memory.swap.max`, `memory.events`,
++`RLIMIT_AS`, pid, pgid, start and end times, exit status or forwarded signal,
++and retained-C manifest identity for the reuse class.
++
++## Workflow changes
++
++- Push-triggered automatic validation is removed until the runner and slice are
++  installed. The current branch removes it and adds an exact `source_commit`
++  dispatch input.
++- The dispatch path checks out `source_commit`, records it, and asserts the
++  checkout equals it.
++- A preflight job on the homelab runner reads the slice capacity before the
++  candidate, target and Darwin jobs. The build jobs depend on it.
++- Candidate and target builds use the same runner entry. A completed target
++  build run is reused only when its manifest matches the target commit and
++  toolchain.
++- The Darwin job uses the same runner contract; macOS capacity must come from
++  its own cgroup or an approved remote placement. It does not fall back to an
++  unlimited local build.
++- Dispatch authorization is restricted to trusted actors; the pull-request
++  ref limit and the supported dispatch route are documented in
++  `docs/bend2/native-artifacts.md`.
++
++## Source changes for review
++
++- `bend2/src/coordinator/build-admission.bend`: decision types, aggregate
++  capacity rule, manifest matching, receipt schema and the runner action.
++- `bend2/src/coordinator/commands.bend` and `main.bend`: the
++  `build-admission` command and its argument parsing.
++- `bend2/src/host/build-admission.bend` and `bend2/src/host/build-admission.c`:
++  cgroup read/write, sub-cgroup creation and removal, self PID, `setrlimit`,
++  process-group spawn, wait and signal forwarding. This is the narrow platform
++  boundary.
++- `bend2/scripts/build-native.sh`: call the runner instead of the raw compiler;
++  keep the bootstrap branch behind the recorded release digest.
++- `bend2/scripts/prepare-native-compiler.py` and the workflow compiler setup:
++  install the runner at the `bend` entry and retain the raw compiler path for
++  the bootstrap only.
++- `bend2/test/build-admission.py` is removed. Tests become Bend2 law fixtures
++  plus a focused shell fixture that exercises the runner with a stub compiler.
++
++## Prerequisites owned by root
++
++- Create and delegate `/sys/fs/cgroup/baton2-build.slice` with an actual
++  `MemoryMax` and access for both runner users.
++- Install a Baton release binary containing `build-admission`, or provide the
++  approved bootstrap runner and digest.
++- Confirm `/sys/fs/cgroup` is visible in both runner mount namespaces.
+-- 
+2.43.0
+
+
+From 592ff49500c10a96d5d5da7921d3f0a0785bf1b9 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 17:25:06 -0700
+Subject: [PATCH 3/6] Address admission review findings
+
+Validate the dispatch source commit as a 40-hex identity before checkout,
+restore the release_version default, remove the unreachable push clause, and
+document the pull-request ref limit and trusted dispatch route.
+
+Revise the #677/#819 design around one atomic cgroup reservation, actual
+capacity and retained receipts, a shared host slice, a launcher outside the
+job cgroup, SIGKILL reclamation, per-process RLIMIT_AS with process-tree
+memory.max, direct check-only derivation, and an approved runner bootstrap
+with no unadmitted compiler call.
+---
+ .github/workflows/bend2-native.yml |   9 +-
+ docs/bend2/build-admission.md      | 285 +++++++++++++++++------------
+ docs/bend2/native-artifacts.md     |  12 +-
+ 3 files changed, 186 insertions(+), 120 deletions(-)
+
+diff --git a/.github/workflows/bend2-native.yml b/.github/workflows/bend2-native.yml
+index d710e0dd..5a8302bb 100644
+--- a/.github/workflows/bend2-native.yml
++++ b/.github/workflows/bend2-native.yml
+@@ -28,6 +28,7 @@ name: bend2-native-development
+       release_version:
+         description: 'Release archive version; leave blank for a development archive'
+         required: false
++        default: ''
+         type: string
+       source_commit:
+         description: 'Exact candidate source commit; leave blank for the dispatched ref'
+@@ -84,6 +85,9 @@ jobs:
+       BEND_NO_TELEMETRY: '1'
+       BUN_JSC_maxPerThreadStackUsage: '67108864'
+     steps:
++      - name: Validate exact source commit
++        shell: bash
++        run: '[[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+       - name: Checkout exact candidate
+         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+         with:
+@@ -253,9 +257,12 @@ jobs:
+       CC: /usr/bin/clang-19
+       BEND_NO_TELEMETRY: '1'
+       BUN_JSC_maxPerThreadStackUsage: '67108864'
+-      BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || inputs.target_commit }}
++      BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
+       BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
+     steps:
++      - name: Validate exact source commit
++        shell: bash
++        run: '[[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+       - name: Checkout candidate test contracts and target history
+         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+         with:
+diff --git a/docs/bend2/build-admission.md b/docs/bend2/build-admission.md
+index 622b6042..2e37083d 100644
+--- a/docs/bend2/build-admission.md
++++ b/docs/bend2/build-admission.md
+@@ -1,161 +1,220 @@
+ # Native build admission
+ 
+-Status: design for #677 and #819. The current branch carries a workflow guard.
+-The Bend2 source changes below are not compiled in this branch. The host slice and
+-the runner bootstrap are prerequisites owned by root.
++Status: revised design for #677 and #819 after peer review. The branch carries a
++workflow guard. The Bend2 source changes below are not compiled in this branch.
++The host slice and an approved runner binary are prerequisites owned by root.
+ 
+ ## Scope
+ 
+ One admission decision covers every native compiler execution: the coordinator
+ Main generation, focused test builds, packaging, fixture compilers and direct
+-`bend --check-only` calls. The decision uses actual host capacity and actual
+-aggregate memory use. A repeated request for the same source, toolchain, entry
+-and output returns the retained execution or its receipt.
++`bend --check-only` calls. The decision uses actual cgroup capacity, actual
++aggregate use and retained run receipts. A repeated request for the same source,
++toolchain, entry and output returns the retained execution or its receipt.
+ 
+ ## Canonical host admission
+ 
+ The canonical admission object is a systemd cgroup v2 slice at
+ `/sys/fs/cgroup/baton2-build.slice`. Root creates it with a real `MemoryMax`
+-budget and `Delegate=yes`, and grants both runner accounts write access to the
+-delegated subtree. The path is host-wide: it does not depend on a clone, a
+-worktree, a user ID, `XDG_RUNTIME_DIR`, a temporary directory or a mount
+-namespace. `/sys/fs/cgroup` is mounted in both runner services today; the
+-runner must refuse with `slice-unavailable` when it is not.
+-
+-Each admitted execution creates a unique sub-cgroup under the slice, writes its
+-`memory.max` budget, moves the runner into it, and then starts the compiler.
+-Compiler children inherit the sub-cgroup, so the whole process tree is bounded
+-by the same allocation. The slice's `memory.max` bounds the sum of all
+-sub-cgroups.
+-
+-There is no per-user fallback and no guessed global floor. When the slice is
+-missing or unlimited, admission refuses and reports the exact paths and values
+-it read. Root owns the slice budget.
+-
+-## Decision inputs
+-
+-- `memory.max` and `memory.current` of the slice: actual aggregate capacity and
+-  actual aggregate use.
+-- A demand in KiB from the exact build manifest for full generation. The
+-  manifest records measured peak RSS for the same source commit, compiler
+-  digest, entry and output. A manifest that does not match refuses with
+-  `manifest-mismatch`; a missing manifest refuses with `manifest-absent`.
+-- A declared focused budget from the workflow or caller for a focused build.
+-- A retained-C manifest for the `reuse` class. A matching retained-C manifest
+-  admits the copy and link step with a small focused budget; it does not require
+-  full-generation capacity.
+-
+-Admission admits when `memory.current + demand <= memory.max`. Focused builds
+-may run concurrently while the sum of their budgets and current use stays within
+-the slice. Full generation and focused builds use the same aggregate rule; the
+-class changes the demand source, not the lock order.
++budget, enables the `memory` controller in `cgroup.subtree_control`, sets
++`Delegate=yes` and gives both runner accounts access through one shared group.
++The path is host-wide: it does not depend on a clone, a worktree, a user ID,
++`XDG_RUNTIME_DIR`, a temporary directory, a mount namespace or a cgroup
++namespace.
++
++Before any build, the runner verifies the slice from inside its own mount and
++cgroup namespace: the slice path exists, `memory` is listed in
++`cgroup.subtree_control`, and a probe sub-cgroup can be created, given a
++`memory.max`, and removed. A failed probe refuses with `slice-unavailable`
++and the exact path and errno. There is no per-user fallback and no guessed
++global floor.
++
++Each admitted execution creates a unique sub-cgroup under the slice and writes
++its `memory.max`. A launcher child starts outside the compiler tree, the runner
++moves the launcher into the sub-cgroup, and the launcher then execs the
++compiler. Compiler children inherit the sub-cgroup. The slice `memory.max`
++bounds the sum of all sub-cgroups.
++
++## Atomic reservation
++
++Admission is a single transaction under one fixed lock sub-cgroup,
++`baton2-build.slice/admission`, created with `mkdir`. A second admission that
++finds the lock refuses `admission-busy`; the runner does not wait or idle. Under
++the lock the runner:
++
++1. Reads slice `memory.max`, `memory.current`, `memory.swap.max` and the build
++   filesystem's `statvfs` free bytes.
++2. Reads the reservation sub-cgroups that remain from active builds.
++3. Applies the class rule below.
++4. Creates the job sub-cgroup, writes `memory.max`, records the lease receipt,
++   and removes the lock sub-cgroup.
++5. Refuses `disk-below-need` when the retained receipt's output bytes exceed
++   `f_bavail`; without a receipt it records the free bytes and runs, retaining
++   any filesystem ENOSPC.
++
++A crash leaves the lock sub-cgroup without a live launcher. The next runner
++checks its `cgroup.procs`; an empty lock is removed and the transaction repeats
++once.
++
++## Class rules
++
++- `full`: the demand is the peak RSS and output bytes recorded by a prior
++  retained run receipt for the same source commit, compiler digest, entry,
++  output, compile flags, environment and link inputs. The receipt digest is
++  verified. A missing or mismatched receipt does not produce a guessed floor:
++  the build runs under the remaining actual slice budget, and an actual kernel
++  OOM or filesystem ENOSPC retains its cause. Full generation holds the
++  `full` marker sub-cgroup, so it cannot overlap another full generation.
++- `focused`: the demand is the peak RSS and output bytes from the last retained
++  receipt for the same focused entry and compiler; without one, the job uses
++  the remaining actual slice budget. Focused jobs may run concurrently while
++  the sum of their sub-cgroup `memory.max` values and current use remains at or
++  below the slice budget.
++- `reuse`: a manifest-qualified retained C is copied and linked with the
++  existing `.github/scripts/reuse-native-main.py` or
++  `.github/scripts/reuse-native-target.py` verifier and the
++  `BATON2_MAIN_C_VERIFIER` selection. The verifier's source, toolchain, proof
++  and output identities are used directly. The copy and link run in a focused
++  sub-cgroup with a small `memory.max` derived from the retained artifact
++  bytes. A cheap reuse does not require full-generation capacity.
++
++No caller supplies a size estimate or a resource budget. Values come from
++actual cgroup files, the build filesystem, and retained receipts written by the
++runner. The operator-provided slice `memory.max` is the one host policy input.
+ 
+ ## Resource enforcement
+ 
+-Before the compiler starts, the host boundary sets `RLIMIT_AS` to the admitted
+-budget for the runner and its descendants. `RLIMIT_AS` needs no privilege and
+-is inherited across `exec`. The sub-cgroup `memory.max` enforces the aggregate
+-process-tree budget against actual allocation. `memory.peak`, `memory.swap.max`
+-and `memory.events` are read into the receipt.
++The host boundary sets `RLIMIT_AS` to the job sub-cgroup `memory.max` for each
++process before `exec`. `RLIMIT_AS` is a per-process virtual-address limit; it
++does not bound the process tree. The sub-cgroup `memory.max` bounds the
++process-tree allocation. The receipt records both limits.
+ 
+-The runner writes its own PID into the sub-cgroup `cgroup.procs` before it
+-spawns the compiler. No compiler or compiler child starts outside the
+-sub-cgroup.
++The runner reads `memory.peak`, `memory.swap.max`, `memory.events` and the exit
++signal. An OOM kill is recorded as `oom` with the `memory.events` counters; a
++filesystem failure is recorded with `statvfs` values and the failing errno.
+ 
+ ## Compiler entry and runner contract
+ 
+-The `bend` entry used by builds is a runner, not the raw compiler binary. The
+-runner command is:
++The `bend` entry used by builds is the runner, not the raw compiler binary:
+ 
+ ```
+-baton2 build-admission --entry ENTRY --output OUTPUT --class CLASS \
+-  --demand-kib N --receipt PATH --real-bend REAL_BEND -- ARGS...
++baton2 build-admission --class CLASS --receipt PATH --real-bend REAL_BEND -- ARGS...
+ ```
+ 
+-All arguments pass through, including `--check-only`, `-o`, `--version` and
+-direct fixture invocations. The toolchain installation places this runner at
+-the `bend` path used by `BEND`, `.bend/bin/bend` and the workflow toolchain
+-directory. The build script, `prepare-native-compiler.py`, `package-native.py`,
+-`accept-native-receive.py`, `trial-start.sh` and direct test invocations use
+-that entry. A raw compiler path remains available only to the bootstrap step.
++For a direct call the runner derives the fields from `ARGS`:
++
++- `version`, `--version` and other non-compiling queries run without a job
++  sub-cgroup and write a query receipt.
++- `--check-only ENTRY` uses class `check`, entry `ENTRY`, no output and the
++  remaining focused budget.
++- `-o OUTPUT ENTRY` uses class `full` when `ENTRY` resolves to the coordinator
++  Main entry, otherwise `focused`; the demand receipt lookup uses that entry,
++  output and compiler.
++- An interpreted run uses class `check` with the selected entry.
++
++The toolchain installation places this runner at the `bend` path used by
++`BEND`, `.bend/bin/bend`, `node_modules/.bend/bin/bend` and the workflow
++toolchain directory. `build-native.sh`, `run-checks.mjs`,
++`prepare-native-compiler.py`, `package-native.py`, `accept-native-receive.py`,
++`trial-start.sh`, `check-native.sh` and direct fixture invocations use that
++entry. The raw compiler binary is owned by the runner installation and is not
++reachable through `BEND`, `PATH` or the toolchain `bin` directory for build
++callers.
+ 
+ ## Bootstrap dependency
+ 
+-The runner is a product command in the Baton binary. The bootstrap is the single
+-compiler invocation that builds a Baton binary containing the admission command
+-from a source tree that does not yet have it. The bootstrap rule:
++There is no unadmitted compiler execution. The first build of a Baton binary
++that contains `build-admission` uses an approved runner binary supplied by root.
++That runner admits the build through the same slice and receipt contract. When
++no approved runner exists, the build refuses; it does not fall back to the raw
++compiler. The approved runner's version, executable digest and admission
++behavior are recorded, and its source must be the reviewed Baton revision or a
++root-approved equivalent.
+ 
+-1. Use the installed Baton release binary whose `build-admission` action is
+-   present, with its recorded executable digest and version.
+-2. Run that bootstrap build with `RLIMIT_AS` set to 8 GiB for the build process
+-   tree and, when available, inside the shared slice.
+-3. Record the source commit, compiler digest, command, limits and exit status in
+-   the bootstrap receipt.
+-
+-When no released Baton binary contains the command, root supplies an approved
+-runner binary and its digest. The bootstrap is the only compiler path outside
+-the runner. Every later build, including `--check-only`, uses the runner.
++This is the only bootstrap dependency: the approved runner binary and the
++root-created slice. No `RLIMIT_AS` value, temporary path, per-user lock or
++optional slice is part of the bootstrap.
+ 
+ ## Cancellation
+ 
+-The sub-cgroup path is written into the receipt before the compiler starts.
+-On SIGINT, SIGTERM or SIGHUP the runner writes `1` to the sub-cgroup
+-`cgroup.kill`, records the signal, and leaves the receipt in place. The workflow
+-job timeout and step cancellation therefore terminate the whole compiler tree,
+-not only the step shell. A runner lost by SIGKILL leaves the sub-cgroup and the
+-start receipt; the next admission reads `memory.current` and `cgroup.procs` and
+-reports the retained execution.
++The runner stays outside the job sub-cgroup. On SIGINT, SIGTERM or SIGHUP it
++writes the signal and pre-kill receipt state, then writes `1` to the job
++`cgroup.kill`, then updates the receipt with the observed exit. The launcher and
++compiler tree die; the runner survives to write the receipt.
++
++A SIGKILLed runner leaves the job sub-cgroup and the start receipt. The next
++admission reads the lease owner PID and start identity, verifies the owner is
++gone, writes `cgroup.kill` to the retained job, removes the sub-cgroup, and
++records `reclaimed` in the new receipt. The orphan compiler does not survive
++indefinitely.
+ 
+ ## Receipts
+ 
+ Each attempt writes one JSON receipt before execution and updates it after exit.
+ Fields: schema, class, decision, cause, source commit and status, compiler path
+-and digest, entry, output, command, slice path, sub-cgroup path, `memory.max`,
+-`memory.current`, `memory.peak`, `memory.swap.max`, `memory.events`,
+-`RLIMIT_AS`, pid, pgid, start and end times, exit status or forwarded signal,
+-and retained-C manifest identity for the reuse class.
++and digest, entry, output, command, slice path, job sub-cgroup path,
++`memory.max`, `memory.current`, `memory.peak`, `memory.swap.max`,
++`memory.events`, `RLIMIT_AS`, lease owner PID and start identity, start and end
++times, exit status or forwarded signal, retained-C verifier identity and
++manifest digest.
+ 
+ ## Workflow changes
+ 
++Implemented in `9d0851d5` plus review fixes:
++
+ - Push-triggered automatic validation is removed until the runner and slice are
+-  installed. The current branch removes it and adds an exact `source_commit`
+-  dispatch input.
+-- The dispatch path checks out `source_commit`, records it, and asserts the
+-  checkout equals it.
+-- A preflight job on the homelab runner reads the slice capacity before the
+-  candidate, target and Darwin jobs. The build jobs depend on it.
+-- Candidate and target builds use the same runner entry. A completed target
+-  build run is reused only when its manifest matches the target commit and
+-  toolchain.
+-- The Darwin job uses the same runner contract; macOS capacity must come from
+-  its own cgroup or an approved remote placement. It does not fall back to an
+-  unlimited local build.
+-- Dispatch authorization is restricted to trusted actors; the pull-request
+-  ref limit and the supported dispatch route are documented in
++  installed.
++- `source_commit` is a dispatch input and `BATON2_SOURCE_SHA` uses it for
++  dispatch, the PR head for pull requests, and the dispatched ref tip otherwise.
++- Candidate and target jobs validate a 40-hex source commit before checkout.
++- The dead push clause is removed from `BATON2_TARGET_COMMIT`.
++
++Pending with the runner:
++
++- A preflight job on the same host as the build jobs probes the slice and
++  records its capacity. `linux-candidate`, `linux-target` and `darwin-arm64`
++  depend on it. The runner group must place the preflight and build jobs on the
++  same host; the current group has two hosts, so the workflow uses a host label
++  or a runner-side lease.
++- `linux-target` depends on `linux-candidate` unless a matching
++  `target_build_run` is supplied, because both invoke full generation.
++- Darwin uses the same runner contract; the `macos-15` hosted job is replaced
++  or held until #815 provides a self-hosted macOS runner with its own slice.
++- Dispatch authorization is restricted to trusted actors. The pull-request ref
++  limit and the supported dispatch route are documented in
+   `docs/bend2/native-artifacts.md`.
+ 
+ ## Source changes for review
+ 
+-- `bend2/src/coordinator/build-admission.bend`: decision types, aggregate
+-  capacity rule, manifest matching, receipt schema and the runner action.
++- `bend2/src/coordinator/build-admission.bend`: decision types, reservation
++  transaction, class rules, receipt schema and the runner action.
+ - `bend2/src/coordinator/commands.bend` and `main.bend`: the
+-  `build-admission` command and its argument parsing.
++  `build-admission` command and argument parsing.
+ - `bend2/src/host/build-admission.bend` and `bend2/src/host/build-admission.c`:
+-  cgroup read/write, sub-cgroup creation and removal, self PID, `setrlimit`,
+-  process-group spawn, wait and signal forwarding. This is the narrow platform
+-  boundary.
+-- `bend2/scripts/build-native.sh`: call the runner instead of the raw compiler;
+-  keep the bootstrap branch behind the recorded release digest.
+-- `bend2/scripts/prepare-native-compiler.py` and the workflow compiler setup:
+-  install the runner at the `bend` entry and retain the raw compiler path for
+-  the bootstrap only.
+-- `bend2/test/build-admission.py` is removed. Tests become Bend2 law fixtures
+-  plus a focused shell fixture that exercises the runner with a stub compiler.
++  slice probe, sub-cgroup create/remove, `subtree_control`, `memory.max`,
++  `cgroup.kill`, self PID, `setrlimit`, process-group spawn, wait and signal
++  forwarding.
++- `bend2/src/host/files.c`: sub-cgroup removal.
++- `bend2/scripts/build-native.sh`: call the runner; remove the raw compiler
++  path from build callers.
++- `bend2/scripts/run-checks.mjs`, `prepare-native-compiler.py`,
++  `package-native.py`, `accept-native-receive.py`, `trial-start.sh` and
++  `check-native.sh`: resolve the runner entry and retain the raw compiler only
++  in the installation.
++- `.github/workflows/bend2-native.yml`: preflight, job dependencies, actor gate
++  and exact source commit.
++- `docs/bend2/native-artifacts.md`: pull-request ref limit, trusted dispatch
++  route and current runner labels.
++- Tests: Bend2 law fixtures for the reservation and class rules, plus a
++  focused shell fixture that runs the runner with a stub compiler against a
++  probe slice. No Python product implementation.
+ 
+ ## Prerequisites owned by root
+ 
+-- Create and delegate `/sys/fs/cgroup/baton2-build.slice` with an actual
+-  `MemoryMax` and access for both runner users.
+-- Install a Baton release binary containing `build-admission`, or provide the
+-  approved bootstrap runner and digest.
+-- Confirm `/sys/fs/cgroup` is visible in both runner mount namespaces.
++- Create `/sys/fs/cgroup/baton2-build.slice` with a real `MemoryMax`, the
++  `memory` controller enabled in `cgroup.subtree_control`, `Delegate=yes` and a
++  shared group for both runner accounts.
++- Confirm from both runner UIDs and both mount/cgroup namespaces that the slice
++  is writable and probe creation succeeds.
++- Install an approved Baton runner binary containing `build-admission`, with its
++  version and digest recorded.
+diff --git a/docs/bend2/native-artifacts.md b/docs/bend2/native-artifacts.md
+index efdfdb35..60c1abb3 100644
+--- a/docs/bend2/native-artifacts.md
++++ b/docs/bend2/native-artifacts.md
+@@ -63,19 +63,19 @@ Packaging copies the project LICENSE and NOTICE when present, and retains the pi
+ 
+ ## Continuous integration
+ 
+-[.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) runs the complete native checks on the exact candidate source using a remote Linux host and the pinned Linux Bend compiler. It records the affected Python test outcomes during that complete suite. An independent job builds the exact target and runs the candidate test contracts against the target production executable and helpers. The comparison names each file, test and failure type; skipped, missing or incomplete results refuse qualification. Pull requests select their actual head commit.
++[.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) runs the complete native checks on the exact candidate source using a remote Linux host and the pinned Linux Bend compiler. It records the affected Python test outcomes during that complete suite. An independent job builds the exact target and runs the candidate test contracts against the target production executable and helpers. The comparison names each file, test and failure type; skipped, missing or incomplete results refuse qualification. Pull requests select their actual head commit, but the homelab runner group accepts only exact workflow references and rejects the `refs/pull/<N>/merge` ref. Pull-request runs therefore stay queued; dispatch the exact head commit with `source_commit` instead. Dispatch is restricted to trusted actors.
+ 
+-The Darwin job verifies the generated C checksum, producer source tree and every tracked source file against its package checkout. It compiles that C with Darwin clang, includes TypeScript 5.9.3, and packages the complete producer results and target comparison under `share/baton2/generated-c-provenance`. The extracted-artifact smoke runs on `macos-15` with the owned build path unavailable. Each job retains complete command streams and actual results.
++The Darwin job verifies the generated C checksum, producer source tree and every tracked source file against its package checkout. It compiles that C with Darwin clang, includes TypeScript 5.9.3, and packages the complete producer results and target comparison under `share/baton2/generated-c-provenance`. The extracted-artifact smoke runs on the self-hosted Darwin runner when #815 provides one; the hosted `macos-15` job remains queued until then. Each job retains complete command streams and actual results.
+ 
+-Pushes and pull requests produce development artifacts. To qualify an immutable candidate for Baton 2.0.0, supply its branch and the exact target commit:
++Dispatched runs produce the development or release artifact. To qualify an immutable candidate for Baton 2.0.0, supply its exact source commit, the candidate ref and the exact target commit:
+ 
+ ~~~sh
+ gh workflow run bend2-native.yml --ref '<candidate-branch>' \
+-  -f release_version=2.0.0 -f target_commit='<40-character-target-commit>' \
+-  -f linux_runner=homelab
++  -f source_commit='<40-character-candidate-commit>' \
++  -f release_version=2.0.0 -f target_commit='<40-character-target-commit>'
+ ~~~
+ 
+-The manual workflow selects the existing `baton2-native-linux-x64` homelab runner by default. Its runner group permits exact trusted workflow references. `linux_runner=hosted` selects hosted Ubuntu; automatic pushes and pull requests use hosted Ubuntu. Candidate and target jobs run independently and share the available runner capacity. Leaving `release_version` blank produces a development archive. The uploaded Darwin artifact name includes the selected version, source commit and run attempt. Inspect the full native result, selected comparison, generated-C provenance, package and smoke before publishing. Real-provider execution, installed use and release publication retain their own results.
++The manual workflow selects the existing `baton2-native-linux-x64` homelab runner. Its runner group permits exact trusted workflow references. Automatic push-triggered validation is disabled until the shared build admission from #677/#819 is installed. Candidate and target jobs run full generation; the target admits after the candidate until a matching `target_build_run` avoids the second generation. Leaving `release_version` blank produces a development archive. The uploaded Darwin artifact name includes the selected version, source commit and run attempt. Inspect the full native result, selected comparison, generated-C provenance, package and smoke before publishing. Real-provider execution, installed use and release publication retain their own results.
+ 
+ `target_build_run` selects a completed exact target build from an earlier workflow artifact. The target job verifies the recorded source, successful build result, pinned compiler, C checksum and binary checksum, then restores that binary into a fresh target checkout. It runs every current selected test contract against the restored target and its exact source helpers. The new artifact retains the original build evidence and the current comparison results.
+ 
+-- 
+2.43.0
+
+
+From b46129234ffb5a2151f3e1f96b5dd02908fc7c5d Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 17:29:52 -0700
+Subject: [PATCH 4/6] Separate new and changed admission source files
+
+Correct the runner script paths, label the new Bend2 and host boundary files,
+and name each changed build caller and documentation file.
+---
+ docs/bend2/build-admission.md | 34 ++++++++++++++++++++--------------
+ 1 file changed, 20 insertions(+), 14 deletions(-)
+
+diff --git a/docs/bend2/build-admission.md b/docs/bend2/build-admission.md
+index 2e37083d..a68fcbaf 100644
+--- a/docs/bend2/build-admission.md
++++ b/docs/bend2/build-admission.md
+@@ -114,10 +114,11 @@ For a direct call the runner derives the fields from `ARGS`:
+ 
+ The toolchain installation places this runner at the `bend` path used by
+ `BEND`, `.bend/bin/bend`, `node_modules/.bend/bin/bend` and the workflow
+-toolchain directory. `build-native.sh`, `run-checks.mjs`,
+-`prepare-native-compiler.py`, `package-native.py`, `accept-native-receive.py`,
+-`trial-start.sh`, `check-native.sh` and direct fixture invocations use that
+-entry. The raw compiler binary is owned by the runner installation and is not
++toolchain directory. `bend2/scripts/build-native.sh`, `bend2/scripts/run-checks.mjs`,
++`.github/scripts/prepare-native-compiler.py`, `bend2/scripts/package-native.py`,
++`bend2/scripts/accept-native-receive.py`, `bend2/scripts/trial-start.sh`,
++`bend2/scripts/check-native.sh` and direct fixture invocations use that entry.
++The raw compiler binary is owned by the runner installation and is not
+ reachable through `BEND`, `PATH` or the toolchain `bin` directory for build
+ callers.
+ 
+@@ -186,28 +187,33 @@ Pending with the runner:
+ 
+ ## Source changes for review
+ 
++New files:
++
+ - `bend2/src/coordinator/build-admission.bend`: decision types, reservation
+   transaction, class rules, receipt schema and the runner action.
+-- `bend2/src/coordinator/commands.bend` and `main.bend`: the
+-  `build-admission` command and argument parsing.
+ - `bend2/src/host/build-admission.bend` and `bend2/src/host/build-admission.c`:
+   slice probe, sub-cgroup create/remove, `subtree_control`, `memory.max`,
+   `cgroup.kill`, self PID, `setrlimit`, process-group spawn, wait and signal
+   forwarding.
++
++Changed files:
++
++- `bend2/src/coordinator/commands.bend` and `bend2/src/coordinator/main.bend`:
++  the `build-admission` command and its argument parsing.
+ - `bend2/src/host/files.c`: sub-cgroup removal.
+-- `bend2/scripts/build-native.sh`: call the runner; remove the raw compiler
++- `bend2/scripts/build-native.sh`: call the runner and remove the raw compiler
+   path from build callers.
+-- `bend2/scripts/run-checks.mjs`, `prepare-native-compiler.py`,
+-  `package-native.py`, `accept-native-receive.py`, `trial-start.sh` and
+-  `check-native.sh`: resolve the runner entry and retain the raw compiler only
+-  in the installation.
++- `bend2/scripts/run-checks.mjs`, `.github/scripts/prepare-native-compiler.py`,
++  `bend2/scripts/package-native.py`, `bend2/scripts/accept-native-receive.py`,
++  `bend2/scripts/trial-start.sh` and `bend2/scripts/check-native.sh`: resolve
++  the runner entry and retain the raw compiler only in the installation.
+ - `.github/workflows/bend2-native.yml`: preflight, job dependencies, actor gate
+   and exact source commit.
+ - `docs/bend2/native-artifacts.md`: pull-request ref limit, trusted dispatch
+   route and current runner labels.
+-- Tests: Bend2 law fixtures for the reservation and class rules, plus a
+-  focused shell fixture that runs the runner with a stub compiler against a
+-  probe slice. No Python product implementation.
++- Tests: Bend2 law fixtures for the reservation and class rules, plus a focused
++  shell fixture that runs the runner with a stub compiler against a probe
++  slice. No Python product implementation.
+ 
+ ## Prerequisites owned by root
+ 
+-- 
+2.43.0
+
+
+From 51ed89646faad41922a1a8c55c5f52d89342f669 Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 17:32:24 -0700
+Subject: [PATCH 5/6] Correct workflow state claims after re-review
+
+State the actual Darwin self-hosted runner state, the current independent
+candidate and target jobs, the platform dispatch authorization rule, and the
+queued pull-request evidence. Remove the unverified host-count claim and the
+macOS cgroup-slice claim.
+---
+ docs/bend2/build-admission.md  | 13 +++++++------
+ docs/bend2/native-artifacts.md |  6 +++---
+ 2 files changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/docs/bend2/build-admission.md b/docs/bend2/build-admission.md
+index a68fcbaf..76d0d90e 100644
+--- a/docs/bend2/build-admission.md
++++ b/docs/bend2/build-admission.md
+@@ -175,14 +175,15 @@ Pending with the runner:
+ - A preflight job on the same host as the build jobs probes the slice and
+   records its capacity. `linux-candidate`, `linux-target` and `darwin-arm64`
+   depend on it. The runner group must place the preflight and build jobs on the
+-  same host; the current group has two hosts, so the workflow uses a host label
+-  or a runner-side lease.
++  same host. The workflow must select a host label or a runner-side lease and
++  record the placement before acceptance.
+ - `linux-target` depends on `linux-candidate` unless a matching
+   `target_build_run` is supplied, because both invoke full generation.
+-- Darwin uses the same runner contract; the `macos-15` hosted job is replaced
+-  or held until #815 provides a self-hosted macOS runner with its own slice.
+-- Dispatch authorization is restricted to trusted actors. The pull-request ref
+-  limit and the supported dispatch route are documented in
++- Darwin uses an approved remote Linux placement or stays held and unqualified.
++  macOS has no cgroup v2 slice, so the Linux slice contract does not apply.
++- Dispatch is available to repository write-access actors. The runner group's
++  exact workflow-reference rule is separate. The pull-request ref limit and
++  the supported dispatch route are documented in
+   `docs/bend2/native-artifacts.md`.
+ 
+ ## Source changes for review
+diff --git a/docs/bend2/native-artifacts.md b/docs/bend2/native-artifacts.md
+index 60c1abb3..e60a28e8 100644
+--- a/docs/bend2/native-artifacts.md
++++ b/docs/bend2/native-artifacts.md
+@@ -63,9 +63,9 @@ Packaging copies the project LICENSE and NOTICE when present, and retains the pi
+ 
+ ## Continuous integration
+ 
+-[.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) runs the complete native checks on the exact candidate source using a remote Linux host and the pinned Linux Bend compiler. It records the affected Python test outcomes during that complete suite. An independent job builds the exact target and runs the candidate test contracts against the target production executable and helpers. The comparison names each file, test and failure type; skipped, missing or incomplete results refuse qualification. Pull requests select their actual head commit, but the homelab runner group accepts only exact workflow references and rejects the `refs/pull/<N>/merge` ref. Pull-request runs therefore stay queued; dispatch the exact head commit with `source_commit` instead. Dispatch is restricted to trusted actors.
++[.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) runs the complete native checks on the exact candidate source using a remote Linux host and the pinned Linux Bend compiler. It records the affected Python test outcomes during that complete suite. An independent job builds the exact target and runs the candidate test contracts against the target production executable and helpers. The comparison names each file, test and failure type; skipped, missing or incomplete results refuse qualification. Pull requests select their actual head commit, but the homelab runner group accepts only exact workflow references and rejects the `refs/pull/<N>/merge` ref. Issue #819 records that pull-request runs stayed queued even with a head-ref allowlist; dispatch the exact head commit with `source_commit` as the supported route. Dispatch is available to repository write-access actors. The admission design is in [build-admission.md](build-admission.md).
+ 
+-The Darwin job verifies the generated C checksum, producer source tree and every tracked source file against its package checkout. It compiles that C with Darwin clang, includes TypeScript 5.9.3, and packages the complete producer results and target comparison under `share/baton2/generated-c-provenance`. The extracted-artifact smoke runs on the self-hosted Darwin runner when #815 provides one; the hosted `macos-15` job remains queued until then. Each job retains complete command streams and actual results.
++The Darwin job verifies the generated C checksum, producer source tree and every tracked source file against its package checkout. It compiles that C with Darwin clang, includes TypeScript 5.9.3, and packages the complete producer results and target comparison under `share/baton2/generated-c-provenance`. The extracted-artifact smoke runs on the self-hosted Darwin runner when #815 provides it; the job stays queued until then. Each job retains complete command streams and actual results.
+ 
+ Dispatched runs produce the development or release artifact. To qualify an immutable candidate for Baton 2.0.0, supply its exact source commit, the candidate ref and the exact target commit:
+ 
+@@ -75,7 +75,7 @@ gh workflow run bend2-native.yml --ref '<candidate-branch>' \
+   -f release_version=2.0.0 -f target_commit='<40-character-target-commit>'
+ ~~~
+ 
+-The manual workflow selects the existing `baton2-native-linux-x64` homelab runner. Its runner group permits exact trusted workflow references. Automatic push-triggered validation is disabled until the shared build admission from #677/#819 is installed. Candidate and target jobs run full generation; the target admits after the candidate until a matching `target_build_run` avoids the second generation. Leaving `release_version` blank produces a development archive. The uploaded Darwin artifact name includes the selected version, source commit and run attempt. Inspect the full native result, selected comparison, generated-C provenance, package and smoke before publishing. Real-provider execution, installed use and release publication retain their own results.
++The manual workflow selects the existing `baton2-native-linux-x64` homelab runner. Its runner group permits exact trusted workflow references. Automatic push-triggered validation is disabled until the shared build admission from #677/#819 is installed. Candidate and target jobs currently run independently; once admission is installed, the target admits after the candidate unless a matching `target_build_run` avoids the second generation. Leaving `release_version` blank produces a development archive. The uploaded Darwin artifact name includes the selected version, source commit and run attempt. Inspect the full native result, selected comparison, generated-C provenance, package and smoke before publishing. Real-provider execution, installed use and release publication retain their own results.
+ 
+ `target_build_run` selects a completed exact target build from an earlier workflow artifact. The target job verifies the recorded source, successful build result, pinned compiler, C checksum and binary checksum, then restores that binary into a fresh target checkout. It runs every current selected test contract against the restored target and its exact source helpers. The new artifact retains the original build evidence and the current comparison results.
+ 
+-- 
+2.43.0
+
+
+From eae5fc46bf45d574ae578af9fae9b7c28adbec0b Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 17:33:10 -0700
+Subject: [PATCH 6/6] Specify reservation liveness, launcher barrier and dedup
+
+Record lock and lease owner identities, reclaim verified-dead leases before
+admission, make the launcher wait for the cgroup move, add the request-key
+lookup, define focused reservation arithmetic, disk and swap fields, direct-call
+defaults, raw compiler ownership, and the observed failure mapping.
+---
+ docs/bend2/build-admission.md | 152 +++++++++++++++++++++++-----------
+ 1 file changed, 102 insertions(+), 50 deletions(-)
+
+diff --git a/docs/bend2/build-admission.md b/docs/bend2/build-admission.md
+index 76d0d90e..8de1c17c 100644
+--- a/docs/bend2/build-admission.md
++++ b/docs/bend2/build-admission.md
+@@ -30,31 +30,42 @@ and the exact path and errno. There is no per-user fallback and no guessed
+ global floor.
+ 
+ Each admitted execution creates a unique sub-cgroup under the slice and writes
+-its `memory.max`. A launcher child starts outside the compiler tree, the runner
+-moves the launcher into the sub-cgroup, and the launcher then execs the
+-compiler. Compiler children inherit the sub-cgroup. The slice `memory.max`
+-bounds the sum of all sub-cgroups.
++its `memory.max`. The runner starts a launcher child holding a pipe. The
++launcher blocks on one byte before it execs the compiler. The runner writes the
++launcher PID into `cgroup.procs`, reads `cgroup.procs` back to confirm the move,
++then writes the byte. The launcher execs the compiler only after the move. The
++runner stays outside the job sub-cgroup. Compiler children inherit the
++sub-cgroup; the slice `memory.max` bounds the sum of all sub-cgroups.
+ 
+ ## Atomic reservation
+ 
+-Admission is a single transaction under one fixed lock sub-cgroup,
+-`baton2-build.slice/admission`, created with `mkdir`. A second admission that
+-finds the lock refuses `admission-busy`; the runner does not wait or idle. Under
+-the lock the runner:
+-
+-1. Reads slice `memory.max`, `memory.current`, `memory.swap.max` and the build
+-   filesystem's `statvfs` free bytes.
+-2. Reads the reservation sub-cgroups that remain from active builds.
+-3. Applies the class rule below.
+-4. Creates the job sub-cgroup, writes `memory.max`, records the lease receipt,
+-   and removes the lock sub-cgroup.
+-5. Refuses `disk-below-need` when the retained receipt's output bytes exceed
+-   `f_bavail`; without a receipt it records the free bytes and runs, retaining
+-   any filesystem ENOSPC.
+-
+-A crash leaves the lock sub-cgroup without a live launcher. The next runner
+-checks its `cgroup.procs`; an empty lock is removed and the transaction repeats
+-once.
++Admission is one transaction under the lock sub-cgroup
++`baton2-build.slice/admission`. The lock has an owner record: a lease file
++`baton2-build.slice/leases/lock.json` written atomically before any decision,
++containing the owner PID, the process start time from `/proc/<pid>/stat`, and
++the attempt identity. A second runner reads that record. A live owner refuses
++`admission-busy` and names the owner and lease. An owner verified gone by PID
++and start time is removed and the transaction retries once. The lock is never
++judged by `cgroup.procs`, because the runner and a live transaction keep the
++lock empty by design.
++
++Under the lock the runner:
++
++1. Reads slice `memory.max`, `memory.current`, `memory.swap.current`,
++   `memory.swap.max`, and the build filesystem's `f_bavail * f_frsize`.
++2. Reads active job leases from `baton2-build.slice/leases/<id>.json`. Each
++   lease records the request key, class, owner PID and start time, job
++   sub-cgroup, `memory.max`, reserved disk bytes, output bytes and state.
++3. Reclaims verified-dead leases before applying the class rule. A live lease
++   is attached or awaited; it is never killed.
++4. Applies the class rule with `reserved = sum(active job memory.max)` and
++   `actual = memory.current`, using `max(actual, reserved)` as the committed
++   use.
++5. Creates the job sub-cgroup, writes `memory.max` and `memory.swap.max=0`,
++   writes the lease, and removes the lock.
++
++A crash leaves the lock owner record. The next runner verifies the recorded PID
++and start time before removing it. Stale job leases follow the same rule.
+ 
+ ## Class rules
+ 
+@@ -62,36 +73,48 @@ once.
+   retained run receipt for the same source commit, compiler digest, entry,
+   output, compile flags, environment and link inputs. The receipt digest is
+   verified. A missing or mismatched receipt does not produce a guessed floor:
+-  the build runs under the remaining actual slice budget, and an actual kernel
+-  OOM or filesystem ENOSPC retains its cause. Full generation holds the
+-  `full` marker sub-cgroup, so it cannot overlap another full generation.
++  the build uses the remaining actual slice budget, and an actual kernel OOM or
++  filesystem ENOSPC retains its cause. A `full` lease is exclusive: while a live
++  `full` lease exists, no other `full` lease is admitted. Exclusivity is the
++  lease record, not an empty marker cgroup.
+ - `focused`: the demand is the peak RSS and output bytes from the last retained
+-  receipt for the same focused entry and compiler; without one, the job uses
+-  the remaining actual slice budget. Focused jobs may run concurrently while
+-  the sum of their sub-cgroup `memory.max` values and current use remains at or
+-  below the slice budget.
++  receipt for the same focused entry and compiler. Without a receipt, the
++  reservation is the remaining budget divided by the number of active focused
++  leases plus one, computed from actual slice values. Focused jobs may run
++  concurrently while
++  `max(memory.current, sum(active memory.max)) + new memory.max <= memory.max`.
++  `memory.current` is not added to the sum of active `memory.max` values.
+ - `reuse`: a manifest-qualified retained C is copied and linked with the
+   existing `.github/scripts/reuse-native-main.py` or
+   `.github/scripts/reuse-native-target.py` verifier and the
+   `BATON2_MAIN_C_VERIFIER` selection. The verifier's source, toolchain, proof
+   and output identities are used directly. The copy and link run in a focused
+-  sub-cgroup with a small `memory.max` derived from the retained artifact
+-  bytes. A cheap reuse does not require full-generation capacity.
++  sub-cgroup with `memory.max` derived from the retained artifact bytes. A
++  cheap reuse does not require full-generation capacity.
+ 
+ No caller supplies a size estimate or a resource budget. Values come from
+ actual cgroup files, the build filesystem, and retained receipts written by the
+ runner. The operator-provided slice `memory.max` is the one host policy input.
+ 
++A repeated request uses the key `sha256(source commit, compiler digest, entry,
++output, class, flags, environment)`. The lease index stores that key. A live
++lease with the same key is attached or awaited and its receipt path is
++returned; a completed lease returns the retained receipt and output identity.
++The runner does not start a second execution for the same key. Focused and
++`check` requests use the same lookup.
++
+ ## Resource enforcement
+ 
+ The host boundary sets `RLIMIT_AS` to the job sub-cgroup `memory.max` for each
+ process before `exec`. `RLIMIT_AS` is a per-process virtual-address limit; it
+ does not bound the process tree. The sub-cgroup `memory.max` bounds the
+-process-tree allocation. The receipt records both limits.
++process-tree allocation, and `memory.swap.max=0` keeps the tree out of swap.
++The receipt records both limits.
+ 
+-The runner reads `memory.peak`, `memory.swap.max`, `memory.events` and the exit
+-signal. An OOM kill is recorded as `oom` with the `memory.events` counters; a
+-filesystem failure is recorded with `statvfs` values and the failing errno.
++The runner reads `memory.peak`, `memory.swap.current`, `memory.swap.max`,
++`memory.events` and the exit signal. An OOM kill is recorded as `oom` with the
++`memory.events` counters; a filesystem failure is recorded with `statvfs`
++values and the failing errno.
+ 
+ ## Compiler entry and runner contract
+ 
+@@ -104,23 +127,28 @@ baton2 build-admission --class CLASS --receipt PATH --real-bend REAL_BEND -- ARG
+ For a direct call the runner derives the fields from `ARGS`:
+ 
+ - `version`, `--version` and other non-compiling queries run without a job
+-  sub-cgroup and write a query receipt.
++  sub-cgroup. They write a query receipt under `BATON2_ADMISSION_RECEIPTS` or
++  `/var/lib/baton2/admission/receipts` when that path is writable.
+ - `--check-only ENTRY` uses class `check`, entry `ENTRY`, no output and the
+-  remaining focused budget.
+-- `-o OUTPUT ENTRY` uses class `full` when `ENTRY` resolves to the coordinator
+-  Main entry, otherwise `focused`; the demand receipt lookup uses that entry,
+-  output and compiler.
++  focused reservation rule.
++- `-o OUTPUT ENTRY` and `ENTRY -o OUTPUT` both select class `full` when `ENTRY`
++  resolves to the coordinator Main entry, otherwise `focused`. Flags before,
++  between and after the two operands are accepted.
+ - An interpreted run uses class `check` with the selected entry.
+ 
++Class `check` is a focused class with no output artifact. It uses the same
++reservation rule and receipt, and it never starts a full generation.
++
+ The toolchain installation places this runner at the `bend` path used by
+ `BEND`, `.bend/bin/bend`, `node_modules/.bend/bin/bend` and the workflow
+ toolchain directory. `bend2/scripts/build-native.sh`, `bend2/scripts/run-checks.mjs`,
+ `.github/scripts/prepare-native-compiler.py`, `bend2/scripts/package-native.py`,
+ `bend2/scripts/accept-native-receive.py`, `bend2/scripts/trial-start.sh`,
+ `bend2/scripts/check-native.sh` and direct fixture invocations use that entry.
+-The raw compiler binary is owned by the runner installation and is not
+-reachable through `BEND`, `PATH` or the toolchain `bin` directory for build
+-callers.
++The raw compiler binary is installed under a directory owned by a distinct
++`baton-build` user with mode 0700. Build callers execute the runner through a
++0755 runner entry and cannot traverse the raw compiler directory. A host where
++build callers and the runner share one UID does not satisfy this contract.
+ 
+ ## Bootstrap dependency
+ 
+@@ -151,13 +179,37 @@ indefinitely.
+ 
+ ## Receipts
+ 
+-Each attempt writes one JSON receipt before execution and updates it after exit.
+-Fields: schema, class, decision, cause, source commit and status, compiler path
+-and digest, entry, output, command, slice path, job sub-cgroup path,
+-`memory.max`, `memory.current`, `memory.peak`, `memory.swap.max`,
+-`memory.events`, `RLIMIT_AS`, lease owner PID and start identity, start and end
+-times, exit status or forwarded signal, retained-C verifier identity and
+-manifest digest.
++Each attempt writes one JSON receipt under the slice lease directory before
++execution and updates it after exit with an atomic rename. Fields: schema,
++class, decision, cause, request key, source commit and status, compiler path and
++digest, entry, output, command, slice path, job sub-cgroup path, `memory.max`,
++`memory.current`, `memory.peak`, `memory.swap.max`, `memory.events`,
++`RLIMIT_AS`, output bytes, reserved disk bytes, lease owner PID and start
++identity, start and end times, exit status or forwarded signal, retained-C
++verifier identity and manifest digest.
++
++## Observed failures and rules
++
++The mechanism maps to recorded failures:
++
++- #677 comment 2026-10-17T23:42:44Z: two consolidation builds invoked
++  `build-native.sh` with the Main entry at about 8.5 GiB and 12.6 GiB RSS while
++  an accounts observer used about 92 GiB and swap was exhausted. The shared
++  slice, full lease and aggregate reservation address that duplicate.
++- #819: run 39078173573 assigned both Linux runner slots and was canceled
++  during setup; queued runs 39077093829 and 39076990184 were canceled. The
++  push trigger removal and the launch-time runner prevent a new automatic
++  launch.
++- Commit `9d0851d5` and run 39081684984: the merge push started candidate and
++  target full generation; cancellation did not stop the generators. The push
++  removal and the launcher process group address the launch.
++
++Capacity admission is the operator-requested #677/#819 mechanism. It uses
++actual cgroup values and retained receipts, not caller size estimates. A
++refusal writes a durable receipt and returns it to the requester; the Baton
++orchestrator wakes the requester with that receipt. The runner does not wait,
++idle or truncate work. An actual allocation or filesystem failure keeps its
++cause in the receipt.
+ 
+ ## Workflow changes
+ 
+-- 
+2.43.0
+

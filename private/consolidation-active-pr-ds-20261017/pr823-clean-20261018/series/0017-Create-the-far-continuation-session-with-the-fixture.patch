@@ -1,0 +1,26 @@
+From 85e9cb6123b9621854c61f1cad3b27f4078a0f1a Mon Sep 17 00:00:00 2001
+From: batonci <batonci@localhost>
+Date: Sun, 18 Oct 2026 00:50:35 -0700
+Subject: [PATCH 17/19] Create the far continuation session with the fixture
+ query helper (#797, #823)
+
+---
+ bend2/test/usage-windows-wake.bend | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bend2/test/usage-windows-wake.bend b/bend2/test/usage-windows-wake.bend
+index 95dbc3de9..e32545889 100644
+--- a/bend2/test/usage-windows-wake.bend
++++ b/bend2/test/usage-windows-wake.bend
+@@ -101,7 +101,7 @@ def stale_case(+db: String, +self: String) -> IO(Unit):
+ def far_case(+db: String, +self: String) -> IO(Unit):
+   do IO<Unit>:
+     +far : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+172800000 AS TEXT);")
+-    created : Unit <- session(db,"far2")
++    created : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('far2','root','omp','kimi-code/kimi-for-coding','high','','');")
+     window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','far2','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far window','m-far2');")
+     owed : Unit <- message(db,"far2","m-far2","")
+     held : Unit <- expect_gate(db,"far2","far2","held","far-continuation-held")
+-- 
+2.43.0
+

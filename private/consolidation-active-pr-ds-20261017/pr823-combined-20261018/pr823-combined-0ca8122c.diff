@@ -1,0 +1,1823 @@
+diff --git a/bend2/scripts/check-native.sh b/bend2/scripts/check-native.sh
+index fbfed79f1..bf92da825 100644
+--- a/bend2/scripts/check-native.sh
++++ b/bend2/scripts/check-native.sh
+@@ -27,6 +27,19 @@ BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" "$PYTHON3" ben
+ sh bend2/scripts/build-native.sh bend2/harness/claude-credit-observe.bend .scratch/bend2/claude-credit-observe
+ BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py
+ BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/native-helper-install.py
++sh bend2/scripts/build-native.sh bend2/test/usage-windows.bend .scratch/bend2/usage-windows-test
++.scratch/bend2/usage-windows-test
++sh bend2/scripts/build-native.sh bend2/test/usage-windows-long.bend .scratch/bend2/usage-windows-long-test
++.scratch/bend2/usage-windows-long-test
++sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
++rm -f .scratch/bend2/usage-windows-store.db
++.scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
++sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake.bend .scratch/bend2/usage-windows-wake-test
++rm -f .scratch/bend2/usage-windows-wake.db
++.scratch/bend2/usage-windows-wake-test .scratch/bend2/usage-windows-wake.db bend2/test/fake-wake-marker
++sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake-path.bend .scratch/bend2/usage-windows-wake-path-test
++rm -f .scratch/bend2/usage-windows-wake-path.db
++.scratch/bend2/usage-windows-wake-path-test .scratch/bend2/usage-windows-wake-path.db
+ BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
+ sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
+ BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
+diff --git a/bend2/src/coordinator/commands.bend b/bend2/src/coordinator/commands.bend
+index d6f107567..cf8512e87 100644
+--- a/bend2/src/coordinator/commands.bend
++++ b/bend2/src/coordinator/commands.bend
+@@ -66,6 +66,9 @@ type Command is Data:
+   Models{session: String}
+   ModelsAll{session: String}
+   HarnessInventory{}
++  UsageWindows{session: String}
++  UsageWindowObserve{session: String, window: String, resets: String, source: String}
++  UsageWindowRefresh{session: String}
+   Logs{session: String, level: String}
+   LogsStorage{}
+   LogsClean{session: String}
+@@ -150,9 +153,18 @@ def wake_claim_schema() -> String:
+ def task_input_schema() -> String:
+   "CREATE TABLE IF NOT EXISTS task_input_requests (id TEXT PRIMARY KEY NOT NULL,request TEXT NOT NULL CHECK(json_valid(request) AND json_type(request)='object'),result TEXT CHECK(result IS NULL OR (json_valid(result) AND json_type(result)='object')));"
+ 
++# Usage window observations (#797): one row per observed provider window
++# event, bound to the session's harness, the provider prefix of its model, and
++# the subscription profile label in force (an empty label is account-wide).
++# resets_at NULL is the explicit unknown; the store never invents a reset.
++def usage_windows_schema() -> String:
++  "CREATE TABLE IF NOT EXISTS usage_windows (id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', account TEXT NOT NULL DEFAULT '', window TEXT NOT NULL, resets_at INTEGER, reset_source TEXT NOT NULL, used_fraction REAL, receipt TEXT NOT NULL, message TEXT NOT NULL DEFAULT '');"
++  ++ "CREATE INDEX IF NOT EXISTS idx_usage_windows_match ON usage_windows(harness, provider, account, recorded_at);"
++
+ def schema() -> String:
+   wake_claim_schema()
+   ++ task_input_schema()
++  ++ usage_windows_schema()
+   ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
+   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
+   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
+@@ -630,6 +642,9 @@ def sql(command: Command) -> String:
+     case Models{session}: ""
+     case ModelsAll{session}: ""
+     case HarnessInventory{}: ""
++    case UsageWindows{session}: ""
++    case UsageWindowObserve{session,window,resets,source}: ""
++    case UsageWindowRefresh{session}: ""
+     case Logs{session,level}: ""
+     case LogsStorage{}: ""
+     case LogsClean{session}: ""
+@@ -716,6 +731,8 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
+     case "knowledge-relations": KnowledgeRelations{id,"worker",id}
+     case "observed-usage": ObservedUsage{id}
+     case "models": Models{id}
++    case "usage-windows": UsageWindows{id}
++    case "usage-window-refresh": UsageWindowRefresh{id}
+     case "view": View{id,id,"7682"}
+     case _: Invalid{}
+ 
+@@ -804,6 +821,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
+ def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
+   match verb:
+     case "profile-bind": ProfileBind{id,one,two,three}
++    case "usage-window-observe": UsageWindowObserve{id,one,two,three}
+     case "knowledge-search": KnowledgeSearch{id,one,two,three}
+     case "knowledge":
+       Bool.pick(Command,Bool.and(String.eq(one,"--id"),String.eq(three,"--pretty")),Pretty{KnowledgeDetail{id,two}},
+diff --git a/bend2/src/coordinator/main.bend b/bend2/src/coordinator/main.bend
+index 3e56fa6f1..cb2fe5dce 100644
+--- a/bend2/src/coordinator/main.bend
++++ b/bend2/src/coordinator/main.bend
+@@ -12,6 +12,7 @@ import ./project.bend as Project
+ import ./ui-subscription.bend as UISubscription
+ import ./instance.bend as Instance
+ import ./usage.bend as Usage
++import ./usage-windows.bend as UsageWindows
+ import ./../coordinator/logs.bend as Logs
+ import ../coordinator/commands.bend as C
+ import ../context/native.bend as ContextNative
+@@ -163,6 +164,15 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
+       Usage.models_all(db,session)
+     case C.HarnessInventory{}:
+       Subscription.inventory(db)
++    case C.UsageWindows{+session}: do IO<Unit>:
++      label : String <- Subscription.profile_label_io(db,session)
++      UsageWindows.query(db,session,label)
++    case C.UsageWindowObserve{+session,window,resets,source}: do IO<Unit>:
++      label : String <- Subscription.profile_label_io(db,session)
++      UsageWindows.observe(db,session,window,resets,source,label)
++    case C.UsageWindowRefresh{+session}: do IO<Unit>:
++      label : String <- Subscription.profile_label_io(db,session)
++      UsageWindows.refresh(db,session,label)
+     case C.Logs{session,level}: do IO<Unit>:
+       saved : String <- Logs.apply(db,session,level)
+       log_answer(saved)
+@@ -440,6 +450,8 @@ def legacy_cli_arity(args: List<String>) -> IO(Unit):
+     case flag <> db <> owner <> query <> directory <> worktree <> bootstrap_file <> Nil{}:
+       recover_context_query_cli(flag, db, owner, query, directory, worktree,
+         bootstrap_file)
++    case "--wake-message" <> +db <> +id <> Nil{}:
++      Wake.message_cli(db,id)
+     case +flag <> +directory <> +lock <> Nil{}:
+       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
+     case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
+diff --git a/bend2/src/coordinator/receive.bend b/bend2/src/coordinator/receive.bend
+index 67b4a7c8e..bcd322a6b 100644
+--- a/bend2/src/coordinator/receive.bend
++++ b/bend2/src/coordinator/receive.bend
+@@ -7,6 +7,7 @@ import ./store.bend as Store
+ import ./stop.bend as Stop
+ import ./subscription-fallback.bend as Subs
+ import ./accounts.bend as Accounts
++import ./usage-windows.bend as UW
+ import ./turn.bend as Turn
+ import ./native-initial-input.bend as NativeInitialInput
+ import ../json/canonical.bend as J
+@@ -289,6 +290,41 @@ def recover_if_dead(+db: String, +session: String, dead: Bool) -> IO(Unit):
+ def wake_admit(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, state: String, +dead: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+   wake_stand(db,session,cursor,launch,lock,wake_held(state,dead))
+ 
++# The usage window gate runs before the claim read: a held window keeps the
++# owed input unlaunched and reports the hold to the session and its conductor;
++# an elapsed window reports the restoration once and admits the owed input on
++# its retained assignment and account. An unknown or absent observation never
++# blocks the wake. The restoration report is a no-op for every gate that is not
++# a just-elapsed one.
++def wake_fenced_owed(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, gate: UW.Gate) -> IO(Result<&1,&1,U32 & String,Unit>):
++  do IO<Result<&1,&1,U32 & String,Unit>>:
++    +found : String <- wake_found(db,session,cursor)
++    restored : Unit <- UW.report_restored(db,session,Tx.trim_nl(found),gate)
++    state : String <- Store.claim_state(db,session)
++    dir : String <- IO.try(String,DB.Sql.query(db,attempt_dir_sql(session)))
++    +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
++    +dead : Bool <- custody_dead(db,trimmed,String.is_empty(trimmed))
++    recovered : Unit <- recover_if_dead(db,session,dead)
++    replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
++    wake_admit(db,session,replay_cursor,launch,lock,state,dead)
++
++def wake_fenced_gate(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, gate: UW.Gate) -> IO(Result<&1,&1,U32 & String,Unit>):
++  match gate:
++    case UW.GateHeld{+window,+resets_at,+source,+receipt}: do IO<Result<&1,&1,U32 & String,Unit>>:
++      +found : String <- wake_found(db,session,cursor)
++      held : Unit <- UW.report_held(db,session,Tx.trim_nl(found),UW.GateHeld{window,resets_at,source,receipt})
++      scheduled : Unit <- UW.schedule_held(db,Tx.trim_nl(found),resets_at)
++      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
++      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
++    case other: wake_fenced_owed(db,session,cursor,launch,lock,gate)
++
++def wake_fenced_gated(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
++  do IO<Result<&1,&1,U32 & String,Unit>>:
++    +label : String <- Subs.profile_label_io(db,session)
++    gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
++    next : Result<&1,&1,U32 & String,Unit> <- wake_fenced_gate(db,session,cursor,launch,lock,gate)
++    IO.pure(Result<&1,&1,U32 & String,Unit>,next)
++
+ # The wake reads the claim and retained attempt under the session lock. A
+ # retained attempt with unknown native status keeps its claim for public receive
+ # adoption. Observed native death updates the execution and admits the message.
+@@ -297,14 +333,7 @@ def wake_fenced(+db: String, +session: String, +cursor: String, launch: String -
+     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+-    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+-      state : String <- Store.claim_state(db,session)
+-      dir : String <- IO.try(String,DB.Sql.query(db,attempt_dir_sql(session)))
+-      +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
+-      +dead : Bool <- custody_dead(db,trimmed,String.is_empty(trimmed))
+-      recovered : Unit <- recover_if_dead(db,session,dead)
+-      replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
+-      wake_admit(db,session,replay_cursor,launch,lock,state,dead)
++    case True{}: wake_fenced_gated(db,session,cursor,launch,lock)
+ 
+ def wake_owned(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
+   match lock:
+diff --git a/bend2/src/coordinator/subscription-fallback.bend b/bend2/src/coordinator/subscription-fallback.bend
+index 7765658e8..55b1d3af8 100644
+--- a/bend2/src/coordinator/subscription-fallback.bend
++++ b/bend2/src/coordinator/subscription-fallback.bend
+@@ -10,6 +10,7 @@ import ../host/sqlite.bend as DB
+ import ../host/text.bend as Text
+ import ../host/session-lock.bend as Lock
+ import ../host/control.bend as Host
++import ./usage-windows.bend as UW
+ import ../git/process.bend as Proc
+ import ../git/types.bend as T
+ 
+@@ -334,6 +335,16 @@ def profile_record_path(+db: String, session: String) -> IO(String):
+     saved : String <- IO.try(String,DB.Sql.query(db,profile_record_sql(db,session)))
+     IO.pure(String,Tx.trim_nl(saved))
+ 
++# The profile label in force for the session's own harness, read for callers
++# outside this module (the usage window binding and gate). An empty label
++# means the account-wide default store for that harness.
++def profile_label_io(+db: String, +session: String) -> IO(String):
++  do IO<String>:
++    +record_path : String <- profile_record_path(db,session)
++    +current : String <- file_text(record_path)
++    +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
++    IO.pure(String,record_current(Tx.trim_nl(harness),last_line(Tx.split_lines(current))))
++
+ # The named profile format comes from #703 candidate 25f29f0d. Task setup
+ # binds it before admitting new work. A failed append retains its IO cause.
+ def bind_profile_admitted(+db: String, +session: String, harness: String, label: String, store: String, present: Bool) -> IO(Unit):
+@@ -545,9 +556,11 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
+ # same actor; false when the list is exhausted, which terminates with the report. The
+ # caller passes the terminal event text: the Outcome shutter stays in the calling
+ # module, so this shared worker takes no provider-harness type.
+-def profile_handoff(+db: String, session: String, id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
++def profile_handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
+   do IO<Bool>:
+     +cause : String <- exhaustion_cause(db,event)
++    +label : String <- profile_label_io(db,session)
++    recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
+     advanced : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_profile(db,session,id,cause,native,cmd,cwd))
+     IO.pure(Bool,advanced)
+ 
+diff --git a/bend2/src/coordinator/usage-windows.bend b/bend2/src/coordinator/usage-windows.bend
+new file mode 100644
+index 000000000..fea083e62
+--- /dev/null
++++ b/bend2/src/coordinator/usage-windows.bend
+@@ -0,0 +1,636 @@
++# Usage windows record provider-reported subscription quota windows and the
++# reset times observed for them (#797). The Kimi Code 5-hour rolling window is
++# the named failure: the provider's 403 message names no reset timestamp, the
++# Kimi Console web UI shows one, and the client's usage report carries one when
++# a live credential can fetch it. Each observation binds to the session's
++# harness, the provider prefix of its recorded model, and the current
++# subscription profile label (an empty label means account-wide for that
++# harness and provider). A missing reset time stays a NULL resets_at: the
++# store never invents one. The wake gate refuses new turns for a held window
++# and admits them again after the recorded reset, so a reported reset both
++# skips doomed retries and restores eligible work on the next wake. These are
++# subscription windows; Claude monthly promotional API credits (#793) are a
++# separate funding source and are not tracked here.
++import Base
++import ../coordinator/commands.bend as C
++import ./usage.bend as Usage
++import ../json/canonical.bend as J
++import ../git/text.bend as Tx
++import ../host/sqlite.bend as DB
++import ../host/control.bend as Host
++import ../host/session-lock.bend as Lock
++import ./store.bend as Store
++
++type Gate is Data:
++  GateNone{}
++  GateUnknown{window: String, source: String, receipt: String}
++  GateHeld{window: String, resets_at: String, source: String, receipt: String}
++  GateElapsed{window: String, resets_at: String, source: String, receipt: String}
++
++# The provider qualifier of a recorded model: the text before the first '/'.
++# A model without a provider prefix has no provider-bound window identity.
++def provider_go(rest: String, +acc: String) -> String:
++  match rest:
++    case SNil{}: ""
++    case SCon{+head,tail}: Bool.pick(String,Char.is_eq(head,Char.from_u32(47)),acc,provider_go(tail,acc ++ SCon{head,SNil{}}))
++
++def provider_of(model: String) -> String:
++  provider_go(model,"")
++
++# --- window and reset extraction from provider text --------------------------
++#
++# The provider's own diagnostic text carries the window kind and sometimes the
++# reset time. Kimi's 403 names the 5-hour window with no timestamp; ZAI reports
++# "Usage limit reached for 5 hour" with a separate reset time; Claude names
++# weekly and monthly windows. Extraction is literal and case-insensitive; no
++# value is inferred beyond the text.
++
++def lower_char(+c: Char) -> Char:
++  Bool.pick(Char,Bool.and(U32.is_lt(Char.to_u32(Char.from_u32(64)),Char.to_u32(c)),U32.is_lt(Char.to_u32(c),Char.to_u32(Char.from_u32(91)))),Char.from_u32(U32.add(Char.to_u32(c),32)),c)
++
++def lower_go(rest: String, +acc: String) -> String:
++  match rest:
++    case SNil{}: acc
++    case SCon{+head,tail}: lower_go(tail,acc ++ SCon{lower_char(head),SNil{}})
++
++def lower_ascii(s: String) -> String:
++  lower_go(s,"")
++
++def has_sub_at(+needle: String, +rest: String) -> Bool:
++  match rest:
++    case SNil{}: False{}
++    case SCon{_,tail}: Bool.pick(Bool,Tx.starts_with(rest,needle),True{},has_sub_at(needle,tail))
++
++def has_sub(+needle: String, +hay: String) -> Bool:
++  has_sub_at(needle,hay)
++
++# The canonical window kinds, most specific first. Unrecognized wording keeps
++# an empty label; the receipt retains the provider's own text either way.
++def window_label_of(+text: String) -> String:
++  Bool.pick(String,Bool.or(has_sub("5-hour",text),has_sub("5 hour",text)),"5-hour",
++  Bool.pick(String,Bool.or(has_sub("7-day",text),Bool.or(has_sub("7 day",text),has_sub("weekly",text))),"7-day",
++  Bool.pick(String,Bool.or(has_sub("monthly",text),has_sub("billing cycle",text)),"monthly","")))
++
++def digit(+c: Char) -> Bool:
++  Bool.and(U32.is_lt(Char.to_u32(Char.from_u32(47)),Char.to_u32(c)),U32.is_lt(Char.to_u32(c),Char.to_u32(Char.from_u32(58))))
++
++def ts_sep(+c: Char) -> Bool:
++  Bool.or(digit(c),
++  Bool.or(Char.is_eq(c,Char.from_u32(45)),
++  Bool.or(Char.is_eq(c,Char.from_u32(58)),
++  Bool.or(Char.is_eq(c,Char.from_u32(84)),
++  Bool.or(Char.is_eq(c,Char.from_u32(32)),
++  Bool.or(Char.is_eq(c,Char.from_u32(90)),
++  Bool.or(Char.is_eq(c,Char.from_u32(122)),
++  Bool.or(Char.is_eq(c,Char.from_u32(43)),
++  Bool.or(Char.is_eq(c,Char.from_u32(46)),
++  Char.is_eq(c,Char.from_u32(47)))))))))))
++
++# A word-aligned ISO-8601 shape: the observed provider and Console wordings
++# always separate the timestamp from surrounding words by spaces, so the scan
++# checks each space-separated word rather than every character position.
++def take_ts(rest: String) -> String:
++  match rest:
++    case SNil{}: ""
++    case SCon{+head,tail}: Bool.pick(String,ts_sep(head),SCon{head,SNil{}} ++ take_ts(tail),"")
++
++# Date part: four digits, '-', two digits, '-', two digits. The time part is
++# optional; a date-only token is accepted and converts as UTC.
++def iso_offset(rest: String) -> Bool:
++  match rest:
++    case SCon{+h1,SCon{+h2,SNil{}}}: Bool.and(digit(h1),digit(h2))
++    case SCon{+h1,SCon{+h2,SCon{':',SCon{+m1,SCon{+m2,SNil{}}}}}}: Bool.and(digit(h1),Bool.and(digit(h2),Bool.and(digit(m1),digit(m2))))
++    case other: False{}
++
++def iso_digits_tail(rest: String) -> Bool:
++  match rest:
++    case SNil{}: True{}
++    case SCon{+z,SNil{}}: Bool.or(Char.is_eq(z,Char.from_u32(90)),Char.is_eq(z,Char.from_u32(122)))
++    case SCon{+s,+tail}: Bool.pick(Bool,Bool.or(Char.is_eq(s,Char.from_u32(43)),Char.is_eq(s,Char.from_u32(45))),iso_offset(tail),Bool.pick(Bool,digit(s),iso_digits_tail(tail),False{}))
++
++def iso_digits(rest: String) -> Bool:
++  match rest:
++    case SNil{}: False{}
++    case SCon{+head,tail}: Bool.pick(Bool,digit(head),iso_digits_tail(tail),False{})
++
++def iso_frac(rest: String) -> Bool:
++  match rest:
++    case SNil{}: True{}
++    case SCon{'.',tail}: iso_digits(tail)
++    case SCon{+z,SNil{}}: Bool.or(Char.is_eq(z,Char.from_u32(90)),Char.is_eq(z,Char.from_u32(122)))
++    case SCon{+s,tail}: Bool.pick(Bool,Bool.or(Char.is_eq(s,Char.from_u32(43)),Char.is_eq(s,Char.from_u32(45))),iso_offset(tail),False{})
++
++def iso_seconds(rest: String) -> Bool:
++  match rest:
++    case SCon{+s1,SCon{+s2,tail}}: Bool.and(digit(s1),Bool.and(digit(s2),iso_frac(tail)))
++    case other: False{}
++
++def iso_ss(rest: String) -> Bool:
++  match rest:
++    case SNil{}: True{}
++    case SCon{':',tail}: iso_seconds(tail)
++    case SCon{+z,SNil{}}: Bool.or(Char.is_eq(z,Char.from_u32(90)),Char.is_eq(z,Char.from_u32(122)))
++    case SCon{+s,tail}: Bool.pick(Bool,Bool.or(Char.is_eq(s,Char.from_u32(43)),Char.is_eq(s,Char.from_u32(45))),iso_offset(tail),False{})
++
++def iso_mm(rest: String) -> Bool:
++  match rest:
++    case SCon{+m1,SCon{+m2,tail}}: Bool.and(digit(m1),Bool.and(digit(m2),iso_ss(tail)))
++    case other: False{}
++
++def iso_hh(rest: String) -> Bool:
++  match rest:
++    case SCon{+h1,SCon{+h2,SCon{':',tail}}}: Bool.and(digit(h1),Bool.and(digit(h2),iso_mm(tail)))
++    case other: False{}
++
++def iso_time(rest: String) -> Bool:
++  match rest:
++    case SNil{}: True{}
++    case SCon{+sep,tail}: Bool.pick(Bool,Bool.or(Char.is_eq(sep,Char.from_u32(84)),Char.is_eq(sep,Char.from_u32(32))),iso_hh(tail),False{})
++
++def iso_token(tok: String) -> Bool:
++  match tok:
++    case SCon{+a,SCon{+b,SCon{+c,SCon{+d,SCon{'-',SCon{+m1,SCon{+m2,SCon{'-',SCon{+d1,SCon{+d2,rest}}}}}}}}}}:
++      Bool.and(digit(a),Bool.and(digit(b),Bool.and(digit(c),Bool.and(digit(d),Bool.and(digit(m1),Bool.and(digit(m2),Bool.and(digit(d1),Bool.and(digit(d2),iso_time(rest)))))))))
++    case other: False{}
++
++# Operator observations require a full date and clock with an explicit zone.
++# Provider-message extraction above intentionally keeps its broader token
++# rules so existing provider wording continues to be interpreted unchanged.
++def explicit_zone(rest: String) -> Bool:
++  match rest:
++    case SCon{'Z',SNil{}}: True{}
++    case SCon{'z',SNil{}}: True{}
++    case SCon{'+',SCon{+h1,SCon{+h2,SCon{':',SCon{+m1,SCon{+m2,SNil{}}}}}}}:
++      Bool.and(digit(h1),Bool.and(digit(h2),Bool.and(digit(m1),digit(m2))))
++    case SCon{'-',SCon{+h1,SCon{+h2,SCon{':',SCon{+m1,SCon{+m2,SNil{}}}}}}}:
++      Bool.and(digit(h1),Bool.and(digit(h2),Bool.and(digit(m1),digit(m2))))
++    case other: False{}
++
++def fractional_digits_zone(rest: String) -> Bool:
++  match rest:
++    case SCon{+head,+tail}:
++      Bool.pick(Bool,digit(head),Bool.pick(Bool,String.is_empty(tail),False{},fractional_digits_zone(tail)),explicit_zone(rest))
++    case other: False{}
++
++def fractional_zone(rest: String) -> Bool:
++  match rest:
++    case SCon{'.',SCon{+head,tail}}: Bool.and(digit(head),fractional_digits_zone(tail))
++    case other: explicit_zone(rest)
++
++def seconds_zone(rest: String) -> Bool:
++  match rest:
++    case SCon{':',SCon{+s1,SCon{+s2,tail}}}:
++      Bool.and(digit(s1),Bool.and(digit(s2),fractional_zone(tail)))
++    case other: fractional_zone(rest)
++
++def operator_time_zone(rest: String) -> Bool:
++  match rest:
++    case SCon{+h1,SCon{+h2,SCon{':',SCon{+m1,SCon{+m2,tail}}}}}:
++      Bool.and(digit(h1),Bool.and(digit(h2),Bool.and(digit(m1),Bool.and(digit(m2),seconds_zone(tail)))))
++    case other: False{}
++
++def operator_reset_token(tok: String) -> Bool:
++  match tok:
++    case SCon{+y1,SCon{+y2,SCon{+y3,SCon{+y4,SCon{'-',SCon{+m1,SCon{+m2,SCon{'-',SCon{+d1,SCon{+d2,SCon{'T',tail}}}}}}}}}}}:
++      Bool.and(digit(y1),Bool.and(digit(y2),Bool.and(digit(y3),Bool.and(digit(y4),Bool.and(digit(m1),Bool.and(digit(m2),Bool.and(digit(d1),Bool.and(digit(d2),operator_time_zone(tail)))))))))
++    case other: False{}
++
++# The first word whose timestamp-character run validates as an ISO-8601
++# date-time, verbatim, or "" when the text names none. Providers separate the
++# date and clock by a space ("reset at 2026-10-06 07:12:52"), so a date-only
++# word followed by a clock-only word reads as one observation; the date alone
++# is never used when a clock word stands beside it.
++def word_reset(+word: String) -> String:
++  Bool.pick(String,iso_token(take_ts(word)),take_ts(word),"")
++
++def iso_date_only(tok: String) -> Bool:
++  match tok:
++    case SCon{+a,SCon{+b,SCon{+c,SCon{+d,SCon{'-',SCon{+m1,SCon{+m2,SCon{'-',SCon{+d1,SCon{+d2,SNil{}}}}}}}}}}}:
++      Bool.and(digit(a),Bool.and(digit(b),Bool.and(digit(c),Bool.and(digit(d),Bool.and(digit(m1),Bool.and(digit(m2),Bool.and(digit(d1),digit(d2))))))))
++    case other: False{}
++
++def joined_reset(word: String, +joined: String) -> String:
++  Bool.pick(String,iso_token(joined),joined,word_reset(word))
++
++# The scan carries a pending date-only word: when the next word is a clock,
++# the two read as one observation ("reset at 2026-10-06 07:12:52"); a pending
++# date with no clock beside it stands alone. Self-recursion only.
++def date_only_of(+word: String) -> Bool:
++  iso_date_only(take_ts(word))
++
++def clock_of(+word: String) -> Bool:
++  iso_hh(take_ts(word))
++
++# A reset named by this word under the carried pending date, or "" to keep
++# scanning. A date-only word with no clock beside it stands alone.
++def direct_reset(+pending: String, +word: String) -> String:
++  Bool.pick(String,String.is_empty(pending),
++    Bool.pick(String,date_only_of(word),"",word_reset(word)),
++    Bool.pick(String,clock_of(word),joined_reset(pending,take_ts(pending) ++ " " ++ take_ts(word)),word_reset(pending)))
++
++def next_pending(+pending: String, +word: String) -> String:
++  Bool.pick(String,date_only_of(word),take_ts(word),"")
++
++# The scan carries a pending date-only word. A found reset ends the scan; the
++# continuation makes one recursive call, so the work is linear in the words.
++# The earlier nested pick evaluated two recursions per word and grew
++# exponentially on long provider text.
++def reset_scan(words: List<&2,String>, +pending: String) -> String:
++  match words:
++    case Nil{}: word_reset(pending)
++    case +word <> +rest:
++      +direct = direct_reset(pending,word)
++      Bool.pick(String,String.is_empty(direct),reset_scan(rest,next_pending(pending,word)),direct)
++
++def reset_of_words(words: List<&2,String>) -> String:
++  reset_scan(words,"")
++
++def reset_text_of(+text: String) -> String:
++  reset_of_words(String.split(text,Char.from_u32(32)))
++
++# --- the observation store ---------------------------------------------------
++#
++# The coordination database owns the observations; there is no sidecar file.
++# resets_at NULL is the explicit unknown. recorded_at is the observation time
++# and the receipt names what was observed and where it came from.
++
++def now_ms() -> String:
++  "CAST(strftime('%s','now') AS INTEGER)*1000"
++
++# The match binding for gate and query: same harness, same provider prefix,
++# and either this account label or the account-wide (empty label) row.
++def window_match_sql(+harness: String, +provider: String, +account: String) -> String:
++  "harness=" ++ C.q(harness) ++ " AND provider=" ++ C.q(provider) ++ " AND (account=" ++ C.q(account) ++ " OR account='')"
++
++def parsed_reset_sql(+reset_text: String) -> String:
++  Bool.pick(String,String.is_empty(reset_text),"NULL","(SELECT CAST(strftime('%s'," ++ C.q(reset_text) ++ ") AS INTEGER)*1000)")
++
++# The provider prefix computed in SQL from the recorded model: the text before
++# the first '/', or empty when the model is not provider-qualified.
++def model_provider_sql(+model: String) -> String:
++  "CASE WHEN instr(" ++ model ++ ",'/')>0 THEN substr(" ++ model ++ ",1,instr(" ++ model ++ ",'/')-1) ELSE '' END"
++
++# One observation from a provider exhaustion cause, recorded before any account
++# advance so the refusal fact survives even when the advance itself fails. The
++# window kind is extracted from the cause; an embedded ISO reset time is
++# converted to milliseconds and a missing one stays NULL.
++def record_cause_sql(+session: String, +account: String, +window: String, +reset_text: String, +cause: String, +message: String) -> String:
++  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model," ++ model_provider_sql("model") ++ "," ++ C.q(account) ++ "," ++ C.q(window) ++ "," ++ parsed_reset_sql(reset_text) ++ ",'provider-message',NULL," ++ C.q(cause) ++ "," ++ C.q(message) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ ";"
++
++# The provider cause names the window for every exhaustion terminal this tree
++# classifies (subscription-fallback's wording matcher). A failed observation
++# insert reports its own cause and never blocks the account advance: the
++# refusal fact is desirable evidence, not a gate on the handoff.
++def window_report(db: String, session: String, id: String, kind: String, body: String) -> IO(Unit):
++  do IO<Unit>:
++    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":" ++ kind) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
++    IO.pure(Unit,Unit{})
++
++def record_cause_result(+db: String, +session: String, +id: String, +cause: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Unit):
++  match saved:
++    case Done{unit}: IO.pure(Unit,Unit{})
++    case Fail{(code,detail)}: window_report(db,session,id,"usage-window-record-failed","usage window observation insert failed: " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and the account advance proceeds.")
++
++def record_cause(+db: String, +session: String, +id: String, account: String, +cause: String) -> IO(Unit):
++  do IO<Unit>:
++    saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,record_cause_sql(session,Tx.trim_nl(account),window_label_of(lower_ascii(cause)),reset_text_of(cause),Tx.trim_nl(cause),id))
++    record_cause_result(db,session,id,cause,saved)
++
++# --- the operator observation command ----------------------------------------
++#
++# The operator reads a reset time from the provider's own console (for Kimi
++# Code, the Console web UI) and records it against the session's account. The
++# reset argument is ISO 8601 with an explicit offset or 'unknown'; anything
++# unparseable refuses the command rather than recording a guess.
++def observe_registered(saved: String) -> IO(Unit):
++  match saved:
++    case SNil{}: IO.die(Unit,2,"Session is not registered; inspect status and the requested ID.")
++    case other: IO.pure(Unit,Unit{})
++
++def observe_reset_unknown(+resets: String) -> Bool:
++  String.eq(resets,"unknown")
++
++def observe_reset_sql(+resets: String) -> String:
++  "SELECT CAST(strftime('%s'," ++ C.q(resets) ++ ") AS INTEGER)*1000;"
++
++def observe_reset_refused() -> IO(String):
++  IO.die(String,22,"The reset time did not parse; give ISO 8601 with an explicit offset (for example 2026-10-17T03:41:00Z) or 'unknown'.")
++
++def observe_reset_parsed(+resets: String, +parsed: String) -> IO(String):
++  match parsed:
++    case SNil{}: IO.die(String,22,"The reset time did not parse; give ISO 8601 with an explicit offset (for example 2026-10-17T03:41:00Z) or 'unknown'.")
++    case other: Bool.pick(IO(String),String.eq(Tx.trim_nl(parsed),"null"),IO.die(String,22,"The reset time did not parse; give ISO 8601 with an explicit offset (for example 2026-10-17T03:41:00Z) or 'unknown'."),IO.pure(String,Tx.trim_nl(parsed)))
++
++def observe_reset_value_known(+db: String, +resets: String, unknown: Bool) -> IO(String):
++  match unknown:
++    case True{}: IO.pure(String,"NULL")
++    case False{}:
++      Bool.pick(IO(String),operator_reset_token(resets),do IO<String>:
++        parsed : String <- IO.try(String,DB.Sql.read(db,observe_reset_sql(resets)))
++        value : String <- observe_reset_parsed(resets,parsed)
++        IO.pure(String,value),observe_reset_refused())
++
++def observe_reset_value(+db: String, +resets: String) -> IO(String):
++  observe_reset_value_known(db,resets,observe_reset_unknown(resets))
++
++def observe_print(+session: String, +window: String, +resets: String) -> IO(Unit):
++  IO.print("{\"schema\":\"baton2-usage-window-observation-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"window\":" ++ J.string_literal(window) ++ ",\"resetsAt\":" ++ resets ++ "}")
++
++def observe(+db: String, +session: String, +window: String, +resets: String, +source: String, +account: String) -> IO(Unit):
++  do IO<Unit>:
++    found : String <- IO.try(String,Store.read(db,C.Session{session}))
++    present : Unit <- observe_registered(found)
++    valid : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(window) ++ "<>'' AND instr(" ++ C.q(window) ++ ",char(10))=0 AND instr(" ++ C.q(window) ++ ",char(13))=0 AND length(" ++ C.q(source) ++ ")>0 AND instr(" ++ C.q(source) ++ ",char(10))=0 AND instr(" ++ C.q(source) ++ ",char(13))=0;"))
++    admitted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(valid),"1"),IO.pure(Unit,Unit{}),IO.die(Unit,2,"A usage window observation requires a nonempty window label and source text without newlines."))
++    +value : String <- observe_reset_value(db,resets)
++    saved : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model," ++ model_provider_sql("model") ++ "," ++ C.q(Tx.trim_nl(account)) ++ "," ++ C.q(window) ++ "," ++ value ++ ",'operator-observation',NULL," ++ C.q("operator-observation: " ++ source) ++ ",'' FROM sessions WHERE id=" ++ C.q(session) ++ ";" ++ "SELECT changes();"))
++    done : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(saved),"0"),IO.die(Unit,2,"The session has no recorded route; recruit or configure it before observing usage windows."),IO.pure(Unit,Unit{}))
++    observed : Unit <- observe_print(session,window,value)
++    IO.pure(Unit,Unit{})
++
++
++
++# --- the provider report refresh ---------------------------------------------
++#
++# The session's recorded harness command answers 'usage --json'; for OMP the
++# report lists per-provider limits with normalized windows (id '5h' or '7d'
++# and an absolute resetsAt when the provider reports one). Each reported limit
++# becomes one observation; a limit without resetsAt keeps the NULL unknown.
++# A report the harness cannot produce stays an explicit unknown answer and
++# records nothing.
++
++def refresh_unsupported(+session: String, +harness: String) -> IO(Unit):
++  IO.print("{\"schema\":\"baton2-usage-window-refresh-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"state\":\"unknown\",\"condition\":\"unsupportedHarness\"}")
++
++def refresh_absent(+session: String, +harness: String) -> IO(Unit):
++  IO.print("{\"schema\":\"baton2-usage-window-refresh-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"state\":\"unknown\",\"condition\":\"noRecordedHarnessCommand\"}")
++
++def refresh_reported_sql(+session: String, +answer: String, +account: String, +receipt: String) -> String:
++  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model,json_extract(report.value,'$.provider')," ++ C.q(account) ++ ",CASE WHEN json_extract(lim.value,'$.window.id')='5h' THEN '5-hour' WHEN json_extract(lim.value,'$.window.id')='7d' THEN '7-day' WHEN json_extract(lim.value,'$.window.id')='1w' THEN '7-day' WHEN json_extract(lim.value,'$.window.id')='1mo' THEN 'monthly' ELSE coalesce(json_extract(lim.value,'$.window.id'),'') END,json_extract(lim.value,'$.window.resetsAt'),'provider-report',json_extract(lim.value,'$.amount.usedFraction')," ++ C.q(receipt) ++ ",'' FROM sessions, json_each(json_extract(" ++ C.q(answer) ++ ",'$.answer.reports')) AS report, json_each(json_extract(report.value,'$.limits')) AS lim WHERE sessions.id=" ++ C.q(session) ++ ";"
++
++def refresh_answer_sql(+session: String, +receipt: String) -> String:
++  "SELECT json_object('schema','baton2-usage-window-refresh-v1','session'," ++ C.q(session) ++ ",'state','recorded','windows',(SELECT count(*) FROM usage_windows WHERE receipt=" ++ C.q(receipt) ++ "));"
++
++# A failed report insert names its own cause; a successful insert answers the
++# exact row count that the query reads back.
++def refresh_counted(+db: String, +session: String, +receipt: String, saved: Result<&1,&1,U32 & String,String>) -> IO(String):
++  match saved:
++    case Fail{(code,detail)}: IO.die(String,2,"The usage window report insert failed: " ++ U32.show(code) ++ ": " ++ detail)
++    case Done{ignored}: IO.try(String,DB.Sql.read(db,refresh_answer_sql(session,receipt)))
++
++def refresh_reported(+db: String, +session: String, +account: String, +answer: String) -> IO(Unit):
++  do IO<Unit>:
++    observed : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
++    +receipt : String <- IO.pure(String,"provider-report: usage --json @" ++ Tx.trim_nl(observed))
++    saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,refresh_reported_sql(session,answer,Tx.trim_nl(account),receipt))
++    counted : String <- refresh_counted(db,session,receipt,saved)
++    printed : Unit <- IO.print(Tx.trim_nl(counted))
++    IO.pure(Unit,Unit{})
++
++def refresh_decoded(+db: String, +session: String, +account: String, +answer: String) -> IO(Unit):
++  Bool.pick(IO(Unit),Tx.starts_with(answer,"{\"state\":\"reported\""),refresh_reported(db,session,account,answer),IO.print(answer))
++
++def refresh_result(+db: String, +session: String, +account: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
++  match result:
++    case Fail{(code,detail)}: IO.die(Unit,2,"The provider usage query failed: " ++ U32.show(code) ++ ": " ++ detail)
++    case Done{+answer}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(answer)),IO.die(Unit,2,"The provider usage query answered nothing."),refresh_decoded(db,session,account,Tx.trim_nl(answer)))
++
++def refresh_query(+db: String, +session: String, +account: String) -> IO(Unit):
++  do IO<Unit>:
++    result : Result<&1,&1,U32 & String,String> <- Usage.provider_usage_for_session(db,session,"omp")
++    refreshed : Unit <- refresh_result(db,session,account,result)
++    IO.pure(Unit,Unit{})
++
++def refresh_omp(+db: String, +session: String, +account: String) -> IO(Unit):
++  do IO<Unit>:
++    +command : String <- IO.try(String,DB.Sql.read(db,Usage.harness_command_sql(session)))
++    queried : Unit <- Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(command)),refresh_absent(session,"omp"),refresh_query(db,session,account))
++    IO.pure(Unit,Unit{})
++
++def refresh(+db: String, +session: String, +account: String) -> IO(Unit):
++  do IO<Unit>:
++    found : String <- IO.try(String,Store.read(db,C.Session{session}))
++    present : Unit <- observe_registered(found)
++    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
++    ran : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(harness),"omp"),refresh_omp(db,session,account),refresh_unsupported(session,Tx.trim_nl(harness)))
++    IO.pure(Unit,Unit{})
++
++def exhausted_sql(+alias: String) -> String:
++  "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
++
++def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1)"
++
++def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
++
++def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
++  "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
++
++# --- the query ---------------------------------------------------------------
++
++# The latest observation per window for the session's binding, each with its
++# current state. No matching row reads back 'none recorded', never an empty
++# claim, and a model without a provider prefix reports that condition.
++def query_none(+session: String, +account: String) -> String:
++  "{\"schema\":\"baton2-usage-windows-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"account\":" ++ J.string_literal(account) ++ ",\"windows\":\"none recorded\",\"condition\":\"noProviderQualifiedModel\"}"
++
++def query_answer_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
++  +exhausted = exhausted_windows_sql(harness,provider,account)
++  +providers = latest_provider_rows_sql(harness,provider,account)
++  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN w.window NOT IN (" ++ exhausted ++ ") THEN 'open' WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'exhausted',json(CASE WHEN w.window IN (" ++ exhausted ++ ") THEN 'true' ELSE 'false' END),'exhaustionSource',(SELECT p.reset_source FROM (" ++ providers ++ ") p WHERE p.window=w.window),'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
++
++def query_bound(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Unit):
++  do IO<Unit>:
++    answer : String <- IO.try(String,DB.Sql.read(db,query_answer_sql(session,harness,provider,account)))
++    printed : Unit <- IO.print(Tx.trim_nl(answer))
++    IO.pure(Unit,Unit{})
++
++def query(+db: String, +session: String, +account: String) -> IO(Unit):
++  do IO<Unit>:
++    found : String <- IO.try(String,Store.read(db,C.Session{session}))
++    present : Unit <- observe_registered(found)
++    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
++    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
++    printed : Unit <- Bool.pick(IO(Unit),String.is_empty(provider_of(Tx.trim_nl(model))),IO.print(query_none(session,Tx.trim_nl(account))),query_bound(db,session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),Tx.trim_nl(account)))
++    IO.pure(Unit,Unit{})
++
++# --- the wake gate -----------------------------------------------------------
++#
++# Each window is represented by its latest row for state and reset, and by its
++# latest provider row for exhaustion evidence. A window is exhausted when the
++# provider said so: the latest provider row is a limit message or reports a used
++# fraction at or above 1. A partial provider report with a future reset is not
++# exhaustion and does not hold. An operator-observed reset keeps the window's
++# provider exhaustion and supplies the reset time. The gate holds when any
++# exhausted window's reset is still in the future, is elapsed when one has
++# passed, is unknown when the only exhausted evidence carries no reset, and is
++# none otherwise.
++
++def window_state_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  latest_rows_sql(harness,provider,account) ++ " AND w.window IN (" ++ exhausted_windows_sql(harness,provider,account) ++ ")"
++
++def held_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NOT NULL AND w.resets_at > " ++ now_ms()
++
++def elapsed_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NOT NULL AND w.resets_at <= " ++ now_ms()
++
++def unknown_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NULL"
++
++def gate_verdict_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
++  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM (" ++ exhausted_windows_sql(harness,provider,account) ++ ")) THEN 'none' WHEN EXISTS(SELECT 1 FROM (" ++ held_rows_sql(harness,provider,account) ++ ")) THEN 'held' WHEN EXISTS(SELECT 1 FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ")) THEN 'elapsed' WHEN EXISTS(SELECT 1 FROM (" ++ unknown_rows_sql(harness,provider,account) ++ ")) THEN 'unknown' ELSE 'none' END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
++
++def gate_detail_rows_sql(+harness: String, +provider: String, +account: String, +verdict: String) -> String:
++  match verdict:
++    case "held": "SELECT * FROM (" ++ held_rows_sql(harness,provider,account) ++ ") ORDER BY resets_at ASC, recorded_at DESC, id DESC LIMIT 1"
++    case "elapsed": "SELECT * FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ") ORDER BY recorded_at DESC, id DESC LIMIT 1"
++    case _: "SELECT * FROM (" ++ unknown_rows_sql(harness,provider,account) ++ ") ORDER BY recorded_at DESC, id DESC LIMIT 1"
++
++def gate_detail_sql(+harness: String, +provider: String, +account: String, +verdict: String, +field: String) -> String:
++  "SELECT " ++ field ++ " FROM (" ++ gate_detail_rows_sql(harness,provider,account,verdict) ++ ");"
++
++def gate_details(+db: String, +harness: String, +provider: String, +account: String, +verdict: String) -> IO(Gate):
++  do IO<Gate>:
++    +window : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"window")))
++    +source : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"reset_source")))
++    +receipt : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"receipt")))
++    +resets : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"coalesce(CAST(resets_at AS TEXT),'-')")))
++    IO.pure(Gate,Bool.pick(Gate,String.eq(verdict,"unknown"),GateUnknown{Tx.trim_nl(window),Tx.trim_nl(source),Tx.trim_nl(receipt)},Bool.pick(Gate,String.eq(verdict,"held"),GateHeld{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)},GateElapsed{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)})))
++
++def gate_verdicted(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Gate):
++  do IO<Gate>:
++    +verdict : String <- IO.try(String,DB.Sql.read(db,gate_verdict_sql(session,harness,provider,account)))
++    gate : Gate <- Bool.pick(IO(Gate),Bool.or(String.eq(Tx.trim_nl(verdict),"none"),String.is_empty(Tx.trim_nl(verdict))),IO.pure(Gate,GateNone{}),gate_details(db,harness,provider,account,Tx.trim_nl(verdict)))
++    IO.pure(Gate,gate)
++
++def window_gate_model(+db: String, +session: String, harness: String, +model: String, +account: String) -> IO(Gate):
++  Bool.pick(IO(Gate),String.is_empty(provider_of(model)),IO.pure(Gate,GateNone{}),gate_verdicted(db,session,harness,provider_of(model),account))
++
++def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
++  do IO<Gate>:
++    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
++    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
++    gate : Gate <- window_gate_model(db,session,Tx.trim_nl(harness),Tx.trim_nl(model),Tx.trim_nl(account))
++    IO.pure(Gate,gate)
++
++# --- the post-reset continuation ---------------------------------------------
++#
++# A held wake leaves the input owed and launches one detached single-shot
++# continuation. It sleeps until the earliest held reset and re-runs the wake
++# through the existing dispatch entry, which drives the retained input with no
++# new message. The delay is capped at one day, so a far reset re-checks in
++# bounded segments and the still-held gate schedules the next segment. The
++# continuation is not a daemon and does not poll.
++
++def schedule_argv(+self: String, +db: String, +message: String, +delay_s: String) -> List<String>:
++  ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--wake-message",db,message]
++
++def schedule_delay_sql(+resets_at: String) -> String:
++  "SELECT CAST(max(1,min(86400,(" ++ resets_at ++ "-" ++ now_ms() ++ "+999)/1000)) AS TEXT);"
++
++def schedule_launch(+db: String, +message: String, +delay_s: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    launched : String <- IO.try(String,Host.Control.launch(Tx.enc_argv(schedule_argv(self,db,message,delay_s)),db,message ++ ":usage-window-wake"))
++    IO.pure(Unit,Unit{})
++
++def schedule_wake(+db: String, +message: String, +resets_at: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    delay : String <- IO.try(String,DB.Sql.read(db,schedule_delay_sql(resets_at)))
++    launch : Unit <- schedule_launch(db,message,Tx.trim_nl(delay),self)
++    IO.pure(Unit,Unit{})
++
++def schedule_held(+db: String, +message: String, +resets_at: String) -> IO(Unit):
++  do IO<Unit>:
++    +self : String <- IO.try(String,Lock.SessionLock.executable())
++    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
++    scheduled : Unit <- schedule_wake(canonical,message,resets_at,self)
++    IO.pure(Unit,Unit{})
++
++# --- held and restored reports ------------------------------------------------
++#
++# A held wake reports to the session and its conductor with one deterministic
++# id per message, so a retried wake neither duplicates the report nor loses
++# it. A restored wake reports only when a held report for the same message is
++# on record: the reset elapsed and the owed input runs on its retained
++# assignment and account.
++
++def gate_reset_text(+resets_at: String) -> String:
++  Bool.pick(String,String.eq(resets_at,"-"),"unknown (reset time not observed)",resets_at ++ " ms epoch")
++
++def held_guidance(window: String, resets_at: String, source: String) -> String:
++  "The provider usage window " ++ window ++ " is held until " ++ gate_reset_text(resets_at) ++ " (source: " ++ source ++ "). This input stays owed and is admitted after the recorded reset; eligible work routes to an available configured account or model in the meantime."
++
++def held_report(window: String, resets_at: String, source: String, receipt: String) -> String:
++  "usage window held: window=" ++ window ++ "; resetsAt=" ++ gate_reset_text(resets_at) ++ "; source=" ++ source ++ "; receipt: " ++ receipt
++
++def report_held(+db: String, +session: String, +message: String, gate: Gate) -> IO(Unit):
++  match gate:
++    case GateHeld{+window,+resets_at,+source,+receipt}: do IO<Unit>:
++      noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(message ++ ":usage-window-held") ++ ",id,id,'guidance'," ++ C.q(held_guidance(window,resets_at,source)) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ ";" ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(message ++ ":usage-window-held-report") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(held_report(window,resets_at,source,receipt)) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
++      IO.pure(Unit,Unit{})
++    case other: IO.pure(Unit,Unit{})
++
++def restored_guidance(window: String, resets_at: String, source: String) -> String:
++  "The provider usage window " ++ window ++ " reset at " ++ gate_reset_text(resets_at) ++ " (source: " ++ source ++ "); this owed input is admitted now on the retained assignment and account."
++
++def restored_report(window: String, resets_at: String, source: String, receipt: String) -> String:
++  "usage window restored: window=" ++ window ++ "; resetsAt=" ++ gate_reset_text(resets_at) ++ "; source=" ++ source ++ "; receipt: " ++ receipt
++
++def report_restored_rows(+db: String, +session: String, +message: String, +window: String, +resets_at: String, +source: String, +receipt: String) -> IO(Unit):
++  do IO<Unit>:
++    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(message ++ ":usage-window-restored") ++ ",id,id,'guidance'," ++ C.q(restored_guidance(window,resets_at,source)) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ ";" ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(message ++ ":usage-window-restored-report") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(restored_report(window,resets_at,source,receipt)) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
++    IO.pure(Unit,Unit{})
++
++def report_restored(+db: String, +session: String, +message: String, gate: Gate) -> IO(Unit):
++  match gate:
++    case GateElapsed{+window,+resets_at,+source,+receipt}: do IO<Unit>:
++      held : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(message ++ ":usage-window-held") ++ ");"))
++      noted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(held),"1"),report_restored_rows(db,session,message,window,resets_at,source,receipt),IO.pure(Unit,Unit{}))
++      IO.pure(Unit,Unit{})
++    case other: IO.pure(Unit,Unit{})
++
++
++# --- laws ---------------------------------------------------------------------
++#
++# The extraction literals the store depends on, as operative laws over the
++# real functions: the observed provider wordings keep their window kinds, a
++# reset time appears exactly where a provider states one, the Kimi 403 keeps
++# its reset unknown, and an empty extraction never fabricates a reset value.
++
++law kimi_message_names_the_5_hour_window:
++  {window_label_of(lower_ascii("You've reached your 5-hour usage limit.")) == "5-hour" : String}
++
++def kimi_message_names_the_5_hour_window():
++  {==}
++
++law kimi_message_carries_no_reset_time:
++  {reset_text_of("You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends.") == "" : String}
++
++def kimi_message_carries_no_reset_time():
++  {==}
++
++law zai_reset_time_is_extracted_verbatim:
++  {reset_text_of("Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52") == "2026-10-06 07:12:52" : String}
++
++def zai_reset_time_is_extracted_verbatim():
++  {==}
++
++law provider_prefix_binds_provider_models:
++  {provider_of("kimi-code/kimi-for-coding") == "kimi-code" : String}
++
++def provider_prefix_binds_provider_models():
++  {==}
++
++law bare_model_carries_no_provider:
++  {provider_of("gpt-6-astra") == "" : String}
++
++def bare_model_carries_no_provider():
++  {==}
++
++law empty_reset_extraction_stays_unknown:
++  {parsed_reset_sql("") == "NULL" : String}
++
++def empty_reset_extraction_stays_unknown():
++  {==}
+diff --git a/bend2/src/coordinator/wake.bend b/bend2/src/coordinator/wake.bend
+index 9437f18cc..837634eba 100644
+--- a/bend2/src/coordinator/wake.bend
++++ b/bend2/src/coordinator/wake.bend
+@@ -71,6 +71,12 @@ def drive_id_found(+db: String, +id: String, empty: Bool) -> IO(Result<&1,&1,U32
+ def drive_id(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+   drive_id_found(db,id,String.is_empty(id))
+ 
++# A post-reset continuation re-enters this wake driver, so the usage gate is
++# evaluated again when it fires: a still-held window reports and reschedules,
++# an elapsed one admits the owed input, and a handled message is a no-op.
++def message_cli(+db: String, +id: String) -> IO(Unit):
++  IO.try(Unit,drive_id(db,id))
++
+ # A committed answer with a message identity reaches the session driver.
+ def drive_command(db: String, command: C.Command, answer: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+   match answer:
+diff --git a/bend2/test/fake-omp-usage b/bend2/test/fake-omp-usage
+new file mode 100755
+index 000000000..77706e07a
+--- /dev/null
++++ b/bend2/test/fake-omp-usage
+@@ -0,0 +1,5 @@
++#!/bin/sh
++# Recorded OMP usage report consumed by bend2/test/usage-windows-store.bend.
++# The fixture runs its recorded harness command as `<command> usage --json`;
++# this script ignores the arguments and prints the report the fixture asserts.
++printf '%s\n' '{"reports":[{"provider":"kimi-code","limits":[{"window":{"id":"5h","resetsAt":1893456000000},"amount":{"usedFraction":0.42}}]}]}'
+diff --git a/bend2/test/fake-wake-marker b/bend2/test/fake-wake-marker
+new file mode 100755
+index 000000000..b2460eb6b
+--- /dev/null
++++ b/bend2/test/fake-wake-marker
+@@ -0,0 +1,20 @@
++#!/bin/sh
++# Test self for the usage-window post-reset continuation. The scheduler runs
++# the self as: SELF --wake-message DB MESSAGE. This stands in for the
++# coordinator wake driver: it re-checks the message and the gate when it fires.
++# A message with a receipt is a no-op; a still-held window records a check and
++# delivers nothing; an admitted window records one delivery and one report and
++# sets the message receipt, so a repeated continuation changes nothing.
++db=$2
++msg=$3
++recipient=$(sqlite3 "$db" "SELECT coalesce((SELECT recipient FROM messages WHERE id='$msg'),'');")
++pending=$(sqlite3 "$db" "SELECT count(*) FROM messages WHERE id='$msg' AND receipt IS NULL;")
++[ "$pending" = "1" ] || exit 0
++held=$(sqlite3 "$db" "SELECT CASE WHEN EXISTS(SELECT 1 FROM usage_windows l WHERE l.account='$recipient' AND l.id=(SELECT l2.id FROM usage_windows l2 WHERE l2.account='$recipient' AND l2.window=l.window ORDER BY l2.recorded_at DESC,l2.id DESC LIMIT 1) AND l.window IN (SELECT p.window FROM usage_windows p WHERE p.account='$recipient' AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE p2.account='$recipient' AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC,p2.id DESC LIMIT 1) AND ((p.used_fraction IS NOT NULL AND p.used_fraction >= 1) OR p.reset_source='provider-message')) AND l.resets_at IS NOT NULL AND l.resets_at > CAST(strftime('%s','now') AS INTEGER)*1000) THEN 1 ELSE 0 END;")
++if [ "$held" = "1" ]; then
++  sqlite3 "$db" "INSERT OR IGNORE INTO wake_held_checks(id) VALUES('$msg');"
++  exit 0
++fi
++sqlite3 "$db" "INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES('$msg','delivered');"
++sqlite3 "$db" "INSERT OR IGNORE INTO wake_reports(id) VALUES('$msg:usage-window-held-report');"
++sqlite3 "$db" "UPDATE messages SET receipt='delivered' WHERE id='$msg' AND receipt IS NULL;"
+diff --git a/bend2/test/usage-windows-long.bend b/bend2/test/usage-windows-long.bend
+new file mode 100644
+index 000000000..af48d8d36
+--- /dev/null
++++ b/bend2/test/usage-windows-long.bend
+@@ -0,0 +1,24 @@
++# Long-text scan fixture: a provider message with hundreds of words and one
++# date-time pair must return the same reset as the short form, and a long
++# message with no reset must return none. The earlier scan recursed in both
++# branches of a strict pick and did not return on text this long.
++#
++# usage: usage-windows-long
++import Base
++import ../src/coordinator/usage-windows.bend as UW
++
++def long_words() -> String:
++  "quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text quota text"
++
++def long_reset() -> String:
++  long_words() ++ " reset at 2026-10-06 07:12:52"
++
++def expect(+label: String, is_ok: Bool) -> IO(Unit):
++  Bool.pick(IO(Unit),is_ok,IO.print("fixture-window-long " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window-long " ++ label ++ ": refused"))
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    expect("long-reset-matches-short",String.eq(UW.reset_text_of(long_reset()),UW.reset_text_of("reset at 2026-10-06 07:12:52")))
++    expect("long-reset-value",String.eq(UW.reset_text_of(long_reset()),"2026-10-06 07:12:52"))
++    expect("long-words-no-reset",String.eq(UW.reset_text_of(long_words()),""))
++    IO.print("fixture-windows-long-ok")
+diff --git a/bend2/test/usage-windows-store.bend b/bend2/test/usage-windows-store.bend
+new file mode 100644
+index 000000000..2722b631e
+--- /dev/null
++++ b/bend2/test/usage-windows-store.bend
+@@ -0,0 +1,184 @@
++# Store and gate fixture for the #797 usage-window module. It drives the real
++# record_cause, observe, refresh, query and gate functions over a temporary
++# coordination database. The gate holds only exhausted windows: a partial
++# provider report with a future reset is admitted and visible; exhaustion is a
++# provider limit message or a used fraction at or above 1; multiple windows are
++# evaluated per window; a limit message without a reset stays unknown and does
++# not hold.
++#
++# usage: usage-windows-store DB HARNESS_SCRIPT
++# HARNESS_SCRIPT is an executable that prints the OMP usage report JSON and
++# ignores its arguments.
++import Base
++import ../src/coordinator/commands.bend as C
++import ../src/coordinator/usage-windows.bend as UW
++import ../src/json/canonical.bend as J
++import ../src/host/sqlite.bend as DB
++import ../src/git/text.bend as Tx
++
++def expect(+label: String, is_ok: Bool) -> IO(Unit):
++  Bool.pick(IO(Unit),is_ok,IO.print("fixture-window-store " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window-store " ++ label ++ ": refused"))
++
++def query(+db: String, +text: String) -> IO(Unit):
++  do IO<Unit>:
++    ignore : String <- IO.try(String,DB.Sql.query(db,text))
++    IO.pure(Unit,Unit{})
++
++def read(+db: String, +text: String) -> IO(String):
++  IO.try(String,DB.Sql.read(db,text))
++
++def expect_read(+db: String, +text: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    value : String <- read(db,text)
++    expect(label,String.eq(value,expected))
++
++def gate_class(gate: UW.Gate) -> String:
++  match gate:
++    case UW.GateNone{}: "none"
++    case UW.GateUnknown{window,source,receipt}: "unknown"
++    case UW.GateHeld{window,resets_at,source,receipt}: "held"
++    case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
++
++def expect_gate(+db: String, +session: String, +account: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    gate : UW.Gate <- UW.window_gate(db,session,account)
++    expect(label,String.eq(gate_class(gate),expected))
++
++def state_sql(+window: String, +account: String) -> String:
++  "SELECT CASE WHEN NOT ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') THEN 'open' WHEN resets_at IS NULL THEN 'unknown' WHEN resets_at > CAST(strftime('%s','now') AS INTEGER)*1000 THEN 'held' ELSE 'elapsed' END FROM usage_windows WHERE account=" ++ C.q(account) ++ " AND window=" ++ C.q(window) ++ " ORDER BY recorded_at DESC, id DESC LIMIT 1;"
++
++def kimi_cause() -> String:
++  "You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends."
++
++def setup(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    made : String <- IO.try(String,DB.Sql.query(db,C.schema()))
++    root : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('root',NULL,'omp','','','','');")
++    leaf : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('leaf','root','omp','kimi-code/kimi-for-coding','high','','');")
++    IO.pure(Unit,Unit{})
++
++def session(+db: String, id: String) -> IO(Unit):
++  query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','omp','kimi-code/kimi-for-coding','high','','');")
++
++def observe_cases(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    UW.record_cause(db,"leaf","m-leaf","",kimi_cause())
++    reset_z : String <- UW.observe_reset_value(db,"2026-10-17T03:41:00Z")
++    expect("operator-reset-explicit-z",String.eq(reset_z,"1792208460000"))
++    reset_positive : String <- UW.observe_reset_value(db,"2026-10-17T03:41:00+05:30")
++    expect("operator-reset-positive-offset",String.eq(reset_positive,"1792188660000"))
++    reset_negative : String <- UW.observe_reset_value(db,"2026-10-17T03:41:00-07:00")
++    expect("operator-reset-negative-offset",String.eq(reset_negative,"1792233660000"))
++    expect("operator-reset-rejects-date-only",Bool.not(UW.operator_reset_token("2026-10-17")))
++    expect("operator-reset-rejects-offsetless",Bool.not(UW.operator_reset_token("2026-10-17T03:41:00")))
++    expect("operator-reset-rejects-short-offset",Bool.not(UW.operator_reset_token("2026-10-17T03:41:00+05")))
++    expect("operator-reset-rejects-empty-fraction",Bool.not(UW.operator_reset_token("2026-10-17T03:41:00.Z")))
++    expect("operator-reset-accepts-fraction",UW.operator_reset_token("2026-10-17T03:41:00.125Z"))
++    expect("operator-reset-rejects-sqlite-keyword",Bool.not(UW.operator_reset_token("now")))
++    expect("operator-reset-rejects-localtime-modifier",Bool.not(UW.operator_reset_token("localtime")))
++    expect("operator-reset-rejects-utc-modifier",Bool.not(UW.operator_reset_token("utc")))
++    expect("provider-date-only-parser-preserved",UW.iso_token("2026-10-17"))
++    expect("provider-offsetless-parser-preserved",UW.iso_token("2026-10-17T03:41:00"))
++    observed_unknown : Unit <- UW.observe(db,"leaf","5-hour","unknown","kimi console shows none","")
++    expect_gate(db,"leaf","","unknown","limit-then-operator-unknown")
++    observed_held : Unit <- UW.observe(db,"leaf","5-hour","2999-01-01T00:00:00Z","kimi console web ui","")
++    expect_gate(db,"leaf","","held","operator-observed-reset-holds")
++    held_row : Unit <- expect_read(db,"SELECT window || ':' || reset_source || ':' || (resets_at IS NOT NULL) FROM usage_windows ORDER BY id DESC LIMIT 1;","5-hour:operator-observation:1\n","operator-observation-row")
++    observed_elapsed : Unit <- UW.observe(db,"leaf","5-hour","2020-01-01T00:00:00Z","kimi console web ui","")
++    expect_gate(db,"leaf","","elapsed","operator-observed-reset-elapsed")
++    IO.pure(Unit,Unit{})
++
++def report_cases(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    observed_held : Unit <- UW.observe(db,"leaf","5-hour","2999-01-01T00:00:00Z","kimi console web ui","")
++    gate : UW.Gate <- UW.window_gate(db,"leaf","")
++    held_reported : Unit <- UW.report_held(db,"leaf","m1",gate)
++    held_guidance : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m1:usage-window-held';","1\n","held-guidance-once")
++    held_report : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m1:usage-window-held-report';","1\n","held-report-once")
++    observed_elapsed : Unit <- UW.observe(db,"leaf","5-hour","2020-01-01T00:00:00Z","kimi console web ui","")
++    +restored_gate : UW.Gate <- UW.window_gate(db,"leaf","")
++    restored : Unit <- UW.report_restored(db,"leaf","m1",restored_gate)
++    restored_guidance : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m1:usage-window-restored';","1\n","restored-guidance-once")
++    restored_report : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m1:usage-window-restored-report';","1\n","restored-report-once")
++    retried : Unit <- UW.report_restored(db,"leaf","m1",restored_gate)
++    restored_still : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m1:usage-window-restored';","1\n","restored-retry-idempotent")
++    IO.pure(Unit,Unit{})
++
++def endpoint_json(+script: String) -> String:
++  "[" ++ J.string_literal("a") ++ "," ++ J.string_literal("b") ++ "," ++ J.string_literal("c") ++ "," ++ J.string_literal("d") ++ "," ++ J.string_literal(script) ++ "," ++ J.string_literal("f") ++ "," ++ J.string_literal("g") ++ "," ++ J.string_literal("h") ++ "," ++ J.string_literal("i") ++ "]"
++
++def refresh_cases(+db: String, script: String) -> IO(Unit):
++  do IO<Unit>:
++    connected : Unit <- query(db,"UPDATE sessions SET endpoint=" ++ C.q(endpoint_json(script)) ++ " WHERE id='leaf';")
++    refreshed : Unit <- UW.refresh(db,"leaf","")
++    reported : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-report';","1\n","provider-report-recorded")
++    window : Unit <- expect_read(db,"SELECT window FROM usage_windows WHERE reset_source='provider-report';","5-hour\n","provider-report-window")
++    reset : Unit <- expect_read(db,"SELECT CAST(resets_at AS TEXT) FROM usage_windows WHERE reset_source='provider-report';","1893456000000\n","provider-report-reset")
++    fraction : Unit <- expect_read(db,"SELECT CAST(used_fraction AS TEXT) FROM usage_windows WHERE reset_source='provider-report';","0.42\n","provider-report-fraction")
++    admitted : Unit <- expect_gate(db,"leaf","","none","partial-report-not-held")
++    visible : Unit <- expect_read(db,state_sql("5-hour",""),"open\n","partial-report-visible-open")
++    IO.pure(Unit,Unit{})
++
++def multiwindow_cases(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"multi")
++    five : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','multi','5-hour',CAST(strftime('%s','now') AS INTEGER)*1000+3600000,'provider-message',NULL,'a 5-hour message','');")
++    seven : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','multi','7-day',CAST(strftime('%s','now') AS INTEGER)*1000+7200000,'provider-report',0.5,'a 7-day report','');")
++    thirty : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','multi','30-day',CAST(strftime('%s','now') AS INTEGER)*1000+86400000,'provider-report',0.2,'a 30-day report','');")
++    held : Unit <- expect_gate(db,"multi","multi","held","multiwindow-held-by-5-hour")
++    held_window : Unit <- expect_read(db,"SELECT window FROM (SELECT * FROM usage_windows WHERE account='multi' AND resets_at > CAST(strftime('%s','now') AS INTEGER)*1000 AND ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') ORDER BY resets_at ASC LIMIT 1);","5-hour\n","held-window-is-5-hour")
++    passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE account='multi' AND window='5-hour';")
++    elapsed : Unit <- expect_gate(db,"multi","multi","elapsed","multiwindow-elapsed-after-5-hour")
++    seven_open : Unit <- expect_read(db,"SELECT CASE WHEN ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') THEN 'exhausted' ELSE 'open' END FROM usage_windows WHERE account='multi' AND window='7-day';","open\n","partial-window-not-exhausted")
++    IO.pure(Unit,Unit{})
++
++def limit_case(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"limit")
++    UW.record_cause(db,"limit","m-limit","limit",kimi_cause())
++    unknown : Unit <- expect_gate(db,"limit","limit","unknown","limit-without-reset-unknown")
++    visible : Unit <- expect_read(db,state_sql("5-hour","limit"),"unknown\n","limit-row-visible-unknown")
++    IO.pure(Unit,Unit{})
++
++def projection_field(+db: String, +session: String, +account: String, +window: String, +path: String) -> IO(String):
++  do IO<String>:
++    answer : String <- read(db,UW.query_answer_sql(session,"omp","kimi-code",account))
++    read(db,"SELECT json_extract(j.value," ++ C.q(path) ++ ") FROM json_each(json_extract(" ++ C.q(Tx.trim_nl(answer)) ++ ",'$.windows')) j WHERE json_extract(j.value,'$.window')=" ++ C.q(window) ++ ";")
++
++def expect_projection(+db: String, +session: String, +account: String, +window: String, +path: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    value : String <- projection_field(db,session,account,window,path)
++    expect(label,String.eq(value,expected))
++
++def projection_cases(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"proj")
++    UW.record_cause(db,"proj","m-proj","proj",kimi_cause())
++    observed : Unit <- UW.observe(db,"proj","5-hour","2999-01-01T00:00:00Z","kimi console web ui","proj")
++    held : Unit <- expect_gate(db,"proj","proj","held","projection-operator-future-held")
++    held_state : Unit <- expect_projection(db,"proj","proj","5-hour","$.state","held\n","projection-state-matches-gate")
++    held_source : Unit <- expect_projection(db,"proj","proj","5-hour","$.source","operator-observation\n","projection-reset-source-visible")
++    held_exhausted : Unit <- expect_projection(db,"proj","proj","5-hour","$.exhausted","1\n","projection-exhausted-from-provider")
++    held_provider : Unit <- expect_projection(db,"proj","proj","5-hour","$.exhaustionSource","provider-message\n","projection-exhaustion-source-visible")
++    elapsed : Unit <- UW.observe(db,"proj","5-hour","2020-01-01T00:00:00Z","kimi console web ui","proj")
++    elapsed_gate : Unit <- expect_gate(db,"proj","proj","elapsed","projection-operator-elapsed-gate")
++    elapsed_state : Unit <- expect_projection(db,"proj","proj","5-hour","$.state","elapsed\n","projection-elapsed-matches-gate")
++    IO.pure(Unit,Unit{})
++
++def main_args(args: List<String>) -> IO(Unit):
++  match args:
++    case +path <> script <> Nil{}: do IO<Unit>:
++      setup(path)
++      limit_case(path)
++      observe_cases(path)
++      report_cases(path)
++      refresh_cases(path,script)
++      multiwindow_cases(path)
++      projection_cases(path)
++      IO.print("fixture-windows-store-ok")
++    case other: IO.die(Unit,2,"usage: usage-windows-store DB HARNESS_SCRIPT")
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    args : List<String> <- IO.args()
++    main_args(args)
+diff --git a/bend2/test/usage-windows-wake-path.bend b/bend2/test/usage-windows-wake-path.bend
+new file mode 100644
+index 000000000..250e620bf
+--- /dev/null
++++ b/bend2/test/usage-windows-wake-path.bend
+@@ -0,0 +1,147 @@
++# Production wake-path fixture for #797. It drives Receive.wake_due, the gate
++# path the coordinator uses, with a test launch callback that records one
++# delivery and sets the message receipt. A held window reports and schedules a
++# continuation; the continuation re-enters this path, so a reset moved later is
++# re-evaluated and does not deliver at the old time, a reset moved earlier
++# delivers once, and a handled message is a no-op.
++#
++# usage: usage-windows-wake-path DB
++#        usage-windows-wake-path --wake-message DB MESSAGE
++#        usage-windows-wake-path --wake-check DB MESSAGE
++import Base
++import ../src/coordinator/commands.bend as C
++import ../src/coordinator/receive.bend as Receive
++import ../src/coordinator/usage-windows.bend as UW
++import ../src/host/sqlite.bend as DB
++import ../src/git/text.bend as Tx
++import ../src/git/process.bend as Proc
++
++def expect(+label: String, is_ok: Bool) -> IO(Unit):
++  Bool.pick(IO(Unit),is_ok,IO.print("fixture-window-wake-path " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window-wake-path " ++ label ++ ": refused"))
++
++def query(+db: String, +text: String) -> IO(Unit):
++  do IO<Unit>:
++    ignore : String <- IO.try(String,DB.Sql.query(db,text))
++    IO.pure(Unit,Unit{})
++
++def read(+db: String, +text: String) -> IO(String):
++  IO.try(String,DB.Sql.read(db,text))
++
++def expect_read(+db: String, +text: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    value : String <- read(db,text)
++    expect(label,String.eq(value,expected))
++
++def deliver_record(+db: String, +target: String) -> IO(Result<&1,&1,U32 & String,Unit>):
++  do IO<Result<&1,&1,U32 & String,Unit>>:
++    pending : String <- read(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(target) ++ " AND receipt IS NULL;")
++    delivered : Unit <- Bool.pick(IO(Unit),String.eq(pending,"1\n"),query(db,"INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES(" ++ C.q(target) ++ ",'delivered');UPDATE messages SET receipt='delivered' WHERE id=" ++ C.q(target) ++ " AND receipt IS NULL;"),IO.pure(Unit,Unit{}))
++    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
++
++def deliver_test(+db: String) -> String -> IO(Result<&1,&1,U32 & String,Unit>):
++  target => deliver_record(db,target)
++
++def drive(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
++  Receive.wake_due(db,session,"0",deliver_test(db))
++
++def session(+db: String, +id: String) -> IO(Unit):
++  query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','omp'," ++ C.q(id ++ "-kimi/kimi-for-coding") ++ ",'high','','');")
++
++def setup(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    made : String <- IO.try(String,DB.Sql.query(db,C.schema()))
++    root : Unit <- query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('root',NULL,'omp','','','','');")
++    deliveries : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_deliveries(message TEXT PRIMARY KEY NOT NULL, receipt TEXT NOT NULL);")
++    checks : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_held_checks(id TEXT PRIMARY KEY NOT NULL);")
++    IO.pure(Unit,Unit{})
++
++def window(+db: String, +session: String, +message: String, +ms_offset: String) -> IO(Unit):
++  query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp'," ++ C.q(session ++ "-kimi/kimi-for-coding") ++ "," ++ C.q(session ++ "-kimi") ++ ",'', '5-hour',CAST(strftime('%s','now') AS INTEGER)*1000+" ++ ms_offset ++ ",'provider-message',NULL,'window'," ++ C.q(message) ++ ");")
++
++def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
++  query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
++
++def move_reset(+db: String, +message: String, +ms_offset: String) -> IO(Unit):
++  query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000+" ++ ms_offset ++ " WHERE message=" ++ C.q(message) ++ ";")
++
++def sleep_ms(ms: String) -> IO(Unit):
++  do IO<Unit>:
++    waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","sleep " ++ ms]),".")
++    IO.pure(Unit,Unit{})
++
++def later_case(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"later")
++    window : Unit <- window(db,"later","m-later","2000")
++    owed : Unit <- message(db,"later","m-later","")
++    held : Result<&1,&1,U32 & String,Unit> <- drive(db,"later")
++    moved : Unit <- move_reset(db,"m-later","6000")
++    waited : Unit <- sleep_ms("3")
++    none : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-later';","0\n","moved-later-no-delivery-at-old-time")
++    noticed : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m-later:usage-window-held';","1\n","moved-later-held-report")
++    IO.pure(Unit,Unit{})
++
++def earlier_case(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"early")
++    window : Unit <- window(db,"early","m-early","2000")
++    owed : Unit <- message(db,"early","m-early","")
++    held : Result<&1,&1,U32 & String,Unit> <- drive(db,"early")
++    moved : Unit <- move_reset(db,"m-early","-1000")
++    waited : Unit <- sleep_ms("3")
++    once : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-early';","1\n","moved-earlier-delivery-once")
++    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-early';","delivered\n","moved-earlier-receipt")
++    IO.pure(Unit,Unit{})
++
++def handled_case(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"handled")
++    window : Unit <- window(db,"handled","m-handled","-1000")
++    handled : Unit <- message(db,"handled","m-handled","handled-first")
++    driven : Result<&1,&1,U32 & String,Unit> <- drive(db,"handled")
++    none : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-handled';","0\n","handled-no-delivery")
++    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-handled';","handled-first\n","handled-keeps-receipt")
++    IO.pure(Unit,Unit{})
++
++def duplicate_case(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"dup")
++    window : Unit <- window(db,"dup","m-dup","-1000")
++    owed : Unit <- message(db,"dup","m-dup","")
++    first : Result<&1,&1,U32 & String,Unit> <- drive(db,"dup")
++    second : Result<&1,&1,U32 & String,Unit> <- drive(db,"dup")
++    once : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-dup';","1\n","duplicate-delivery-once")
++    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-dup';","delivered\n","duplicate-receipt")
++    IO.pure(Unit,Unit{})
++
++def far_case(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"far")
++    window : Unit <- window(db,"far","m-far","172800000")
++    owed : Unit <- message(db,"far","m-far","")
++    +far : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+172800000 AS TEXT);")
++    +delay : String <- read(db,UW.schedule_delay_sql(Tx.trim_nl(far)))
++    capped : Unit <- expect("far-segment-is-86400",String.eq(Tx.trim_nl(delay),"86400"))
++    IO.pure(Unit,Unit{})
++
++def main_args(args: List<String>) -> IO(Unit):
++  match args:
++    case "--wake-message" <> +db <> +msg <> Nil{}: do IO<Unit>:
++      +recipient : String <- read(db,"SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(msg) ++ " AND receipt IS NULL),'');")
++      present : Bool = Bool.not(String.is_empty(Tx.trim_nl(recipient)))
++      outcome : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),present,drive(db,Tx.trim_nl(recipient)),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
++      IO.pure(Unit,Unit{})
++    case +db <> Nil{}: do IO<Unit>:
++      setup(db)
++      later_case(db)
++      earlier_case(db)
++      handled_case(db)
++      duplicate_case(db)
++      far_case(db)
++      IO.print("fixture-window-wake-path-ok")
++    case other: IO.die(Unit,2,"usage")
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    args : List<String> <- IO.args()
++    main_args(args)
+diff --git a/bend2/test/usage-windows-wake.bend b/bend2/test/usage-windows-wake.bend
+new file mode 100644
+index 000000000..e58a72c0b
+--- /dev/null
++++ b/bend2/test/usage-windows-wake.bend
+@@ -0,0 +1,154 @@
++# Post-reset continuation fixture for the #797 usage-window gate. A held gate
++# schedules one detached single-shot continuation that sleeps until the
++# recorded reset and then re-enters the wake driver, which re-checks the gate.
++# The fixture proves: the continuation names the wake entry, not the direct
++# delivery entry; a handled message is a no-op; a still-held window records a
++# check and delivers nothing; an admitted window delivers once; duplicate
++# continuations leave one delivery and one held report; and the delay is
++# capped at one day with the next segment still capped while held.
++#
++# usage: usage-windows-wake DB SELF_SCRIPT
++import Base
++import ../src/coordinator/commands.bend as C
++import ../src/coordinator/usage-windows.bend as UW
++import ../src/host/sqlite.bend as DB
++import ../src/git/text.bend as Tx
++import ../src/git/process.bend as Proc
++
++def expect(+label: String, is_ok: Bool) -> IO(Unit):
++  Bool.pick(IO(Unit),is_ok,IO.print("fixture-window-wake " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window-wake " ++ label ++ ": refused"))
++
++def query(+db: String, +text: String) -> IO(Unit):
++  do IO<Unit>:
++    ignore : String <- IO.try(String,DB.Sql.query(db,text))
++    IO.pure(Unit,Unit{})
++
++def read(+db: String, +text: String) -> IO(String):
++  IO.try(String,DB.Sql.read(db,text))
++
++def expect_read(+db: String, +text: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    value : String <- read(db,text)
++    expect(label,String.eq(value,expected))
++
++def gate_class(gate: UW.Gate) -> String:
++  match gate:
++    case UW.GateNone{}: "none"
++    case UW.GateUnknown{window,source,receipt}: "unknown"
++    case UW.GateHeld{window,resets_at,source,receipt}: "held"
++    case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
++
++def expect_gate(+db: String, +session: String, +account: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    gate : UW.Gate <- UW.window_gate(db,session,account)
++    expect(label,String.eq(gate_class(gate),expected))
++
++def setup(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    made : String <- IO.try(String,DB.Sql.query(db,C.schema()))
++    root : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('root',NULL,'omp','','','','');")
++    one : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wa','root','omp','kimi-code/kimi-for-coding','high','','');")
++    two : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wb','root','omp','kimi-code/kimi-for-coding','high','','');")
++    three : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wc','root','omp','kimi-code/kimi-for-coding','high','','');")
++    four : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('ws','root','omp','kimi-code/kimi-for-coding','high','','');")
++    deliveries : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_deliveries(message TEXT PRIMARY KEY NOT NULL, receipt TEXT NOT NULL);")
++    reports : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_reports(id TEXT PRIMARY KEY NOT NULL);")
++    checks : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_held_checks(id TEXT PRIMARY KEY NOT NULL);")
++    IO.pure(Unit,Unit{})
++
++def window(+db: String, +session: String, +message: String, +ms_offset: String) -> IO(String):
++  do IO<String>:
++    +reset : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+" ++ ms_offset ++ ";")
++    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code'," ++ C.q(session) ++ ",'5-hour'," ++ Tx.trim_nl(reset) ++ ",'provider-message',NULL,'window'," ++ C.q(message) ++ ");")
++    IO.pure(String,Tx.trim_nl(reset))
++
++def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
++  query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
++
++def session(+db: String, +id: String) -> IO(Unit):
++  # The window rows bind provider 'kimi-code'; the session model must name that
++  # provider or the gate sees no matching window. Account isolates the cases.
++  query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','omp','kimi-code/kimi-for-coding','high','','');")
++
++def handled_case(+db: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    +reset : String <- window(db,"wa","m-wa","2000")
++    handled : Unit <- message(db,"wa","m-wa","handled-first")
++    held : Unit <- expect_gate(db,"wa","wa","held","handled-case-held")
++    UW.schedule_wake(db,"m-wa",reset,self)
++    IO.pure(Unit,Unit{})
++
++def duplicate_case(+db: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    +reset : String <- window(db,"wb","m-wb","2000")
++    owed : Unit <- message(db,"wb","m-wb","")
++    held : Unit <- expect_gate(db,"wb","wb","held","duplicate-case-held")
++    UW.schedule_wake(db,"m-wb",reset,self)
++    UW.schedule_wake(db,"m-wb",reset,self)
++    IO.pure(Unit,Unit{})
++
++def stale_case(+db: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    +reset : String <- window(db,"ws","m-ws","3600000")
++    owed : Unit <- message(db,"ws","m-ws","")
++    held : Unit <- expect_gate(db,"ws","ws","held","stale-case-held")
++    before : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","0\n","stale-held-no-delivery-before")
++    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv([self,"--wake-message",db,"m-ws"]),".")
++    checked : Unit <- expect_read(db,"SELECT count(*) FROM wake_held_checks WHERE id='m-ws';","1\n","stale-held-check-recorded")
++    blocked : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","0\n","stale-held-no-delivery")
++    passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE message='m-ws';")
++    admitted : Unit <- expect_gate(db,"ws","ws","elapsed","stale-case-elapsed")
++    rerun : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv([self,"--wake-message",db,"m-ws"]),".")
++    delivered : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","1\n","elapsed-delivery-once")
++    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-ws';","delivered\n","elapsed-sets-receipt")
++    IO.pure(Unit,Unit{})
++
++def far_case(+db: String, +self: String) -> IO(Unit):
++  do IO<Unit>:
++    +far : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+172800000 AS TEXT);")
++    created : Unit <- session(db,"far2")
++    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','far2','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far window','m-far2');")
++    owed : Unit <- message(db,"far2","m-far2","")
++    held : Unit <- expect_gate(db,"far2","far2","held","far-continuation-held")
++    +argv : String <- IO.pure(String,Tx.enc_argv(UW.schedule_argv(self,db,"m-far2","1")))
++    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(argv,".")
++    checked : Unit <- expect_read(db,"SELECT count(*) FROM wake_held_checks WHERE id='m-far2';","1\n","far-continuation-held-check")
++    blocked : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-far2';","0\n","far-continuation-no-delivery")
++    next_segment : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-continuation-next-segment")
++    IO.pure(Unit,Unit{})
++
++def cap_case(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    +far : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+172800000;")
++    delay : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-reset-segment-capped")
++    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','wc','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far window','m-wc');")
++    held : Unit <- expect_gate(db,"wc","wc","held","far-reset-held")
++    next_segment : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","next-segment-still-86400")
++    passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE message='m-wc';")
++    elapsed : Unit <- expect_gate(db,"wc","wc","elapsed","far-reset-elapsed")
++    IO.pure(Unit,Unit{})
++
++def main_args(args: List<String>) -> IO(Unit):
++  match args:
++    case +path <> +self <> Nil{}: do IO<Unit>:
++      setup(path)
++      +argv_enc : String <- IO.pure(String,Tx.enc_argv(UW.schedule_argv(self,path,"m","1")))
++      argv_wake : Unit <- expect_read(path,"SELECT instr(" ++ C.q(argv_enc) ++ ",'--wake-message')>0;","1\n","schedule-uses-wake-entry")
++      argv_direct : Unit <- expect_read(path,"SELECT instr(" ++ C.q(argv_enc) ++ ",'--dispatch-message')=0;","1\n","schedule-not-direct-delivery")
++      handled_case(path,self)
++      duplicate_case(path,self)
++      stale_case(path,self)
++      far_case(path,self)
++      cap_case(path)
++      waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","sleep 5"]),".")
++      handled_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wa';","0\n","handled-no-second-delivery")
++      kept_receipt : Unit <- expect_read(path,"SELECT receipt FROM messages WHERE id='m-wa';","handled-first\n","handled-keeps-receipt")
++      duplicate_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wb';","1\n","duplicate-single-delivery")
++      duplicate_report : Unit <- expect_read(path,"SELECT count(*) FROM wake_reports WHERE id='m-wb:usage-window-held-report';","1\n","duplicate-single-held-report")
++      IO.print("fixture-windows-wake-ok")
++    case other: IO.die(Unit,2,"usage: usage-windows-wake DB SELF_SCRIPT")
++
++def main() -> IO(Unit):
++  do IO<Unit>:
++    args : List<String> <- IO.args()
++    main_args(args)
+diff --git a/bend2/test/usage-windows.bend b/bend2/test/usage-windows.bend
+new file mode 100644
+index 000000000..e452536d1
+--- /dev/null
++++ b/bend2/test/usage-windows.bend
+@@ -0,0 +1,59 @@
++# Fixture for the #797 usage-window store and gate. It drives the real
++# provider-prefix, window-kind, and reset-time extraction over the observed
++# Kimi, ZAI, and Claude wordings, and the real gate match SQL shape: fixtures
++# prove the extraction literals and nothing else. The sqlite store, the wake
++# gate, and the command surface are exercised by the receive integration
++# fixtures on remote validation runners.
++import Base
++import ../src/coordinator/usage-windows.bend as UW
++import ../src/git/text.bend as Tx
++
++def kimi_cause() -> String:
++  "You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends."
++
++def zai_cause() -> String:
++  "Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52"
++
++def claude_weekly() -> String:
++  "You've hit your weekly limit"
++
++def claude_monthly() -> String:
++  "usage limit reached for monthly billing cycle"
++
++def iso_z() -> String:
++  "Your usage window resets at 2026-10-12T23:25:59Z"
++
++def iso_offset() -> String:
++  "resets 2026-10-17T03:41:00+00:00"
++
++def split_dt() -> String:
++  "reset at 2026-10-06 07:12:52"
++
++def expect(+label: String, is_ok: Bool) -> IO(Unit):
++  Bool.pick(IO(Unit),is_ok,IO.print("fixture-window " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window " ++ label ++ ": refused"))
++
++law main:
++  IO(Unit)
++
++def main():
++  do IO<Unit>:
++    provider_kimi : Unit <- expect("provider-kimi",String.eq(UW.provider_of("kimi-code/kimi-for-coding"),"kimi-code"))
++    provider_zai : Unit <- expect("provider-zai",String.eq(UW.provider_of("zai/glm-5.3-flash"),"zai"))
++    provider_bare : Unit <- expect("provider-bare-is-empty",String.eq(UW.provider_of("gpt-6-astra"),""))
++    label_kimi : Unit <- expect("label-kimi-5-hour",String.eq(UW.window_label_of(UW.lower_ascii(kimi_cause())),"5-hour"))
++    label_zai : Unit <- expect("label-zai-5-hour",String.eq(UW.window_label_of(UW.lower_ascii(zai_cause())),"5-hour"))
++    label_weekly : Unit <- expect("label-claude-weekly",String.eq(UW.window_label_of(UW.lower_ascii(claude_weekly())),"7-day"))
++    label_monthly : Unit <- expect("label-claude-monthly",String.eq(UW.window_label_of(UW.lower_ascii(claude_monthly())),"monthly"))
++    label_unknown : Unit <- expect("label-unknown-is-empty",String.eq(UW.window_label_of("rate limit exceeded"),""))
++    reset_kimi : Unit <- expect("reset-kimi-none",String.eq(UW.reset_text_of(kimi_cause()),""))
++    reset_zai : Unit <- expect("reset-zai-split",String.eq(UW.reset_text_of(zai_cause()),"2026-10-06 07:12:52"))
++    reset_iso : Unit <- expect("reset-iso-z",String.eq(UW.reset_text_of(iso_z()),"2026-10-12T23:25:59Z"))
++    reset_offset : Unit <- expect("reset-iso-offset",String.eq(UW.reset_text_of(iso_offset()),"2026-10-17T03:41:00+00:00"))
++    reset_split : Unit <- expect("reset-split-date-time",String.eq(UW.reset_text_of(split_dt()),"2026-10-06 07:12:52"))
++    reset_plain : Unit <- expect("reset-none-plain",String.eq(UW.reset_text_of("quota exceeded"),""))
++    reset_clock : Unit <- expect("reset-clock-alone-none",String.eq(UW.reset_text_of("resets at 07:12:52"),""))
++    match_binding : Unit <- expect("match-binding",Tx.starts_with(UW.window_match_sql("omp","kimi-code","main"),"harness='omp' AND provider='kimi-code' AND (account='main' OR account='')"))
++    unknown_reset : Unit <- expect("record-null-reset",String.eq(UW.parsed_reset_sql(""),"NULL"))
++    dated_reset : Unit <- expect("record-parsed-reset",Tx.starts_with(UW.parsed_reset_sql("2026-10-06 07:12:52"),"(SELECT CAST(strftime('%s','2026-10-06 07:12:52')"))
++    printed : Unit <- IO.print("fixture-windows-ok")
++    IO.pure(Unit,Unit{})
+diff --git a/bend2/test/usage-windows.py b/bend2/test/usage-windows.py
+new file mode 100644
+index 000000000..59764025b
+--- /dev/null
++++ b/bend2/test/usage-windows.py
+@@ -0,0 +1,152 @@
++"""Usage window observations: operator recording, explicit unknowns, and the query surface."""
++import importlib.util
++import json
++import pathlib
++import sqlite3
++import unittest
++from contextlib import closing
++
++
++ROOT = pathlib.Path(__file__).resolve().parents[2]
++
++
++def load(name):
++    spec = importlib.util.spec_from_file_location(name.replace('-', '_'),
++                                                  pathlib.Path(__file__).with_name(name + '.py'))
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++control = load('control')
++receive = load('receive')
++
++
++class UsageWindowHandoff(receive.Receive):
++    """Exhaustion through the real retained receive records a usage window observation
++    at the shared handoff gate, on both the profile route and the account-wide route,
++    with the reset time verbatim from the provider or explicit NULL when none is stated."""
++
++    def window_rows(self):
++        with closing(sqlite3.connect(self.db)) as db:
++            return db.execute("SELECT window, resets_at, reset_source, harness, account FROM usage_windows ORDER BY id").fetchall()
++
++    def exhaust(self, cause):
++        self.player('parent', harness='omp')
++        self.message('input', 'parent')
++        failed = self.spawn(*self.receive_args('parent'))
++        control_, original = self.accept('parent')
++        self.action(control_, fail_status=429, fail_message=cause)
++        self.action(control_, exit_fixture=True)
++        self.finish(failed, ok=False)
++
++    def test_zai_reset_time_is_recorded_verbatim(self):
++        self.exhaust('429 Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52')
++        rows = self.window_rows()
++        self.assertEqual(len(rows), 1)
++        window, resets_at, source, harness, account = rows[0]
++        self.assertEqual((window, source, harness, account), ('5-hour', 'provider-message', 'omp', ''))
++        self.assertEqual(resets_at, 1791270772000)
++
++    def test_kimi_reset_stays_unknown(self):
++        self.exhaust("403 You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends.")
++        rows = self.window_rows()
++        self.assertEqual(len(rows), 1)
++        window, resets_at, source, harness, account = rows[0]
++        self.assertEqual((window, source, harness, account), ('5-hour', 'provider-message', 'omp', ''))
++        self.assertIsNone(resets_at)
++
++
++class UsageWindows(unittest.TestCase):
++    setUp = control.Control.setUp
++    call = control.Control.call
++    root = control.Control.root
++
++    def recruit(self):
++        self.root()
++        return self.call('recruit', 'leaf', 'root', 'omp', 'kimi-code/kimi-for-coding', 'high',
++                         self.repo, 'leaf-branch', self.checkouts / 'leaf', self.base)
++
++    def observe(self, window, resets, source, ok=True):
++        return self.call('usage-window-observe', 'leaf', window, resets, source, ok=ok)
++
++    def windows(self):
++        return self.call('usage-windows', 'leaf')
++
++    def limit(self, window='5-hour'):
++        with closing(sqlite3.connect(self.db)) as db:
++            db.execute("INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
++                       "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','',?,NULL,'provider-message',NULL,'limit message','')",
++                       (window,))
++
++    def reported(self, window='5-hour', used=0.42, ms=1893456000000):
++        with closing(sqlite3.connect(self.db)) as db:
++            db.execute("INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
++                       "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','',?,?,'provider-report',?,'report','')",
++                       (window, ms, used))
++
++    def test_observed_reset_holds_and_latest_observation_wins(self):
++        self.recruit()
++        self.limit()
++        held = self.observe('5-hour', '2999-01-01T00:00:00Z', 'kimi console web ui')
++        self.assertEqual(held['resetsAt'], 32472144000000)
++        answer = self.windows()
++        rows = {row['window']: row for row in answer['windows']}
++        self.assertEqual(rows['5-hour']['state'], 'held')
++        self.assertEqual(rows['5-hour']['source'], 'operator-observation')
++        self.assertEqual(rows['5-hour']['resetsAtText'], '2999-01-01T00:00:00Z')
++        self.assertIn('kimi console web ui', rows['5-hour']['receipt'])
++        elapsed = self.observe('5-hour', '2020-01-01T00:00:00Z', 'kimi console web ui')
++        self.assertEqual(elapsed['resetsAt'], 1577836800000)
++        rows = {row['window']: row for row in self.windows()['windows']}
++        self.assertEqual(rows['5-hour']['state'], 'elapsed')
++
++    def test_unknown_reset_stays_explicit(self):
++        self.recruit()
++        self.limit()
++        observed = self.observe('5-hour', 'unknown', 'kimi console shows none')
++        self.assertIsNone(observed['resetsAt'])
++        rows = {row['window']: row for row in self.windows()['windows']}
++        self.assertEqual(rows['5-hour']['state'], 'unknown')
++        self.assertIsNone(rows['5-hour']['resetsAt'])
++
++    def test_partial_provider_report_is_open_and_not_held(self):
++        self.recruit()
++        self.reported()
++        rows = {row['window']: row for row in self.windows()['windows']}
++        self.assertEqual(rows['5-hour']['state'], 'open')
++        self.assertEqual(rows['5-hour']['usedFraction'], 0.42)
++
++    def test_multiwindow_gate_uses_the_exhausted_window(self):
++        self.recruit()
++        self.limit()
++        self.reported('7-day', used=0.5, ms=1893456000000 + 3600000)
++        self.reported('monthly', used=0.2, ms=1893456000000 + 7200000)
++        rows = {row['window']: row for row in self.windows()['windows']}
++        self.assertEqual(rows['5-hour']['state'], 'unknown')
++        self.assertEqual(rows['7-day']['state'], 'open')
++        self.assertEqual(rows['monthly']['state'], 'open')
++
++    def test_unparseable_reset_refuses_without_recording(self):
++        self.recruit()
++        refused = self.observe('5-hour', 'next monday maybe', 'console', ok=False)
++        self.assertIn('did not parse', refused['stderr'])
++        answer = self.windows()
++        self.assertEqual(answer['windows'], 'none recorded')
++
++    def test_unqualified_model_reports_no_provider(self):
++        self.root()
++        self.call('recruit', 'bare', 'root', 'omp', 'gpt-6-astra', 'high',
++                  self.repo, 'bare-branch', self.checkouts / 'bare', self.base)
++        answer = self.call('usage-windows', 'bare')
++        self.assertEqual(answer['windows'], 'none recorded')
++        self.assertEqual(answer['condition'], 'noProviderQualifiedModel')
++
++    def test_refused_observation_validates_window_and_source(self):
++        self.recruit()
++        refused = self.observe('', 'unknown', 'console', ok=False)
++        self.assertIn('requires a nonempty window label', refused['stderr'])
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/docs/bend2/todo.md b/docs/bend2/todo.md
+index 4154e904a..0d97b8291 100644
+--- a/docs/bend2/todo.md
++++ b/docs/bend2/todo.md
+@@ -602,6 +602,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
+ 
+ ## Other open work
+ 
++- [#797: Track Kimi Code usage windows and reset times](https://github.com/Flip-Engineering/baton/issues/797). The usage-window store, the exhaustion-time observation in the account advance, the operator observation and provider refresh commands, and the wake gate with held/restored reports land on `codex/kimi-797-usage-reset-20261017`; see [usage windows](usage-windows-20261017.md).
++- [#793: Track monthly Claude API credits and native account funding routes](https://github.com/Flip-Engineering/baton/issues/793).
+ - [#711: Baton2: preserve authored numeric precision in scientific knowledge reads](https://github.com/Flip-Engineering/baton/issues/711).
+ - [#710: Define structured causal and evidentiary Knowledge nodes and edges with provenance and uncertainty](https://github.com/Flip-Engineering/baton/issues/710).
+ - [#709: Make Baton2 the main branch after current delivery settles](https://github.com/Flip-Engineering/baton/issues/709).
+diff --git a/docs/bend2/usage-windows-20261017.md b/docs/bend2/usage-windows-20261017.md
+new file mode 100644
+index 000000000..d5261cc38
+--- /dev/null
++++ b/docs/bend2/usage-windows-20261017.md
+@@ -0,0 +1,119 @@
++# Usage windows and reset times
++
++`bend2/src/coordinator/usage-windows.bend` tracks provider subscription quota
++windows and the reset times observed for them (#797). The named failure is the
++Kimi Code 5-hour rolling window: the provider's 403 message
++("You've reached your 5-hour usage limit.") names no reset timestamp, the Kimi
++Console web UI shows one, and the client's usage report carries one when a live
++credential can fetch it. Baton records what was observed, refuses new turns
++for a held window, and admits owed input again after the recorded reset.
++
++These are subscription quota windows. Claude monthly promotional API credits
++(#793) are a separate funding source with a separate Console organization pool
++and are not tracked here.
++
++## The store
++
++The coordination database owns the observations in the `usage_windows` table
++(created by `schema()` in `bend2/src/coordinator/commands.bend`, so existing
++databases self-upgrade on the next commit). Each row records:
++
++- `harness`, `model`, `provider`: the session's harness and recorded model;
++  `provider` is the model's provider prefix (`kimi-code` for
++  `kimi-code/kimi-for-coding`).
++- `account`: the subscription profile label in force (empty means
++  account-wide for that harness and provider).
++- `window`: `5-hour`, `7-day`, `monthly`, or empty when the wording is
++  unrecognized.
++- `resets_at`: milliseconds epoch, or NULL. NULL is the explicit unknown; the
++  store never invents a reset time.
++- `reset_source`: `provider-message`, `provider-report`, or
++  `operator-observation`.
++- `receipt`, `message`: what was observed, and the message id that carried the
++  exhaustion when there is one.
++
++## Recording
++
++Three sources write observations:
++
++1. Exhaustion handoff: `advance_profile` in
++   `bend2/src/coordinator/subscription-fallback.bend` inserts one observation
++   from the provider's exhaustion cause before any account advance, so the
++   refusal fact survives even when the advance itself fails. The window kind
++   is extracted from the cause text; an embedded ISO-8601 reset time is
++   converted to milliseconds, and a missing one stays NULL.
++2. Operator observation: `usage-window-observe SESSION WINDOW RESETS_AT
++   SOURCE` records a reset time read from the provider's own console (for
++   Kimi Code, the Console web UI, as in the #797 observation "Resets 10-16
++   20:41"). `RESETS_AT` is ISO 8601 with an explicit offset or `unknown`;
++   anything unparseable refuses the command rather than recording a guess.
++3. Provider report: `usage-window-refresh SESSION` runs the session's
++   recorded harness command with `usage --json` (OMP only, reusing the
++   observed-usage query) and records every reported limit. For Kimi Code the
++   client reports `5h` and `7d` windows with an absolute `resetsAt` when the
++   endpoint returns one; a limit without `resetsAt` keeps the NULL unknown.
++
++## The wake gate
++
++The wake driver asks the gate for the session's harness, provider prefix, and
++account label. The gate reads the latest row per window for state and reset and
++the latest provider row per window for exhaustion evidence:
++
++- A window is exhausted when its latest provider row is a limit message or
++  reports `usedFraction` at or above 1. A partial provider report with a
++  future reset is not exhaustion.
++- An operator-observed reset keeps the window's provider exhaustion and
++  supplies the reset time; this is the Kimi Code Console path.
++- Held: an exhausted window's reset is in the future. The wake reports
++  `usage-window-held` to the session and its conductor with the window, reset
++  time, source, and receipt, releases the lock, leaves the input owed, and
++  schedules one detached single-shot continuation at the earliest held reset.
++  Eligible work routes to an available configured account or model through the
++  existing handoff and route machinery.
++- Elapsed: no window is held and an exhausted window's reset has passed. The
++  wake reports `usage-window-restored` once per message and admits the owed
++  input on the retained assignment and account.
++- Unknown: the only exhausted evidence is a limit message with no reset. The
++  wake proceeds; an unknown reset never blocks.
++- None: no exhausted window. Partial reports stay visible in the query and do
++  not hold.
++
++The continuation sleeps until the recorded reset and re-enters the wake driver
++(`--wake-message`, which calls `Wake.drive_id`) with no new input, so the gate
++is evaluated again when it fires. A still-held window reports and schedules the
++next segment; an elapsed one admits the owed input; a message that already has
++a receipt is a no-op. The delay is capped at one day, so a far reset re-checks
++in bounded segments. It is one detached process, not a daemon, and it does not
++poll. Delivery stays receipt-gated, so a handled message gains no second
++delivery; two continuations for the same message leave one delivery and one
++held report.
++
++## Query
++
++`usage-windows SESSION` prints the newest observation per window with its
++current state: `held`, `elapsed`, and `unknown` for exhausted windows, and
++`open` for a window without exhaustion evidence (a partial report or an
++operator-only record). The state uses the same per-window provider-exhaustion
++projection as the gate, so an operator-observed reset after a provider limit
++message reports `held` before the reset and `elapsed` after it, matching the
++gate verdict. Each row carries `source` (the reset's provenance, for example
++`operator-observation`), `exhausted`, and `exhaustionSource` (the latest
++provider row's source), so the reset fact and the exhaustion fact stay
++separate. The reset time is printed in milliseconds and UTC text with its
++receipt. No matching row reads back `none recorded`; a model without a
++provider prefix reports `noProviderQualifiedModel`.
++
++## Verification
++
++`bend2/test/usage-windows.bend` drives the real extraction functions over the
++observed Kimi, ZAI, and Claude wordings. `bend2/test/usage-windows-store.bend`
++drives the store, gate, reports, refresh, and multiwindow state over a
++temporary database. `bend2/test/usage-windows-long.bend` bounds the reset scan
++on a long provider message. `bend2/test/usage-windows-wake.bend` proves the
++continuation argv, handled-message idempotence, duplicate continuations, and
++the one-day segment cap. `bend2/test/usage-windows-wake-path.bend` drives the
++production `Receive.wake_due` gate: a reset moved later does not deliver at the
++old time, one moved earlier delivers once, a handled message is a no-op, and a
++far window reports the 86400 s segment. `bend2/test/usage-windows.py` exercises the
++command surface against a recruited session fixture on remote validation
++runners.

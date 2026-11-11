@@ -1,0 +1,146 @@
+From 69e1a3ef3d4670a2a636a605d24c8a65da0d146f Mon Sep 17 00:00:00 2001
+From: flip-engineer <will.a.hargis@gmail.com>
+Date: Sat, 17 Oct 2026 22:50:05 -0700
+Subject: [PATCH 9/9] Project usage window state with the gate's provider
+ exhaustion (#797, #823)
+
+query_answer_sql applied its own per-row exhaustion predicate, so an operator-observed reset after a provider limit message reported open while the gate reported held. The projection now uses the same latest-provider exhaustion set as the gate and keeps both facts visible: source carries the reset provenance and exhausted/exhaustionSource carry the provider evidence. The fixture adds provider-exhausted then operator future and elapsed resets, asserting the query state equals the gate verdict and the source facts; it fails on the previous head with projection-state-matches-gate refused.
+---
+ bend2/src/coordinator/usage-windows.bend | 28 +++++++++++++-----------
+ bend2/test/usage-windows-store.bend      | 27 +++++++++++++++++++++++
+ docs/bend2/usage-windows-20261017.md     | 14 ++++++++----
+ 3 files changed, 52 insertions(+), 17 deletions(-)
+
+diff --git a/bend2/src/coordinator/usage-windows.bend b/bend2/src/coordinator/usage-windows.bend
+index 0e1c260ba..003885f90 100644
+--- a/bend2/src/coordinator/usage-windows.bend
++++ b/bend2/src/coordinator/usage-windows.bend
+@@ -369,6 +369,18 @@ def refresh(+db: String, +session: String, +account: String) -> IO(Unit):
+     ran : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(harness),"omp"),refresh_omp(db,session,account),refresh_unsupported(session,Tx.trim_nl(harness)))
+     IO.pure(Unit,Unit{})
+ 
++def exhausted_sql(+alias: String) -> String:
++  "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
++
++def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1)"
++
++def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
++  "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
++
++def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
++  "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
++
+ # --- the query ---------------------------------------------------------------
+ 
+ # The latest observation per window for the session's binding, each with its
+@@ -378,7 +390,9 @@ def query_none(+session: String, +account: String) -> String:
+   "{\"schema\":\"baton2-usage-windows-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"account\":" ++ J.string_literal(account) ++ ",\"windows\":\"none recorded\",\"condition\":\"noProviderQualifiedModel\"}"
+ 
+ def query_answer_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
+-  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN NOT ((w.used_fraction IS NOT NULL AND w.used_fraction >= 1) OR w.reset_source='provider-message') THEN 'open' WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
++  +exhausted = exhausted_windows_sql(harness,provider,account)
++  +providers = latest_provider_rows_sql(harness,provider,account)
++  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN w.window NOT IN (" ++ exhausted ++ ") THEN 'open' WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'exhausted',json(CASE WHEN w.window IN (" ++ exhausted ++ ") THEN 'true' ELSE 'false' END),'exhaustionSource',(SELECT p.reset_source FROM (" ++ providers ++ ") p WHERE p.window=w.window),'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+ 
+ def query_bound(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Unit):
+   do IO<Unit>:
+@@ -407,18 +421,6 @@ def query(+db: String, +session: String, +account: String) -> IO(Unit):
+ # passed, is unknown when the only exhausted evidence carries no reset, and is
+ # none otherwise.
+ 
+-def exhausted_sql(+alias: String) -> String:
+-  "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
+-
+-def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+-  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1)"
+-
+-def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+-  "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
+-
+-def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
+-  "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
+-
+ def window_state_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+   latest_rows_sql(harness,provider,account) ++ " AND w.window IN (" ++ exhausted_windows_sql(harness,provider,account) ++ ")"
+ 
+diff --git a/bend2/test/usage-windows-store.bend b/bend2/test/usage-windows-store.bend
+index eb993f251..07eae49f2 100644
+--- a/bend2/test/usage-windows-store.bend
++++ b/bend2/test/usage-windows-store.bend
+@@ -14,6 +14,7 @@ import ../src/coordinator/commands.bend as C
+ import ../src/coordinator/usage-windows.bend as UW
+ import ../src/json/canonical.bend as J
+ import ../src/host/sqlite.bend as DB
++import ../src/git/text.bend as Tx
+ 
+ def expect(+label: String, is_ok: Bool) -> IO(Unit):
+   Bool.pick(IO(Unit),is_ok,IO.print("fixture-window-store " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window-store " ++ label ++ ": refused"))
+@@ -123,6 +124,31 @@ def limit_case(+db: String) -> IO(Unit):
+     visible : Unit <- expect_read(db,state_sql("5-hour","limit"),"unknown\n","limit-row-visible-unknown")
+     IO.pure(Unit,Unit{})
+ 
++def projection_field(+db: String, +session: String, +account: String, +window: String, +path: String) -> IO(String):
++  do IO<String>:
++    answer : String <- read(db,UW.query_answer_sql(session,"omp","kimi-code",account))
++    read(db,"SELECT json_extract(j.value," ++ C.q(path) ++ ") FROM json_each(json_extract(" ++ C.q(Tx.trim_nl(answer)) ++ ",'$.windows')) j WHERE json_extract(j.value,'$.window')=" ++ C.q(window) ++ ";")
++
++def expect_projection(+db: String, +session: String, +account: String, +window: String, +path: String, +expected: String, +label: String) -> IO(Unit):
++  do IO<Unit>:
++    value : String <- projection_field(db,session,account,window,path)
++    expect(label,String.eq(value,expected))
++
++def projection_cases(+db: String) -> IO(Unit):
++  do IO<Unit>:
++    created : Unit <- session(db,"proj")
++    UW.record_cause(db,"proj","m-proj","proj",kimi_cause())
++    observed : Unit <- UW.observe(db,"proj","5-hour","2999-01-01T00:00:00Z","kimi console web ui","proj")
++    held : Unit <- expect_gate(db,"proj","proj","held","projection-operator-future-held")
++    held_state : Unit <- expect_projection(db,"proj","proj","5-hour","$.state","held\n","projection-state-matches-gate")
++    held_source : Unit <- expect_projection(db,"proj","proj","5-hour","$.source","operator-observation\n","projection-reset-source-visible")
++    held_exhausted : Unit <- expect_projection(db,"proj","proj","5-hour","$.exhausted","1\n","projection-exhausted-from-provider")
++    held_provider : Unit <- expect_projection(db,"proj","proj","5-hour","$.exhaustionSource","provider-message\n","projection-exhaustion-source-visible")
++    elapsed : Unit <- UW.observe(db,"proj","5-hour","2020-01-01T00:00:00Z","kimi console web ui","proj")
++    elapsed_gate : Unit <- expect_gate(db,"proj","proj","elapsed","projection-operator-elapsed-gate")
++    elapsed_state : Unit <- expect_projection(db,"proj","proj","5-hour","$.state","elapsed\n","projection-elapsed-matches-gate")
++    IO.pure(Unit,Unit{})
++
+ def main_args(args: List<String>) -> IO(Unit):
+   match args:
+     case +path <> script <> Nil{}: do IO<Unit>:
+@@ -132,6 +158,7 @@ def main_args(args: List<String>) -> IO(Unit):
+       report_cases(path)
+       refresh_cases(path,script)
+       multiwindow_cases(path)
++      projection_cases(path)
+       IO.print("fixture-windows-store-ok")
+     case other: IO.die(Unit,2,"usage: usage-windows-store DB HARNESS_SCRIPT")
+ 
+diff --git a/docs/bend2/usage-windows-20261017.md b/docs/bend2/usage-windows-20261017.md
+index 75c2787f5..fb611ad08 100644
+--- a/docs/bend2/usage-windows-20261017.md
++++ b/docs/bend2/usage-windows-20261017.md
+@@ -90,10 +90,16 @@ two continuations for the same message leave one delivery and one held report.
+ 
+ `usage-windows SESSION` prints the newest observation per window with its
+ current state: `held`, `elapsed`, and `unknown` for exhausted windows, and
+-`open` for a row without exhaustion evidence (a partial report or an
+-operator-only record). The reset time is printed in milliseconds and UTC text
+-with its source and receipt. No matching row reads back `none recorded`; a
+-model without a provider prefix reports `noProviderQualifiedModel`.
++`open` for a window without exhaustion evidence (a partial report or an
++operator-only record). The state uses the same per-window provider-exhaustion
++projection as the gate, so an operator-observed reset after a provider limit
++message reports `held` before the reset and `elapsed` after it, matching the
++gate verdict. Each row carries `source` (the reset's provenance, for example
++`operator-observation`), `exhausted`, and `exhaustionSource` (the latest
++provider row's source), so the reset fact and the exhaustion fact stay
++separate. The reset time is printed in milliseconds and UTC text with its
++receipt. No matching row reads back `none recorded`; a model without a
++provider prefix reports `noProviderQualifiedModel`.
+ 
+ ## Verification
+ 
+-- 
+2.43.0
+

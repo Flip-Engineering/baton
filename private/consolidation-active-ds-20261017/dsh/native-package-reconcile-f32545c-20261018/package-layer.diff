@@ -1,0 +1,784 @@
+diff --git a/bend2/scripts/bend-launch-guard.sh b/bend2/scripts/bend-launch-guard.sh
+index 76843070f..7acd9f5c9 100755
+--- a/bend2/scripts/bend-launch-guard.sh
++++ b/bend2/scripts/bend-launch-guard.sh
+@@ -4,8 +4,8 @@
+ # The product admission policy remains the native Bend2 design in
+ # docs/bend2/build-admission.md. This wrapper requires an admitted bounded cgroup
+ # for focused and coordinator Main C generation. A coordinator Main also
+-# requires a matching decision receipt. Version queries and
+-# --check-only calls pass through unchanged.
++# requires a matching decision receipt. Version queries pass through unchanged;
++# --check-only requires admission like C generation.
+ #
+ # The canonical path is a delegated cgroup under /sys/fs/cgroup with a finite
+ # memory.max. There is no opt-out variable.
+@@ -15,7 +15,6 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+ 
+ entry=
+ output=
+-check_only=0
+ query=0
+ expect_output=0
+ for argument in "$@"; do
+@@ -28,8 +27,8 @@ for argument in "$@"; do
+     -o|--output)
+       expect_output=1
+       ;;
+-    --check-only|version|--version)
+-      check_only=1
++    version|--version)
++      query=1
+       ;;
+     -)
+       ;;
+@@ -56,11 +55,11 @@ case "$entry_path" in
+     ;;
+ esac
+ 
+-# C generation requires the resource check. Version queries and --check-only
+-# pass through to the compiler.
+-build=0
+-if [ "$check_only" = 0 ] && [ "$query" = 0 ]; then
+-  build=1
++# Every compiler invocation, including --check-only, requires the resource
++# check. Version queries pass through without invoking the compiler.
++build=1
++if [ "$query" = 1 ]; then
++  build=0
+ fi
+ 
+ refuse() {
+@@ -115,4 +114,8 @@ if [ "$build" = 1 ]; then
+   fi
+ fi
+ 
++if [ "${BATON2_ADMISSION_CHECK_ONLY:-}" = 1 ]; then
++  exit 0
++fi
++
+ exec "$root/bin/bun" --smol "$root/bend2/main.ts" "$@"
+diff --git a/bend2/scripts/build-native.sh b/bend2/scripts/build-native.sh
+index 8f6a5085e..da500b4b2 100644
+--- a/bend2/scripts/build-native.sh
++++ b/bend2/scripts/build-native.sh
+@@ -33,12 +33,6 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
+   printf '{"error":"build-mode-conflict","condition":"recovery-helper-with-other-native-entry","entry":"%s"}\n' "$entry_path" >&2
+   exit 78
+ fi
+-if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ] &&
+-   { [ -z "${BATON2_ADMISSION_CGROUP:-}" ] || [ -z "${BATON2_ADMISSION_RECEIPT:-}" ]; }; then
+-  printf '{"error":"build-admission-required","condition":"default-full-main-without-admission","entry":"%s","output":"%s","cgroup":"%s","receipt":"%s"}\n' \
+-    "$entry_path" "$output" "${BATON2_ADMISSION_CGROUP:-}" "${BATON2_ADMISSION_RECEIPT:-}" >&2
+-  exit 78
+-fi
+ if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
+   compiler_path=$(readlink -f -- "$compiler" 2>/dev/null || printf '%s' "$compiler")
+   case "$compiler_path" in
+@@ -49,6 +43,7 @@ if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
+     printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2
+     exit 78
+   }
++  BATON2_ADMISSION_CHECK_ONLY=1 "$compiler" "$entry" -o "$output.c" >/dev/null || exit $?
+ fi
+ generated=${BEND_GENERATED_C:-}
+ if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
+diff --git a/bend2/scripts/check-install.py b/bend2/scripts/check-install.py
+index fb2ffee8b..fdcac6429 100644
+--- a/bend2/scripts/check-install.py
++++ b/bend2/scripts/check-install.py
+@@ -102,9 +102,9 @@ def verify_repl(prefix, manifest):
+ 
+ 
+ BINARY_LAYOUT = (
+-    {'role': 'focused-facade', 'path': 'bin/baton', 'alias': 'bin/baton2',
++    {'role': 'focused-facade', 'path': 'bin/baton', 'alias': None,
+      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
+-    {'role': 'full-cli', 'path': 'bin/baton-full', 'alias': None,
++    {'role': 'full-cli', 'path': 'bin/baton2', 'alias': 'bin/baton-full',
+      'entry': 'bend2/src/coordinator/main.bend',
+      'build_mode': 'full-native-receiver-router', 'wrapper': True},
+     {'role': 'recovery-helper', 'path': 'bin/baton-recovery', 'alias': None,
+@@ -194,14 +194,14 @@ def verify_binaries(prefix, manifest, checksums):
+                     'The installed full CLI lacks an exact wrapper source pin')
+         if layout['alias']:
+             require(record.get('alias') == layout['alias'],
+-                    'The focused facade must expose its baton2 alias')
++                    'The ' + record['role'] + ' must expose its ' + layout['alias'] + ' alias')
+             alias = prefix / layout['alias']
+             require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
+-                    'The installed baton2 alias is missing or not executable')
++                    'The installed ' + record['role'] + ' alias is missing or not executable')
+             require(archive_digest(alias) == digest,
+-                    'The installed baton2 alias differs from the focused facade')
++                    'The installed ' + record['role'] + ' alias differs from its binary')
+             require(checksums.get(layout['alias']) == digest,
+-                    'The installed baton2 alias is absent from SHA256SUMS')
++                    'The installed ' + record['role'] + ' alias ' + layout['alias'] + ' is absent from SHA256SUMS')
+         else:
+             require(record.get('alias') is None,
+                     'The ' + record['role'] + ' binary has an unexpected alias')
+@@ -283,8 +283,8 @@ def verify_binaries(prefix, manifest, checksums):
+             'The composite source manifest binary list differs')
+     binary = manifest.get('binary')
+     require(isinstance(binary, dict) and binary.get('path') == focused['path']
+-            and binary.get('alias') == 'bin/baton2' and binary.get('sha256') == focused['sha256'],
+-            'The compatibility binary record does not match the focused facade')
++            and binary.get('alias') is None and binary.get('sha256') == focused['sha256'],
++            'The compatibility binary record does not match the focused receiver')
+     receipt_path = prefix / 'install-receipt.json'
+     require(receipt_path.is_file() and not receipt_path.is_symlink(),
+             'The installation is missing its install receipt')
+diff --git a/bend2/scripts/check-native.sh b/bend2/scripts/check-native.sh
+index 8f72db78e..005cc055d 100644
+--- a/bend2/scripts/check-native.sh
++++ b/bend2/scripts/check-native.sh
+@@ -8,6 +8,8 @@ else
+   PYTHON3=/usr/bin/python3
+ fi
+ sh bend2/scripts/build-native.sh
++"$PYTHON3" bend2/test/package-receiver-layout.py
++sh bend2/test/bend-launch-guard.sh
+ sh bend2/scripts/build-native.sh bend2/test/process.bend .scratch/bend2/process-test
+ "$PYTHON3" bend2/test/custody-adopt.py
+ "$PYTHON3" bend2/test/observer-monitor.py
+diff --git a/bend2/scripts/package-native.py b/bend2/scripts/package-native.py
+index 50a47a30d..36a2e1bde 100644
+--- a/bend2/scripts/package-native.py
++++ b/bend2/scripts/package-native.py
+@@ -98,11 +98,11 @@ def build_binary(env, directory, label, entry=None, focused=False, router=False,
+ 
+ BINARY_LAYOUT = (
+     {'role': 'focused-facade', 'option': 'focused', 'label': 'baton-focused',
+-     'installed': 'bin/baton', 'alias': 'bin/baton2',
++     'installed': 'bin/baton', 'alias': None,
+      'entry': 'bend2/src/coordinator/receive-focused.bend',
+      'build_mode': 'focused-native-entry', 'focused': True, 'router': False},
+     {'role': 'full-cli', 'option': 'full', 'label': 'baton-full',
+-     'installed': 'bin/baton-full', 'alias': None,
++     'installed': 'bin/baton2', 'alias': 'bin/baton-full',
+      'entry': 'bend2/src/coordinator/main.bend',
+      'build_mode': 'full-native-receiver-router',
+      'focused': False, 'router': True, 'wrapper': True},
+@@ -757,7 +757,7 @@ def package(args):
+             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
+             'source': source,
+             'binaries': records, 'source_manifest': source_manifest,
+-            'binary': {'path': focused['path'], 'alias': focused['alias'],
++            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
+                        'sha256': focused['sha256'], 'source': focused['source']},
+             'selected_modules': selected_context,
+             'selected_dependencies': repl_compiler,
+diff --git a/bend2/scripts/run-checks.mjs b/bend2/scripts/run-checks.mjs
+index e24716bff..682ed1aa0 100644
+--- a/bend2/scripts/run-checks.mjs
++++ b/bend2/scripts/run-checks.mjs
+@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
+ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
+ import { basename, join, relative, resolve } from 'node:path';
+ 
++// Issue #677 exemption: this legacy module-fixture runner uses the
++// preinstalled Bend toolchain for source fixtures. It is not part of the
++// package build or deploy and does not produce coordinator artifacts.
+ const ROOT = resolve(import.meta.dirname, '..', '..');
+ const BEND_INSTALLED = join(ROOT, 'node_modules', '.bend', 'bin', 'bend');
+ const BEND_FALLBACK = join(ROOT, '.bend', 'bin', 'bend');
+diff --git a/bend2/scripts/smoke-native-artifact.py b/bend2/scripts/smoke-native-artifact.py
+index ae8585fc8..3902b389d 100644
+--- a/bend2/scripts/smoke-native-artifact.py
++++ b/bend2/scripts/smoke-native-artifact.py
+@@ -196,10 +196,11 @@ def extract(archive, manifest_path, destination):
+     require((prefix / 'manifest.json').read_bytes() == manifest_bytes,
+             'Archive manifest differs from supplied manifest')
+     binaries = manifest.get('binaries')
+-    require(isinstance(binaries, list) and len(binaries) == 2,
+-            'The receiver archive must declare the focused facade and full CLI')
+-    expected = {'focused-facade': ('bin/baton', 'bin/baton2'),
+-                'full-cli': ('bin/baton-full', None)}
++    require(isinstance(binaries, list) and len(binaries) == 3,
++            'The receiver archive must declare the focused receiver, full router and recovery helper')
++    expected = {'focused-facade': ('bin/baton', None),
++                'full-cli': ('bin/baton2', 'bin/baton-full'),
++                'recovery-helper': ('bin/baton-recovery', None)}
+     seen = set()
+     focused = None
+     for record in binaries:
+@@ -214,20 +215,21 @@ def extract(archive, manifest_path, destination):
+         require(archive_digest(installed) == record.get('sha256'),
+                 'Archive ' + role + ' binary differs from its manifest hash')
+         if alias_name:
+-            require(record.get('alias') == alias_name, 'Focused facade must declare its baton2 alias')
++            require(record.get('alias') == alias_name, record['role'] + ' must declare its ' + alias_name + ' alias')
+             alias = prefix / alias_name
+             require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
+-                    'Staged baton2 alias is not an executable regular file')
++                    'Staged ' + alias_name + ' alias is not an executable regular file')
+             require(archive_digest(alias) == archive_digest(installed),
+-                    'Staged baton2 alias differs from the focused facade')
+-            focused = record
++                    'Staged ' + alias_name + ' alias differs from its binary')
+         else:
+             require(record.get('alias') is None, 'Unexpected binary alias in the archive')
+-    require(seen == set(expected), 'Archive is missing the focused or full binary')
++        if role == 'focused-facade':
++            focused = record
++    require(seen == set(expected), 'Archive is missing a required package role')
+     binary = manifest['binary']
+     require(binary.get('path') == focused['path'] and binary.get('alias') == focused['alias']
+             and binary.get('sha256') == focused['sha256'],
+-            'Compatibility binary record does not match the focused facade')
++            'Compatibility binary record does not match the focused receiver')
+     return prefix, manifest
+ 
+ 
+diff --git a/bend2/scripts/stage-native-install.py b/bend2/scripts/stage-native-install.py
+index f98ebf736..ecbd088b8 100644
+--- a/bend2/scripts/stage-native-install.py
++++ b/bend2/scripts/stage-native-install.py
+@@ -13,9 +13,9 @@ import shutil
+ 
+ ROOT = Path(__file__).resolve().parents[2]
+ BINARY_LAYOUT = (
+-    {'role': 'focused-facade', 'option': 'focused', 'name': 'baton', 'alias': 'baton2',
++    {'role': 'focused-facade', 'option': 'focused', 'name': 'baton', 'alias': None,
+      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
+-    {'role': 'full-cli', 'option': 'full', 'name': 'baton-full', 'alias': None,
++    {'role': 'full-cli', 'option': 'full', 'name': 'baton2', 'alias': 'baton-full',
+      'entry': 'bend2/src/coordinator/main.bend',
+      'wrapper': True, 'build_mode': 'full-native-receiver-router'},
+     {'role': 'recovery-helper', 'option': 'recovery', 'name': 'baton-recovery', 'alias': None,
+@@ -202,9 +202,9 @@ def main():
+     spec.loader.exec_module(package)
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--focused-binary', type=Path, required=True,
+-                        help='source-built focused receiver facade installed as bin/baton and bin/baton2')
++                        help='source-built focused receiver installed as bin/baton')
+     parser.add_argument('--full-binary', type=Path, required=True,
+-                        help='full CLI installed as bin/baton-full')
++                        help='full router installed as bin/baton2 with the bin/baton-full general CLI sibling')
+     parser.add_argument('--recovery-binary', type=Path, required=True,
+                         help='focused recovery helper installed as bin/baton-recovery')
+     for role in ('focused', 'full', 'recovery'):
+diff --git a/bend2/scripts/verify-receiver-install.py b/bend2/scripts/verify-receiver-install.py
+index fe42d2f05..daed9a3b9 100755
+--- a/bend2/scripts/verify-receiver-install.py
++++ b/bend2/scripts/verify-receiver-install.py
+@@ -31,6 +31,21 @@ def probe(prefix, expected, argv):
+             'stdout': result.stdout, 'stderr': result.stderr}
+ 
+ 
++def probe_missing_full_routes(prefix):
++    """Both the full router and its general CLI copy must be absent for focused delegation to fail."""
++    full = prefix / 'bin/baton2'
++    alias = prefix / 'bin/baton-full'
++    hidden_full = prefix / 'bin/.baton2.retained'
++    hidden_alias = prefix / 'bin/.baton-full.retained'
++    full.rename(hidden_full)
++    alias.rename(hidden_alias)
++    try:
++        return probe(prefix, 78, [prefix / 'bin/baton', '--help'])
++    finally:
++        hidden_alias.rename(alias)
++        hidden_full.rename(full)
++
++
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--source', type=Path, required=True)
+@@ -90,13 +105,7 @@ def main():
+     operations.append(probe(prefix, 0, [prefix / 'bin/baton-full', '--help']))
+     operations.append(probe(prefix, 0, [prefix / 'bin/baton2', '--help']))
+     operations.append(probe(prefix, 0, [prefix / 'bin/baton-recovery', '--help']))
+-    full = prefix / 'bin/baton-full'
+-    hidden_full = prefix / 'bin/.baton-full.retained'
+-    full.rename(hidden_full)
+-    try:
+-        operations.append(probe(prefix, 78, [prefix / 'bin/baton', '--help']))
+-    finally:
+-        hidden_full.rename(full)
++    operations.append(probe_missing_full_routes(prefix))
+     focused = prefix / 'bin/baton'
+     hidden_focused = prefix / 'bin/.baton.retained'
+     focused.rename(hidden_focused)
+@@ -105,6 +114,7 @@ def main():
+                                              'session', 'harness', 'output.jsonl']))
+     finally:
+         hidden_focused.rename(focused)
++    full = prefix / 'bin/baton2'
+     recovery = prefix / 'bin/baton-recovery'
+     hidden_recovery = prefix / 'bin/.baton-recovery.retained'
+     recovery.rename(hidden_recovery)
+diff --git a/bend2/test/bend-launch-guard.sh b/bend2/test/bend-launch-guard.sh
+index 4126b8fcd..07f02a175 100755
+--- a/bend2/test/bend-launch-guard.sh
++++ b/bend2/test/bend-launch-guard.sh
+@@ -16,14 +16,23 @@ chmod 0755 "$temp/bin/bend"
+ cat > "$temp/bin/bun" <<'STUB'
+ #!/bin/sh
+ printf '%s\n' "$*" >> "$BUN_STUB_LOG"
++out=
++prev=
+ for arg in "$@"; do
+-  if [ "$arg" = version ]; then printf 'bend 2.0.25\n'; fi
++  if [ "$arg" = version ]; then printf 'bend 2.0.25\n'; exit 0; fi
++  if [ "$prev" = -o ]; then out=$arg; fi
++  prev=$arg
+ done
++if [ -n "$out" ]; then
++  printf '%s\n' "$*" >> "$CGEN_STUB_LOG"
++  printf '/* stub */\n' > "$out"
++fi
+ exit 0
+ STUB
+ chmod 0755 "$temp/bin/bun"
+ printf '// stub compiler entry\n' > "$temp/bend2/main.ts"
+ export BUN_STUB_LOG="$temp/calls.log"
++export CGEN_STUB_LOG="$temp/cgen.log"
+ 
+ probe=
+ for candidate in /sys/fs/cgroup/*; do
+@@ -82,16 +91,39 @@ grep -q 'missing-cgroup' "$temp/focused.err" || { echo "FAIL focused refusal cau
+ echo "PASS focused_entry_refused_without_cgroup"
+ 
+ status=0; "$temp/bin/bend" --check-only bend2/src/coordinator/main.bend >"$temp/check.out" 2>"$temp/check.err" || status=$?
+-[ "${status:-0}" = 0 ] || { echo "FAIL check-only status=$status"; cat "$temp/check.err"; exit 1; }
+-[ "$(calls)" = 1 ] || { echo "FAIL check-only stub_calls=$(calls)"; exit 1; }
+-echo "PASS check_only_allowed"
++[ "$status" = 78 ] || { echo "FAIL check-only status=$status"; cat "$temp/check.err"; exit 1; }
++grep -q 'missing-cgroup' "$temp/check.err" || { echo "FAIL check-only refusal cause"; exit 1; }
++[ "$(calls)" = 0 ] || { echo "FAIL check-only stub_calls=$(calls)"; exit 1; }
++echo "PASS check_only_refused_without_admission"
+ 
+ status=0; BATON2_ADMISSION_CGROUP="$temp/not-a-cgroup" "$temp/bin/bend" bend2/test/tiny.bend -o out.c >"$temp/badcgroup.out" 2>"$temp/badcgroup.err" || status=$?
+ [ "$status" = 78 ] || { echo "FAIL bad cgroup status=$status"; cat "$temp/badcgroup.err"; exit 1; }
+ grep -q 'missing-cgroup-directory' "$temp/badcgroup.err" || { echo "FAIL bad cgroup cause"; exit 1; }
+-[ "$(calls)" = 1 ] || { echo "FAIL bad cgroup stub_calls=$(calls)"; exit 1; }
++[ "$(calls)" = 0 ] || { echo "FAIL bad cgroup stub_calls=$(calls)"; exit 1; }
+ echo "PASS focused_missing_cgroup_directory_refused"
+ 
++mkdir -p "$temp/outside-cgroup"
++status=0
++BATON2_ADMISSION_CGROUP="$temp/outside-cgroup" "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/outside.out" 2>"$temp/outside.err" || status=$?
++[ "$status" = 78 ] || { echo "FAIL outside cgroup status=$status"; cat "$temp/outside.err"; exit 1; }
++grep -q 'cgroup-outside-canonical-root' "$temp/outside.err" || { echo "FAIL outside cgroup cause"; exit 1; }
++echo "PASS cgroup_outside_root_refused"
++
++missing_max=
++for candidate in /sys/fs/cgroup/*; do
++  [ -d "$candidate" ] || continue
++  if [ ! -e "$candidate/memory.max" ]; then missing_max=$candidate; break; fi
++done
++if [ -n "$missing_max" ]; then
++  status=0
++  BATON2_ADMISSION_CGROUP="$missing_max" "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/missing-max.out" 2>"$temp/missing-max.err" || status=$?
++  [ "$status" = 78 ] || { echo "FAIL missing memory.max status=$status"; cat "$temp/missing-max.err"; exit 1; }
++  grep -q 'missing-memory-max' "$temp/missing-max.err" || { echo "FAIL missing memory.max cause"; exit 1; }
++  echo "PASS missing_memory_max_refused"
++else
++  echo "SKIP missing memory.max fixture requires a cgroup directory without memory.max"
++fi
++
+ if [ -n "$probe" ]; then
+ cat > "$temp/receipt.json" <<RECEIPT
+ {"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "out.c", "cgroup": "$probe"}
+@@ -104,7 +136,7 @@ status=0
+ ) || status=$?
+ [ "$status" = 78 ] || { echo "FAIL capped rlimit status=$status"; cat "$temp/capped.err"; exit 1; }
+ grep -q 'rlimit-as-capped' "$temp/capped.err" || { echo "FAIL capped cause"; exit 1; }
+-[ "$(calls)" = 1 ] || { echo "FAIL capped stub_calls=$(calls)"; exit 1; }
++[ "$(calls)" = 0 ] || { echo "FAIL capped stub_calls=$(calls)"; exit 1; }
+ echo "PASS capped_rlimit_refused"
+ 
+ status=0
+@@ -112,7 +144,7 @@ BATON2_ADMISSION_CGROUP="$probe" BATON2_ADMISSION_RECEIPT="$temp/receipt.json" \
+   "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/member.out" 2>"$temp/member.err" || status=$?
+ [ "$status" = 78 ] || { echo "FAIL membership status=$status"; cat "$temp/member.err"; exit 1; }
+ grep -q 'cgroup-membership-mismatch' "$temp/member.err" || { echo "FAIL membership cause"; exit 1; }
+-[ "$(calls)" = 1 ] || { echo "FAIL membership stub_calls=$(calls)"; exit 1; }
++[ "$(calls)" = 0 ] || { echo "FAIL membership stub_calls=$(calls)"; exit 1; }
+ echo "PASS cgroup_membership_mismatch_refused"
+ fi
+ 
+@@ -136,9 +168,9 @@ for a in "$@"; do if [ "$prev" = -o ]; then out=$a; fi; prev=$a; done
+ CC
+ chmod 0755 "$temp/fake-bend" "$temp/fake-cc"
+ status=0
+-BEND="$temp/fake-bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" >"$temp/default.out" 2>"$temp/default.err" || status=$?
++BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" >"$temp/default.out" 2>"$temp/default.err" || status=$?
+ [ "$status" = 78 ] || { echo "FAIL default build status=$status"; cat "$temp/default.err"; exit 1; }
+-grep -q 'default-full-main-without-admission' "$temp/default.err" || { echo "FAIL default refusal cause"; exit 1; }
++grep -q 'missing-cgroup' "$temp/default.err" || { echo "FAIL default refusal cause"; exit 1; }
+ echo "PASS default_build_full_main_refused"
+ status=0
+ BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" bend2/tests/land.bend "$temp/focused-build" >"$temp/default-focused.out" 2>"$temp/default-focused.err" || status=$?
+@@ -154,6 +186,29 @@ BATON2_ADMISSION_CGROUP="$probe" BATON2_ADMISSION_RECEIPT="$temp/receipt.json" \
+ grep -q 'compiler-not-guarded' "$temp/default-unbound.err" || { echo "FAIL unguarded compiler cause"; exit 1; }
+ echo "PASS default_build_unguarded_compiler_refused"
+ 
++swap_probe=
++for candidate in /sys/fs/cgroup/* /sys/fs/cgroup/*/*; do
++  [ -r "$candidate/memory.max" ] || continue
++  swap_maximum=$(cat "$candidate/memory.swap.max" 2>/dev/null || true)
++  maximum=$(cat "$candidate/memory.max" 2>/dev/null || true)
++  case "$maximum" in ''|max|*[!0-9]*) continue;; esac
++  [ "$maximum" -gt 0 ] || continue
++  if [ -n "$swap_maximum" ] && [ "$swap_maximum" != 0 ]; then swap_probe=$candidate; break; fi
++done
++if [ -n "$swap_probe" ]; then
++  cat > "$temp/swap-receipt.json" <<RECEIPT
++{"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "out.c", "cgroup": "$swap_probe"}
++RECEIPT
++  status=0
++  BATON2_ADMISSION_CGROUP="$swap_probe" BATON2_ADMISSION_RECEIPT="$temp/swap-receipt.json" \
++    "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/swap.out" 2>"$temp/swap.err" || status=$?
++  [ "$status" = 78 ] || { echo "FAIL nonzero swap status=$status"; cat "$temp/swap.err"; exit 1; }
++  grep -q 'swap-not-disabled' "$temp/swap.err" || { echo "FAIL nonzero swap cause"; cat "$temp/swap.err"; exit 1; }
++  echo "PASS nonzero_swap_refused"
++else
++  echo "SKIP nonzero swap fixture requires a finite nonzero-swap cgroup"
++fi
++
+ current_relative=$(sed -n 's/^0:://p' /proc/self/cgroup)
+ current=/sys/fs/cgroup$current_relative
+ current_max=$(cat "$current/memory.max" 2>/dev/null || true)
+@@ -173,6 +228,107 @@ RECEIPT
+     "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c
+   [ "$(calls)" = "$((before + 2))" ] || { echo "FAIL admitted Main compiler call"; exit 1; }
+   echo "PASS Main_entry_allowed_with_matching_receipt"
++  before_receipt=$(calls)
++  status=0
++  BATON2_ADMISSION_CGROUP="$current" "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/no-receipt.out" 2>"$temp/no-receipt.err" || status=$?
++  [ "$status" = 78 ] || { echo "FAIL missing receipt status=$status"; cat "$temp/no-receipt.err"; exit 1; }
++  grep -q 'missing-receipt' "$temp/no-receipt.err" || { echo "FAIL missing receipt cause"; exit 1; }
++  [ "$(calls)" = "$before_receipt" ] || { echo "FAIL missing receipt reached compiler"; exit 1; }
++  echo "PASS missing_receipt_refused"
++  for decision_case in denied focused; do
++    if [ "$decision_case" = denied ]; then
++      receipt_decision=denied; receipt_class=full
++    else
++      receipt_decision=admitted; receipt_class=focused
++    fi
++    cat > "$temp/$decision_case.json" <<RECEIPT
++{"decision": "$receipt_decision", "class": "$receipt_class", "entry": "bend2/src/coordinator/main.bend", "output": "out.c", "cgroup": "$current"}
++RECEIPT
++    status=0
++    BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/$decision_case.json" \
++      "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/$decision_case.out" 2>"$temp/$decision_case.err" || status=$?
++    [ "$status" = 78 ] || { echo "FAIL $decision_case receipt status=$status"; cat "$temp/$decision_case.err"; exit 1; }
++    grep -q 'receipt-mismatch' "$temp/$decision_case.err" || { echo "FAIL $decision_case receipt cause"; exit 1; }
++    [ "$(calls)" = "$before_receipt" ] || { echo "FAIL $decision_case receipt reached compiler"; exit 1; }
++    echo "PASS ${decision_case}_receipt_refused"
++  done
++  before_preflight=$(calls)
++  before_preflight_cgen=$(wc -l < "$CGEN_STUB_LOG")
++  BATON2_ADMISSION_CHECK_ONLY=1 BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/current-receipt.json" \
++    "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c
++  [ "$(calls)" = "$before_preflight" ] || { echo "FAIL check-only preflight invoked compiler"; exit 1; }
++  [ "$(wc -l < "$CGEN_STUB_LOG")" = "$before_preflight_cgen" ] || { echo "FAIL preflight generated C"; exit 1; }
++  echo "PASS check_only_preflight_does_not_invoke_compiler"
++  before_check=$(calls)
++  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/current-receipt.json" \
++    "$temp/bin/bend" --check-only bend2/src/coordinator/main.bend
++  [ "$(calls)" = "$((before_check + 1))" ] || { echo "FAIL admitted check-only compiler call"; exit 1; }
++  echo "PASS check_only_allowed_in_own_bounded_cgroup"
++  baseline=$(calls)
++  cat > "$temp/malformed.json" <<'RECEIPT'
++{
++RECEIPT
++  status=0
++  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/malformed.json" \
++    "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/malformed.out" 2>"$temp/malformed.err" || status=$?
++  [ "$status" = 78 ] || { echo "FAIL malformed receipt status=$status"; cat "$temp/malformed.err"; exit 1; }
++  grep -q 'receipt-mismatch' "$temp/malformed.err" || { echo "FAIL malformed receipt cause"; exit 1; }
++  [ "$(calls)" = "$baseline" ] || { echo "FAIL malformed receipt reached compiler"; exit 1; }
++  echo "PASS malformed_receipt_refused"
++  for case_name in entry output cgroup; do
++    case "$case_name" in
++      entry) receipt_entry=bend2/test/tiny.bend; receipt_output=out.c; receipt_cgroup="$current" ;;
++      output) receipt_entry=bend2/src/coordinator/main.bend; receipt_output=other.c; receipt_cgroup="$current" ;;
++      cgroup) receipt_entry=bend2/src/coordinator/main.bend; receipt_output=out.c; receipt_cgroup=/sys/fs/cgroup/other ;;
++    esac
++    cat > "$temp/mismatch-$case_name.json" <<RECEIPT
++{"decision": "admitted", "class": "full", "entry": "$receipt_entry", "output": "$receipt_output", "cgroup": "$receipt_cgroup"}
++RECEIPT
++    status=0
++    BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/mismatch-$case_name.json" \
++      "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/mismatch-$case_name.out" 2>"$temp/mismatch-$case_name.err" || status=$?
++    [ "$status" = 78 ] || { echo "FAIL $case_name mismatch status=$status"; cat "$temp/mismatch-$case_name.err"; exit 1; }
++    grep -q 'receipt-mismatch' "$temp/mismatch-$case_name.err" || { echo "FAIL $case_name mismatch cause"; exit 1; }
++    [ "$(calls)" = "$baseline" ] || { echo "FAIL $case_name mismatch reached compiler"; exit 1; }
++    echo "PASS ${case_name}_mismatch_refused"
++  done
++  status=0
++  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/malformed.json" \
++    BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" bend2/src/coordinator/main.bend "$temp/build-refused" >"$temp/build-malformed.out" 2>"$temp/build-malformed.err" || status=$?
++  [ "$status" = 78 ] || { echo "FAIL build malformed receipt status=$status"; cat "$temp/build-malformed.err"; exit 1; }
++  grep -q 'receipt-mismatch' "$temp/build-malformed.err" || { echo "FAIL build malformed receipt cause"; exit 1; }
++  [ ! -f "$temp/build-refused" ] || { echo "FAIL build malformed receipt wrote output"; exit 1; }
++  echo "PASS build_native_reuses_admission_validator"
++  cat > "$temp/build-accepted.json" <<RECEIPT
++{"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "$temp/build-accepted.c", "cgroup": "$current"}
++RECEIPT
++  before_accept=$(calls)
++  before_accept_cgen=$(wc -l < "$CGEN_STUB_LOG")
++  status=0
++  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/build-accepted.json" \
++    BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" \
++    bend2/src/coordinator/main.bend "$temp/build-accepted" >"$temp/build-accepted.out" 2>"$temp/build-accepted.err" || status=$?
++  [ "$status" = 0 ] || { echo "FAIL accepted build status=$status"; cat "$temp/build-accepted.err"; exit 1; }
++  [ "$(calls)" = "$((before_accept + 2))" ] || { echo "FAIL accepted build wrapper calls=$(calls)"; exit 1; }
++  [ "$(wc -l < "$CGEN_STUB_LOG")" = "$((before_accept_cgen + 1))" ] || { echo "FAIL accepted build Cgen calls"; exit 1; }
++  tail -1 "$CGEN_STUB_LOG" | grep -F -- "-o $temp/build-accepted.c" >/dev/null || { echo "FAIL accepted build output path"; exit 1; }
++  [ -f "$temp/build-accepted.c" ] || { echo "FAIL accepted build missing C output"; exit 1; }
++  [ -f "$temp/build-accepted" ] || { echo "FAIL accepted build missing binary"; exit 1; }
++  echo "PASS build_native_one_cgen_same_output_path"
++  cat > "$temp/build-wrong.json" <<RECEIPT
++{"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "$temp/wrong.c", "cgroup": "$current"}
++RECEIPT
++  before_wrong=$(calls)
++  status=0
++  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/build-wrong.json" \
++    BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" \
++    bend2/src/coordinator/main.bend "$temp/build-wrong" >"$temp/build-wrong.out" 2>"$temp/build-wrong.err" || status=$?
++  [ "$status" = 78 ] || { echo "FAIL wrong build output status=$status"; cat "$temp/build-wrong.err"; exit 1; }
++  grep -q 'receipt-mismatch' "$temp/build-wrong.err" || { echo "FAIL wrong build output cause"; exit 1; }
++  [ "$(calls)" = "$before_wrong" ] || { echo "FAIL wrong build output reached compiler"; exit 1; }
++  [ ! -f "$temp/build-wrong" ] || { echo "FAIL wrong build output wrote binary"; exit 1; }
++  echo "PASS build_native_rejects_receipt_path_mismatch"
++  before_capped=$(calls)
+   status=0
+   (
+     ulimit -v 262144
+@@ -180,7 +336,7 @@ RECEIPT
+   ) >"$temp/current-capped.out" 2>"$temp/current-capped.err" || status=$?
+   [ "$status" = 78 ] || { echo "FAIL focused capped rlimit status=$status"; exit 1; }
+   grep -q 'rlimit-as-capped' "$temp/current-capped.err" || { echo "FAIL focused capped rlimit cause"; exit 1; }
+-  [ "$(calls)" = "$((before + 2))" ] || { echo "FAIL compiler ran with capped rlimit"; exit 1; }
++  [ "$(calls)" = "$before_capped" ] || { echo "FAIL compiler ran with capped rlimit"; exit 1; }
+   echo "PASS focused_capped_rlimit_refused"
+ else
+   echo "SKIP admitted cases require a bounded zero-swap test scope"
+diff --git a/bend2/test/package-receiver-layout.py b/bend2/test/package-receiver-layout.py
+index ca165171e..e846cc4f2 100644
+--- a/bend2/test/package-receiver-layout.py
++++ b/bend2/test/package-receiver-layout.py
+@@ -23,6 +23,7 @@ def load(name, path):
+ PACKAGE = load('package_native', ROOT / 'bend2/scripts/package-native.py')
+ STAGE = load('stage_native_install', ROOT / 'bend2/scripts/stage-native-install.py')
+ CHECK = load('check_install', ROOT / 'bend2/scripts/check-install.py')
++VERIFY = load('verify_receiver_install', ROOT / 'bend2/scripts/verify-receiver-install.py')
+ FINALIZE = load('finalize_native_payload', ROOT / 'bend2/scripts/finalize-native-payload.py')
+ COMMIT = 'a' * 40
+ 
+@@ -89,7 +90,7 @@ class ReceiverLayout(unittest.TestCase):
+         manifest = {
+             'schema': 'baton2-native-install-v2', 'source': {'commit': COMMIT, 'status': ''},
+             'binaries': records, 'source_manifest': source_manifest,
+-            'binary': {'path': focused['path'], 'alias': focused['alias'],
++            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
+                        'sha256': focused['sha256'], 'source': focused['source']},
+         }
+         PACKAGE.write_json(prefix / 'source-manifest.json', source_manifest)
+@@ -190,8 +191,10 @@ class ReceiverLayout(unittest.TestCase):
+         records = PACKAGE.stage_receiver_binaries(payload, specs, built)
+         self.assertEqual([record['role'] for record in records],
+                          ['focused-facade', 'full-cli', 'recovery-helper'])
+-        self.assertEqual((payload / 'bin/baton').read_bytes(),
+-                         (payload / 'bin/baton2').read_bytes())
++        self.assertEqual((payload / 'bin/baton2').read_bytes(),
++                         (payload / 'bin/baton-full').read_bytes())
++        self.assertNotEqual((payload / 'bin/baton').read_bytes(),
++                            (payload / 'bin/baton2').read_bytes())
+         self.assertEqual([record['build_mode'] for record in records],
+                          ['focused-native-entry', 'full-native-receiver-router',
+                           'recovery-native-entry'])
+@@ -269,10 +272,12 @@ class ReceiverLayout(unittest.TestCase):
+         for name in ('baton', 'baton2', 'baton-full', 'baton-recovery'):
+             path = prefix / 'bin' / name
+             self.assertTrue(path.is_file() and os.access(path, os.X_OK), name)
+-        self.assertEqual((prefix / 'bin/baton').read_bytes(),
+-                         (prefix / 'bin/baton2').read_bytes())
++        self.assertEqual((prefix / 'bin/baton2').read_bytes(),
++                         (prefix / 'bin/baton-full').read_bytes())
++        self.assertNotEqual((prefix / 'bin/baton').read_bytes(),
++                            (prefix / 'bin/baton2').read_bytes())
+         self.assertEqual(manifest['binary']['path'], 'bin/baton')
+-        self.assertEqual(manifest['binary']['alias'], 'bin/baton2')
++        self.assertIsNone(manifest['binary']['alias'])
+         self.assertEqual([record['source']['commit'] for record in records],
+                          [COMMIT, COMMIT, COMMIT])
+         self.assertEqual([record['source']['tree'] for record in records],
+@@ -323,13 +328,15 @@ class ReceiverLayout(unittest.TestCase):
+ 
+     def test_installed_check_refuses_missing_or_altered_sibling(self):
+         prefix, manifest, records = self.staged()
+-        full = prefix / 'bin/baton-full'
++        full = prefix / 'bin/baton2'
+         full.unlink()
+         with self.assertRaisesRegex(RuntimeError, 'full-cli binary is missing'):
+             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
+-        full.write_bytes(b'changed\n')
+-        full.chmod(0o755)
+-        with self.assertRaisesRegex(RuntimeError, 'differs from its manifest hash'):
++        prefix, manifest, records = self.staged()
++        alias = prefix / 'bin/baton-full'
++        alias.write_bytes(b'changed\n')
++        alias.chmod(0o755)
++        with self.assertRaisesRegex(RuntimeError, 'full-cli alias differs'):
+             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
+ 
+     def test_installed_check_refuses_missing_recovery_helper(self):
+@@ -352,5 +359,39 @@ class ReceiverLayout(unittest.TestCase):
+             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
+ 
+ 
++    def test_missing_full_routes_hides_both_router_paths_then_restores(self):
++        prefix = self.home / 'route-prefix'
++        binary = prefix / 'bin'
++        binary.mkdir(parents=True)
++        (binary / 'baton').write_text(
++            '#!/bin/sh\nd=$(dirname "$0")\n'
++            '[ ! -e "$d/baton2" ] && [ ! -e "$d/baton-full" ] || exit 0\n'
++            'exit 78\n')
++        (binary / 'baton').chmod(0o755)
++        (binary / 'baton2').write_text('router\n')
++        (binary / 'baton-full').write_text('general\n')
++        operation = VERIFY.probe_missing_full_routes(prefix)
++        self.assertEqual(operation['returncode'], 78)
++        self.assertTrue((binary / 'baton2').is_file())
++        self.assertTrue((binary / 'baton-full').is_file())
++        self.assertFalse((binary / '.baton2.retained').exists())
++        self.assertFalse((binary / '.baton-full.retained').exists())
++
++    def test_missing_full_routes_restores_both_paths_after_refusal(self):
++        prefix = self.home / 'route-refusal-prefix'
++        binary = prefix / 'bin'
++        binary.mkdir(parents=True)
++        (binary / 'baton').write_text('#!/bin/sh\nexit 0\n')
++        (binary / 'baton').chmod(0o755)
++        (binary / 'baton2').write_text('router\n')
++        (binary / 'baton-full').write_text('general\n')
++        with self.assertRaisesRegex(RuntimeError, 'instead of 78'):
++            VERIFY.probe_missing_full_routes(prefix)
++        self.assertTrue((binary / 'baton2').is_file())
++        self.assertTrue((binary / 'baton-full').is_file())
++        self.assertFalse((binary / '.baton2.retained').exists())
++        self.assertFalse((binary / '.baton-full.retained').exists())
++
++
+ if __name__ == '__main__':
+     unittest.main()
+diff --git a/docs/bend2/installation.md b/docs/bend2/installation.md
+index f33cc8919..5f126c01f 100644
+--- a/docs/bend2/installation.md
++++ b/docs/bend2/installation.md
+@@ -22,17 +22,18 @@ The check refuses before command links change.
+ 
+ ## Stage a source installation
+ 
+-A source installation from the receiver layout contains three executable paths.
+-`bin/baton` is the focused receiver facade, `bin/baton2` is its alias, and
+-`bin/baton-full` is the general CLI. The focused facade sends general actions
+-to `bin/baton-full`. The full CLI is relinked with
+-`BATON2_NATIVE_RECEIVER_ROUTER` and forwards internal receiver actions to the
+-focused facade. A missing or non-executable sibling makes the operation refuse
+-with exit status 78.
+-
+-Stage the layout from two already-built binaries. Each binary needs its exact
++A source installation from the receiver layout contains four executable paths
++across three roles. `bin/baton` is the focused receiver, `bin/baton2` is the
++full router, `bin/baton-full` is the general CLI sibling, and
++`bin/baton-recovery` is the recovery helper. The focused receiver sends
++general and help actions to `bin/baton-full`. The full router is relinked with
++`BATON2_NATIVE_RECEIVER_ROUTER` and forwards internal receiver actions to
++`bin/baton` and recovery actions to `bin/baton-recovery`. A missing or
++non-executable sibling makes the operation refuse with exit status 78.
++
++Stage the layout from three already-built binaries. Each binary needs its exact
+ source commit and either its source tree object or a source manifest SHA256.
+-The full CLI also records its current native-entry wrapper source separately
++The full router also records its current native-entry wrapper source separately
+ from the retained full source or C identity. `bend2/scripts/stage-native-install.py` also requires the current REPL
+ compiler source, Bun runtime, runtime SHA256 and complete runtime notices.
+ 
+@@ -41,10 +42,13 @@ python3 "$BATON2_SOURCE/bend2/scripts/stage-native-install.py" \
+   --prefix "$BATON2_PREFIX" \
+   --focused-binary "$BATON2_FOCUSED" \
+   --full-binary "$BATON2_FULL" \
++  --recovery-binary "$BATON2_RECOVERY" \
+   --focused-source-commit "$BATON2_FOCUSED_COMMIT" \
+   --focused-source-tree "$BATON2_FOCUSED_TREE" \
+   --full-source-commit "$BATON2_FULL_COMMIT" \
+   --full-source-tree "$BATON2_FULL_TREE" \
++  --recovery-source-commit "$BATON2_RECOVERY_COMMIT" \
++  --recovery-source-tree "$BATON2_RECOVERY_TREE" \
+   --full-wrapper-source-commit "$BATON2_WRAPPER_COMMIT" \
+   --full-wrapper-source-tree "$BATON2_WRAPPER_TREE" \
+   --repl-compiler-source "$BATON2_SOURCE/bend2/compiler/upstream" \
+@@ -53,19 +57,19 @@ python3 "$BATON2_SOURCE/bend2/scripts/stage-native-install.py" \
+   --repl-runtime-notices "$BATON2_BUN_NOTICES"
+ ```
+ 
+-An emergency general CLI may retain an earlier installed `baton-full` binary.
++An emergency full router may retain an earlier installed `bin/baton2` binary.
+ Pass its earlier retained source with `--full-source-commit` and
+ `--full-source-tree`, its retained C with `--full-c-sha256`, and the current wrapper with
+ `--full-wrapper-source-commit` and `--full-wrapper-source-tree`. The manifest
+-and install receipt record both pins while the focused facade keeps its current
++and install receipt record both pins while the focused receiver keeps its current
+ pin. The earlier binary's own features remain limited to its retained source pin.
+ 
+ The staging manifest uses schema `baton2-native-install-v2` and records each
+ binary's role, installed path, SHA256, source pin, entry and build mode.
+-`SHA256SUMS` covers the three executable paths, the manifest and the install
++`SHA256SUMS` covers the four executable paths, the manifest and the install
+ receipt. `install-receipt.json` binds the manifest hash and binary pins.
+-`libexec/baton2/check-install.py` verifies those files, the focused alias and
+-the required REPL payload. It refuses a missing, non-executable, altered or
++`libexec/baton2/check-install.py` verifies those files, the full general CLI
++sibling and all three role binaries, and the required REPL payload. It refuses a missing, non-executable, altered or
+ unrecorded binary and reports the verified binary pins in its result.
+ 
+ ## Install or update a published release
+@@ -107,8 +111,9 @@ import hashlib, json, pathlib, sys
+ prefix = pathlib.Path(sys.argv[1])
+ manifest = json.loads((prefix / 'manifest.json').read_text())
+ assert manifest['binary']['path'] == 'bin/baton'
+-assert manifest['binary']['alias'] == 'bin/baton2'
+-assert (prefix / 'bin/baton').read_bytes() == (prefix / 'bin/baton2').read_bytes()
++assert manifest['binary']['alias'] is None
++assert (prefix / 'bin/baton2').read_bytes() == (prefix / 'bin/baton-full').read_bytes()
++assert (prefix / 'bin/baton').read_bytes() != (prefix / 'bin/baton2').read_bytes()
+ for record in manifest['binaries']:
+     assert hashlib.sha256((prefix / record['path']).read_bytes()).hexdigest() == record['sha256']
+ PY
+diff --git a/docs/bend2/native-artifacts.md b/docs/bend2/native-artifacts.md
+index c47164481..6be88cf88 100644
+--- a/docs/bend2/native-artifacts.md
++++ b/docs/bend2/native-artifacts.md
+@@ -1,6 +1,6 @@
+ # Native artifacts
+ 
+-`bend2/scripts/package-native.py` builds the production receiver layout and packages a Darwin arm64 development or release archive. The layout contains the focused facade at `bin/baton` with the `bin/baton2` alias, the general CLI at `bin/baton-full`, together with harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the overall source identity, each binary's path, SHA256, entry, build mode and source commit with tree or source manifest hash, the retained full C hash when available, the full wrapper source pin, the target platform, selected module identities, required REPL dependency hashes, system prerequisites, build commands and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum and the payload records executable checksums, the manifest and the install receipt.
++`bend2/scripts/package-native.py` builds the production receiver layout and packages a Darwin arm64 development or release archive. The layout contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, and the general CLI sibling at `bin/baton-full`, together with harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the overall source identity, each binary's path, SHA256, entry, build mode and source commit with tree or source manifest hash, the retained full C hash when available, the full wrapper source pin, the target platform, selected module identities, required REPL dependency hashes, system prerequisites, build commands and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum and the payload records executable checksums, the manifest and the install receipt.
+ 
+ ## Build and package
+ 
+@@ -38,7 +38,7 @@ complete distribution notices are required build inputs; packaging fails when
+ they are absent or invalid. The manifest records the required
+ `bend2-repl-compiler` dependency and the host system prerequisites.
+ 
+-The package command runs [build-native.sh](../../bend2/scripts/build-native.sh) for each required binary. The focused facade uses `BATON2_RECEIVE_FOCUSED=1` with its native entry. The full CLI uses `BATON2_NATIVE_RECEIVER_ROUTER=1` and forwards internal receiver actions to the focused facade. A supplied binary is accepted only with its explicit source commit and tree or source manifest hash. A general CLI from an earlier qualification may retain its earlier retained source while the current native-entry wrapper records a separate source pin. `--generated-c /path/to/baton2.c` compiles an existing production C translation unit with the package host's compiler and links its native entry point. The build record includes the supplied C path, command, status, and stdout and stderr paths.
++The package command runs [build-native.sh](../../bend2/scripts/build-native.sh) for each required binary. The focused receiver uses `BATON2_RECEIVE_FOCUSED=1` with its native entry. The full router uses `BATON2_NATIVE_RECEIVER_ROUTER=1` and forwards internal receiver actions to the focused receiver and recovery helper. A supplied binary is accepted only with its explicit source commit and tree or source manifest hash. A general CLI from an earlier qualification may retain its earlier retained source while the current native-entry wrapper records a separate source pin. `--generated-c /path/to/baton2.c` compiles an existing production C translation unit with the package host's compiler and links its native entry point. The build record includes the supplied C path, command, status, and stdout and stderr paths.
+ 
+ `--context-typescript-package /path/to/node_modules/typescript` includes an installed TypeScript package and its source analysis provider. Packaging copies the compiler package into the selected module. Installed module discovery reads its declaration; a selected invocation uses Node module resolution to load the available compiler and records its actual version, path and digest. The provider analyzes TypeScript or JavaScript source and returns definitions, types, references, calls, callers, dependencies, diagnostics, flow and exceptions with captured source identities. Node.js 22.15 or newer runs the provider. The selected-context package fixture exercises TypeScript 5.9.3; `BATON2_CONTEXT_TYPESCRIPT` supplies its installed compiler package.
+ 
+@@ -69,7 +69,7 @@ The archive root is `baton2-development-darwin-arm64` by default. `--release-ver
+ 
+ ## Package contents and distribution terms
+ 
+-The archive contains the focused facade at `bin/baton`, its identical `bin/baton2` alias, `bin/baton-full`, manifest.json, install-receipt.json, SHA256SUMS, notices/, and libexec/baton2/. The focused facade delegates general actions to `bin/baton-full`; the full CLI forwards internal receiver actions to the focused facade. A missing sibling makes the operation refuse. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
++The archive contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, the identical general CLI sibling `bin/baton-full`, manifest.json, install-receipt.json, SHA256SUMS, notices/, and libexec/baton2/. The focused receiver delegates general actions to `bin/baton-full`; the full router forwards internal receiver actions to `bin/baton` and recovery actions to `bin/baton-recovery`. A missing sibling makes the operation refuse. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
+ 
+ Packaging copies the project LICENSE and NOTICE when present, and retains the pinned Bend compiler/runtime license, reference license, and license or notice files in the verified compiler archive. The manifest records the notice paths and their sources. A source snapshot without a root license is marked as unresolved for public distribution.
+ 
