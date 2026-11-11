@@ -70,31 +70,38 @@ else
   fi
   "$compiler" "$entry" -o "$output.c"
 fi
-if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
-  if [ -n "${BATON2_CCACHE:-}" ]; then
-    "$BATON2_CCACHE" "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
-  else
-    "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
+build_native_shards() {
+  native_link_flags="-O1 -pthread -lsqlite3 -lm"
+  if [ -n "$1" ]; then
+    native_link_flags="$native_link_flags $1"
   fi
+  case "$output" in
+    /*) native_binary=$output ;;
+    *) native_binary="$root/$output" ;;
+  esac
+  set -- --source "$output.c" \
+    --outdir "$native_binary.parallel" \
+    --binary "$native_binary" \
+    --shards 4 --jobs 4 --cc "${CC:-clang}" \
+    --cflag=-O1 --cflag=-pthread --main-rename \
+    --link-extra "$root/bend2/src/host/native-entry.c" \
+    --link-flags="$native_link_flags" \
+    --max-aggregate-rss-mb 0 --build-only
+  if [ -n "${BATON2_CCACHE:-}" ]; then
+    set -- "$@" --ccache "$BATON2_CCACHE"
+  fi
+  python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
+}
+if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   if [ "$router" = 1 ]; then
-    "${CC:-clang}" -O1 -pthread -DBATON2_NATIVE_RECEIVER_ROUTER bend2/src/host/native-entry.c "$output.o" -lsqlite3 -lm -o "$output"
+    build_native_shards -DBATON2_NATIVE_RECEIVER_ROUTER
   else
-    "${CC:-clang}" -O1 -pthread bend2/src/host/native-entry.c "$output.o" -lsqlite3 -lm -o "$output"
+    build_native_shards ""
   fi
 elif [ "$focused" = 1 ]; then
-  if [ -n "${BATON2_CCACHE:-}" ]; then
-    "$BATON2_CCACHE" "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
-  else
-    "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
-  fi
-  "${CC:-clang}" -O1 -pthread -DBATON2_RECEIVE_FOCUSED bend2/src/host/native-entry.c "$output.o" -lsqlite3 -lm -o "$output"
+  build_native_shards -DBATON2_RECEIVE_FOCUSED
 elif [ "$recovery" = 1 ]; then
-  if [ -n "${BATON2_CCACHE:-}" ]; then
-    "$BATON2_CCACHE" "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
-  else
-    "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
-  fi
-  "${CC:-clang}" -O1 -pthread -DBATON2_RECOVERY_HELPER bend2/src/host/native-entry.c "$output.o" -lsqlite3 -lm -o "$output"
+  build_native_shards -DBATON2_RECOVERY_HELPER
 else
   extra_libs=
   case "$entry_path" in
