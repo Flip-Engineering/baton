@@ -1,0 +1,166 @@
+diff --git a/bend2/src/host/compile-queue-identity.bend b/bend2/src/host/compile-queue-identity.bend
+index 53032bf71b..1166bcfeb9 100644
+--- a/bend2/src/host/compile-queue-identity.bend
++++ b/bend2/src/host/compile-queue-identity.bend
+@@ -46,11 +46,11 @@ type CompileQueueWalk is Data:
+ # record.
+ #
+ # Material encoding for `material` and `material_key`:
+-#   kind                "cgen" or "cc"
++#   kind                "cgen", "cc" or "check"
+ #   entry               worktree-relative Bend entry, empty for cc
+ #   options             one KEY=VALUE per line; sorted bytewise here
+-#   source_digest       64-hex digest of the cgen source closure, empty for cc
+-#   file_closure_digest 64-hex digest of the cc file closure, empty for cgen
++#   source_digest       64-hex digest of the cgen or check source closure, empty for cc
++#   file_closure_digest 64-hex digest of the cc file closure, empty for cgen and check
+ #   compiler_digest     64-hex digest of the compiler/linker/version closure
+ #   input_rows          one `destination<TAB>sha256<TAB>bytes` per line; the
+ #                       destination is the work-relative staged name
+@@ -65,7 +65,7 @@ type CompileQueueWalk is Data:
+ #   kind=KIND
+ #   entry=ENTRY
+ #   option=VALUE            (sorted, one per line)
+-#   source-digest=HEX       (cgen) or file-digest=HEX (cc)
++#   source-digest=HEX       (cgen or check) or file-digest=HEX (cc)
+ #   toolchain-digest=HEX
+ #   input=DEST<TAB>SHA<TAB>BYTES
+ #   artifact-name=NAME
+@@ -164,7 +164,9 @@ def CompileQueueIdentity.argv_lines(+tokens: String) -> String:
+       CompileQueueIdentity.argv_plain(String.lines(tokens))))
+ 
+ def CompileQueueIdentity.digest_lines(kind: String, source_digest: String, file_closure_digest: String) -> String:
+-  Bool.pick(String, String.eq(kind, "cgen"), "source-digest=" ++ source_digest ++ "\n", "file-digest=" ++ file_closure_digest ++ "\n")
++  Bool.pick(String,
++    Bool.or(String.eq(kind, "cgen"), String.eq(kind, "check")),
++    "source-digest=" ++ source_digest ++ "\n", "file-digest=" ++ file_closure_digest ++ "\n")
+ 
+ def CompileQueueIdentity.path_absolute(+path: String) -> Bool:
+   String.starts_with(path, "/")
+@@ -709,14 +711,15 @@ def CompileQueueIdentity.closure_files(+sources: String, +aux: String) -> String
+ # already normalized to @root/@cwd, {in:...}, {out:...} and {compiler}.
+ def CompileQueueIdentity.request_key(+kind: String, +cwd: String, +root: String, +source_root: String, +entry: String, +compiler: String, +linker: String, +version: String, +inputs: String, +aux: String, +artifacts: String, +options: String, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
+   do IO<Result<&1,&1,U32 & String,String>>:
+-    +closure : String <- Bool.pick(IO(String), String.eq(kind, "cgen"),
++    +source_kind = Bool.or(String.eq(kind, "cgen"), String.eq(kind, "check"))
++    +closure : String <- Bool.pick(IO(String), source_kind,
+       IO.try(String, CompileQueueIdentity.source_digest(source_root, entry)),
+       IO.try(String, CompileQueueIdentity.file_closure_digest(source_root, CompileQueueIdentity.closure_files(CompileQueueIdentity.input_sources(String.lines(inputs)), aux))))
+     +ccache : String <- IO.pure(String, CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler))
+     toolchain : String <- IO.try(String, CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache))
+     rows : String <- IO.try(String, CompileQueueIdentity.input_rows(String.lines(inputs)))
+     CompileQueueIdentity.material_key(kind, entry, options,
+-      Bool.pick(String, String.eq(kind, "cgen"), closure, ""),
+-      Bool.pick(String, String.eq(kind, "cgen"), "", closure),
++      Bool.pick(String, source_kind, closure, ""),
++      Bool.pick(String, source_kind, "", closure),
+       toolchain, rows,
+       CompileQueueIdentity.artifact_names(String.lines(artifacts)), command)
+diff --git a/bend2/src/host/compile-queue.bend b/bend2/src/host/compile-queue.bend
+index 5b8ed9d4b9..56f42b776a 100644
+--- a/bend2/src/host/compile-queue.bend
++++ b/bend2/src/host/compile-queue.bend
+@@ -352,10 +352,12 @@ def validate_config(config: Config, need_command: Bool) -> String:
+       artifacts = artifact_rows(text)
+       inputs = input_rows(text)
+       +token = field(text, "token")
+-      +kind_ok = Bool.or(Tx.str_eq(kind, "cgen"), Tx.str_eq(kind, "cc"))
++      +kind_ok = Bool.or(Tx.str_eq(kind, "cgen"),
++        Bool.or(Tx.str_eq(kind, "cc"), Tx.str_eq(kind, "check")))
+       +command_ok = Bool.pick(Bool, need_command, non_empty_list(command), True{})
+       +artifact_ok = artifact_set_valid(artifacts)
+-      +source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cgen"),
++      +source_ok = Bool.pick(Bool,
++        Bool.or(Tx.str_eq(kind, "cgen"), Tx.str_eq(kind, "check")),
+         Bool.and(non_empty(source), non_empty(entry)), True{})
+       +cc_source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"), valid_state_root(source), True{})
+       +linker = field(text, "linker")
+@@ -381,12 +383,12 @@ def validate_config(config: Config, need_command: Bool) -> String:
+                         "compile-queue: token must contain only letters, digits, dot, underscore or hyphen"),
+                       "compile-queue: cc requires --linker and --version"),
+                     "compile-queue: cc requires an absolute --source-root"),
+-                  "compile-queue: cgen requires --source-root and --entry"),
++                  "compile-queue: cgen or check requires --source-root and --entry"),
+                 "compile-queue: artifact names must be safe relative paths"),
+               "compile-queue: a command is required after --"),
+             "compile-queue: cwd is unavailable"),
+           "compile-queue: set BATON_COMPILE_QUEUE_ROOT or pass an absolute --state-root"),
+-        "compile-queue: kind must be cgen or cc")
++        "compile-queue: kind must be cgen, cc or check")
+ 
+ def input_pairs_text(inputs: List<&2,Input>) -> String:
+   match inputs:
+@@ -582,7 +584,8 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
+           IO.die(Unit, 1, "compile-queue: inputs changed before execution"))
+         wrote_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts)))
+         wrote_meta : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
+-        digest_written : Unit <- Bool.pick(IO(Unit), Tx.str_eq(field(text, "kind"), "cgen"),
++        digest_written : Unit <- Bool.pick(IO(Unit),
++          Bool.or(Tx.str_eq(field(text, "kind"), "cgen"), Tx.str_eq(field(text, "kind"), "check")),
+           write_attempt_digest(attempt, text), IO.pure(Unit, Unit{}))
+         IO.pure(Unit, Unit{})
+ 
+@@ -807,7 +810,8 @@ def run_supervised(+attempt: String, +keydir: String, +kind: String, +key: Strin
+ 
+ def supervise_kind(+kind: String, source_root: String, entry: String, +attempt: String,
+                     +keydir: String, +key: String, +started: String, +names: List<&2,String>, +cwd: String) -> IO(Unit):
+-  Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
++  Bool.pick(IO(Unit),
++    Bool.or(Tx.str_eq(kind, "cgen"), Tx.str_eq(kind, "check")),
+     do IO<Unit>:
+       before : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/source-digest"))
+       before_digest : String <- IO.pure(String, field(before, "digest"))
+@@ -1572,8 +1576,8 @@ def adopt_command(args: List<&2,String>) -> IO(Unit):
+     adopt_parsed_config(parsed)
+ 
+ def usage() -> String:
+-  "usage: compile-queue.sh run --kind cgen|cc --state-root DIR --cwd DIR [options] -- COMMAND...\n"
+-  ++ "       compile-queue.sh key --kind cgen|cc [options]\n"
++  "usage: compile-queue.sh run --kind cgen|cc|check --state-root DIR --cwd DIR [options] -- COMMAND...\n"
++  ++ "       compile-queue.sh key --kind cgen|cc|check [options]\n"
+   ++ "       compile-queue.sh cancel --state-root DIR --key KEY --token TOKEN\n"
+   ++ "       compile-queue.sh wait --state-root DIR --key KEY\n"
+   ++ "       compile-queue.sh status --state-root DIR [--key KEY]\n"
+diff --git a/docs/bend2/compile-queue-20261019.md b/docs/bend2/compile-queue-20261019.md
+index 64829bee2f..959ff08ba2 100644
+--- a/docs/bend2/compile-queue-20261019.md
++++ b/docs/bend2/compile-queue-20261019.md
+@@ -28,21 +28,35 @@ live requesters, and cancellation stops the execution only when no live owner
+ remains. The fake-command suite covers distinct cgen serialization, concurrent
+ cc overlap, identical coalescing, requester loss, and one-owner withdrawal.
+ 
++## Check kind
++
++The `check` kind admits a Bend frontend check. It takes the same host heavy
++lock as `cgen` and `cc`. A check request requires `--source-root` and
++`--entry`; the source closure covers the entry and its imports, and the
++request identity uses that source digest. The compiler identity, declared
++inputs and options enter the key, so a helper file declared with `--input` is
++bound by its bytes.
++
++A check declares its stdout and stderr as artifacts. The queue verifies that
++each declared artifact exists and publishes its bytes; an empty artifact is
++valid. The result records the exit status. Identical check requests coalesce
++on the key and share the completed result.
++
+ ## Identity
+ 
+ The material for one request is a line-oriented text record. The identity schema is versioned independently of the bootstrap shell; a shell key is never reused as a permanent cache key because it omits imported C and header inputs.
+ 
+ ```
+ schema=baton-compile-queue-v1
+-kind=<cgen|cc>
++kind=<cgen|cc|check>
+ entry=<entry argument>
+ option=<KEY=VALUE>                      sorted
+ compiler-entry=<sha256 of the resolved compiler or wrapper>
+ compiler-wrapper=<sha256>               one per followed absolute exec wrapper
+ toolchain=release|executable
+ toolchain-file=<relative path> <sha256> <bytes>   sorted, release layout only
+-source-entry=<relative entry path>      cgen only
+-source-file=<relative path> <sha256> <bytes>      sorted, cgen only
++source-entry=<relative entry path>      cgen and check only
++source-file=<relative path> <sha256> <bytes>      sorted, cgen and check only
+ input=<destination> <sha256> <bytes>    copied inputs
+ artifact-name=<name>                    requested artifact names
+ argv=<normalized token>                 command order

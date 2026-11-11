@@ -1,0 +1,187 @@
+diff --git a/bend2/scripts/check-bend-child.sh b/bend2/scripts/check-bend-child.sh
+index 5c7ea3c007..d515f18c95 100755
+--- a/bend2/scripts/check-bend-child.sh
++++ b/bend2/scripts/check-bend-child.sh
+@@ -1,6 +1,7 @@
+ #!/bin/sh
+ # Child half of check-bend.sh. The queue substitutes the artifact paths for
+-# the declared stdout and stderr destinations.
++# the declared stdout and stderr destinations and stages this helper as an
++# input.
+ set -u
+ compiler=$1
+ entry=$2
+diff --git a/bend2/scripts/check-bend.sh b/bend2/scripts/check-bend.sh
+index d676c40daf..69534195c5 100755
+--- a/bend2/scripts/check-bend.sh
++++ b/bend2/scripts/check-bend.sh
+@@ -1,18 +1,14 @@
+ #!/bin/sh
+-# Run one Bend2 frontend check through the shared host compile queue.
++# Run one Bend2 frontend check through the compile queue check kind.
+ #
+-# The queue's cgen lane computes the source closure for the entry and holds
+-# the host heavy-build lock for the child's lifetime. A check has no C output,
+-# so the declared artifacts are the compiler's stdout and stderr. The queue
+-# copies them back on success. The child is the process the heavy lock covers.
+-#
+-# The launcher accepts --check-only only. A bare bend run calls the compiler's
+-# cli_build, which submits its own cc request to the same heavy lock; an outer
+-# queue request around it would wait for itself. The cgen lane covers the
+-# check phase, which is the phase with no nested queue request.
++# The check kind holds the host heavy lock for the child's lifetime and
++# computes the source closure for the entry. The launcher declares stdout and
++# stderr as check artifacts; the queue publishes both, including empty stderr.
++# The child helper is declared as an input, so its bytes enter the request key.
+ set -eu
+ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+ root=$(CDPATH= cd -- "$here/../.." && pwd -P)
++cd "$root"
+ 
+ if [ "${1:-}" = --check-only ]; then
+   shift
+@@ -35,7 +31,6 @@ fi
+ queue="$root/bend2/scripts/compile-queue.sh"
+ [ -f "$queue" ] || {
+   echo "The host compile queue entry is unavailable: $queue" >&2
+-  echo 'Run bend2/scripts/bootstrap-compile-queue.sh once to build the queue executable.' >&2
+   exit 1
+ }
+ if [ -n "${BATON2_COMPILE_QUEUE_BIN:-}" ] && { [ ! -f "${BATON2_COMPILE_QUEUE_BIN}" ] || [ ! -x "${BATON2_COMPILE_QUEUE_BIN}" ]; }; then
+@@ -73,6 +68,12 @@ case "$entry_path" in
+ esac
+ entry=${entry_path#"$root"/}
+ 
++helper="$here/check-bend-child.sh"
++[ -x "$helper" ] || {
++  echo "check-bend.sh: the check helper is unavailable: $helper" >&2
++  exit 1
++}
++
+ scratch=$(mktemp -d "${TMPDIR:-/tmp}/bend-check.XXXXXXXX")
+ cleanup() {
+   status=$?
+@@ -90,11 +91,12 @@ out=$scratch/stdout
+ err=$scratch/stderr
+ 
+ status=0
+-sh "$queue" run --kind cgen --state-root "$state" --cwd "$root" --root "$root" \
++sh "$queue" run --kind check --state-root "$state" --cwd "$root" --root "$root" \
+   --source-root "$root" --entry "$entry" --compiler "$compiler" \
++  --input "$helper" \
+   --artifact "stdout=$out" --artifact "stderr=$err" \
+-  --option "frontend=check" -- \
+-  sh "$here/check-bend-child.sh" "$compiler" "$entry" "$out" "$err" || status=$?
++  --option frontend=check -- \
++  sh "$helper" "$compiler" "$entry" "$out" "$err" || status=$?
+ if [ "$status" -eq 0 ]; then
+   cat "$out"
+   cat "$err" >&2
+diff --git a/bend2/scripts/run-checks.mjs b/bend2/scripts/run-checks.mjs
+index 0e9f3e6544..e6d3d49fb6 100644
+--- a/bend2/scripts/run-checks.mjs
++++ b/bend2/scripts/run-checks.mjs
+@@ -58,6 +58,10 @@ function moduleName(path) {
+   return relative(SRC, path).replace(/\.bend$/, '');
+ }
+ 
++function run(args, opts = {}) {
++  return execFileSync(BEND, args, { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity, ...opts });
++}
++
+ function runCustody(args) {
+   return execFileSync('sh', [join(ROOT, 'bend2', 'scripts', 'check-bend.sh'), ...args],
+     { env: CUSTODY_ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
+@@ -103,9 +107,7 @@ for (const mod of modules) {
+ 
+   let interpretedOut;
+   try {
+-    // A bare run submits its own cc request from cli_build; the frontend phase
+-    // runs before that request and has no separate queue entry point.
+-    interpretedOut = execFileSync(BEND, [mod], { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
++    interpretedOut = run([mod]);
+     totalRuns++;
+     if (interpretedOut === expected) {
+       result.interpreted = 'pass';
+diff --git a/bend2/test/compiler-arm-sharing.py b/bend2/test/compiler-arm-sharing.py
+index 5c0dd6412a..1983b3f518 100755
+--- a/bend2/test/compiler-arm-sharing.py
++++ b/bend2/test/compiler-arm-sharing.py
+@@ -121,29 +121,6 @@ class CompilerArmSharing(unittest.TestCase):
+         args.extend(['--', self.bun, '--smol', UPSTREAM / 'main.ts', fixture, '-o', source])
+         self.run_queue(args)
+ 
+-    def run_check(self, fixture):
+-        # The check uses the cgen lane: it shares the source closure and the
+-        # host heavy-build lock with a C-generation request for the fixture.
+-        inputs = [path for path in sorted(UPSTREAM.rglob('*')) if path.is_file()]
+-        stdout = pathlib.Path(self.temp.name) / (fixture.stem + '.check.stdout')
+-        stderr = pathlib.Path(self.temp.name) / (fixture.stem + '.check.stderr')
+-        args = [
+-            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
+-            '--root', ROOT, '--source-root', ROOT,
+-            '--entry', fixture.relative_to(ROOT).as_posix(),
+-            '--compiler', self.bun,
+-            '--artifact', 'stdout=%s' % stdout,
+-            '--artifact', 'stderr=%s' % stderr,
+-            '--option', 'frontend=check',
+-        ]
+-        for path in inputs:
+-            args.extend(['--input', path])
+-        args.extend(['--', self.bun, '--smol', UPSTREAM / 'main.ts', fixture, '--check-only'])
+-        self.run_queue(args)
+-        return subprocess.CompletedProcess(args=[], returncode=0,
+-                                           stdout=stdout.read_text(),
+-                                           stderr=stderr.read_text())
+-
+     def compile_fixture(self, tag, fixture, source):
+         self.run_cgen(tag, fixture, source)
+ 
+@@ -260,7 +237,7 @@ class CompilerArmSharing(unittest.TestCase):
+         for name, (digest, output) in expected.items():
+             with self.subTest(fixture=name):
+                 fixture = FIXTURES / (name + '.bend')
+-                check = self.run_check(fixture)
++                check = self.run_bun(UPSTREAM / 'main.ts', fixture, '--check-only')
+                 self.assertEqual(check.stdout.strip(), 'All terms check.')
+                 c = pathlib.Path(self.temp.name) / (name + '.c')
+                 self.compile_fixture(name, fixture, c)
+diff --git a/docs/bend2/compile-queue-20261019.md b/docs/bend2/compile-queue-20261019.md
+index 1d6e38ba7a..3d5d01b9fb 100644
+--- a/docs/bend2/compile-queue-20261019.md
++++ b/docs/bend2/compile-queue-20261019.md
+@@ -28,6 +28,34 @@ live requesters, and cancellation stops the execution only when no live owner
+ remains. The fake-command suite covers distinct cgen serialization, concurrent
+ cc overlap, identical coalescing, requester loss, and one-owner withdrawal.
+ 
++## Frontend checks
++
++The queue lanes cover C generation and C compilation. A `--check-only`
++invocation performs type checking and writes no C. A `cgen` request validates
++every declared artifact as a regular nonempty text file whose name ends in
++`.c` (`verify_artifacts` and `invalid_cgen_name` in
++`bend2/src/host/compile-queue.bend`), so a check result has no acceptable
++`cgen` artifact.
++
++A bare `bend FILE` run performs the frontend phase and then calls
++`cli_build` (`bend2/compiler/upstream/main.ts:457`), which submits a `cc`
++request. An outer queue request around the run holds the heavy lock while the
++compiler waits for the nested `cc` request.
++
++The check kind is prepared as a queue-core patch against
++`05ab70e2c5d8d3cb7bf504d34b245960968e954a` and is pending adoption by the
++#1001/#1002 owner. It takes the heavy lock, computes the source closure for the
++entry, and accepts stdout and stderr as check artifacts, including empty
++stderr. `bend2/scripts/check-bend.sh` submits `kind=check` and declares the
++child helper as an input, so the helper bytes enter the request key. The
++caller requires the check kind; a tree without the core patch rejects the
++request.
++
++`bend2/scripts/run-checks.mjs` uses the launcher for `--check-only` and
++`build-native.sh` for `-o` builds. `bend2/test/compiler-arm-sharing.py` runs
++its fixture check directly. Bare `bend FILE` runs stay direct; their frontend
++phase has no queue entry point, as described above.
++
+ ## Identity
+ 
+ The material for one request is a line-oriented text record. The identity schema is versioned independently of the bootstrap shell; a shell key is never reused as a permanent cache key because it omits imported C and header inputs.

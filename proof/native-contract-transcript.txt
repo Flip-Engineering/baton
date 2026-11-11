@@ -1,0 +1,43 @@
+== environment ==
+worktree=/mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/frontend-check-custody-20261021
+native_queue=/var/tmp/baton2-compile-queue/compile-queue-runner
+state_root=/tmp/native-contract.6pBx0E/state mode=2770
+launcher=b4274718cc:bend2/scripts/check-bend.sh (the withdrawn frontend check path)
+
+== 1. old launcher under native cgen verification ==
+launcher status=1
+owner=owner-1639528-1792619349319840726
+compile-queue: cgen execution failed key=ad0f4cfb5253cb1dfbec46474b6d3ffc7632b3c17e2b10b1a83add41134afd70 exit=1
+compile-queue: compile-queue: cgen artifact stdout must be nonempty text C with a .c suffix
+
+detail=compile-queue: cgen artifact stdout must be nonempty text C with a .c suffix
+
+== 2. native cgen artifact contract (direct requests) ==
+[nosuffix name=out] status=1
+compile-queue: cgen execution failed key=87711eabfee450a4efe1c0ab4d0eda812b6a2b628ffc82b6a2fdc6b4d9bdfdcd exit=1
+compile-queue: compile-queue: cgen artifact out must be nonempty text C with a .c suffix
+[empty name=out.c] status=1
+compile-queue: cgen execution failed key=9e24aeef498b18d8fe1410238a1a0659fc5f3ff2cffe5cb48e057be9bca977a2 exit=1
+compile-queue: compile-queue: cgen artifact out.c must be nonempty text C with a .c suffix
+[valid name=out.c] status=0
+[binary name=out.c] status=1
+compile-queue: cgen execution failed key=7f0d179920ac9b9f340534a8828a2b62e500bd3f0329cf7fb65a435e0da8a041 exit=1
+compile-queue: compile-queue: cgen artifact out.c must be nonempty text C with a .c suffix
+valid artifact bytes=11 content=int probe; 
+
+== 3. unwritten declared artifacts ==
+unwritten status=1
+owner=owner-1642734-1792619360721319013
+compile-queue: cgen execution failed key=0400898a86111a4582ead386fcd41749884a1a4be9dc17481b2692c8a3af600b exit=1
+compile-queue: supervisor exited before publishing a terminal result
+
+
+== 4. helper key binding ==
+aux-one   9aa141bd1fef05396cb6a23f62cd05e2ad0a1e6c75aa273a25ca658f834e224c
+aux-two   9aa141bd1fef05396cb6a23f62cd05e2ad0a1e6c75aa273a25ca658f834e224c
+input-one e1fd57106bd2c26b33b0bb2d5bf0846719235bddcb7048ef95a86cd3459115c5
+input-two 033add0519208625ff2dedadb9c8a3a3e60ab6586cecd569cc9241e88e817258
+aux_bytes_change_same_key=yes
+input_bytes_change_same_key=no
+entry-changed ebd9eee4aad6117ff26f815a8ae92a74d3aa0c65f2806715155f3122c77976ce source_same=no
+compiler-changed 892f1a7a93b56bc6508bbd6db5186e588edf5d7764cbb1972d41385d190271a9 provenance_same=no

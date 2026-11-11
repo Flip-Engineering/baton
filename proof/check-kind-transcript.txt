@@ -1,0 +1,66 @@
+== environment ==
+worktree=/mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton-consolidation-review-20261017/worktrees/frontend-check-custody-20261021
+check_queue=/tmp/check-queue.sh (disposable reference-shell queue with the check kind contract)
+state_root=/tmp/check-kind.0UpFJ1/state
+stub=/tmp/check-kind.0UpFJ1/stub
+
+== 1. serialization of two checks (distinct entries) ==
+during A: probe=held
+A status=0 B status=0
+after A and B: probe=free
+
+== 2. coalescing of identical checks ==
+C1 status=0 C2 status=0 child_starts=1
+C1 stdout=stdout .scratch/check-proof/c.bend --check-only 
+C2 stdout=stdout .scratch/check-proof/c.bend --check-only 
+
+== 3. error path and lock release ==
+error status=1 probe=free
+error stderr tail=stderr .scratch/check-proof/d.bend --check-only
+
+== 4. terminal path and lock release ==
+during TERM: probe=held child=1935649
+terminal status=1 probe_after_release=free waited_ms=0
+
+== 5. empty stderr success ==
+empty status=0 stderr_bytes=0 stdout=stdout .scratch/check-proof/f.bend --check-only 
+published_stderr_bytes=0
+
+== 6. request identity binding ==
+helper-one      3b4da036cded48302a8bbcff7eb203267544c40dfea427d593ab7213d05a33a9
+helper-two      cf990c98a6dc13f14cb046ea7f618c1f7106f32a934be20171526e3947ada993
+support-two     ee2d73d6d26a04f4cd70b1fd65389d6b671cb634cc13665f5891b11724f3f11f
+entry-a         a975b9e25dc2b2f6a3fd792ef5353d9831a40841752ad5dc9419d9d32691e18f
+helper_bytes_change_same_key=no
+support_bytes_change_same_key=no
+entry_change_same_key=no
+compiler_change_same_key=no
+aux_bytes_change_same_key=yes
+
+== 7. a check that writes no declared artifact ==
+no_result_status=1
+compile-queue: check execution failed key=a9092e3ccd60f03327f9b81dd1d9ac9e1ed0329b4139ddf6abc0238e3614a6fb exit=1
+compile-queue: artifact stdout was not written
+
+== 8. native identity mechanism (installed queue runner, cgen lane, key only) ==
+native_input_one  fbfb61afc3877d73746f9a9833eee7b3b920062c575444805838d961d10a0d8d
+native_input_two  70fb60481918a500eb918be0357550ee6c72ccc382bf5f6de7a8532f66e37506
+native_aux_one    fbfb61afc3877d73746f9a9833eee7b3b920062c575444805838d961d10a0d8d
+native_aux_two    fbfb61afc3877d73746f9a9833eee7b3b920062c575444805838d961d10a0d8d
+native_input_bytes_change_same_key=no
+native_aux_bytes_change_same_key=yes
+
+== intervals ==
+start 1792620385788338037 1914368 2050:34612307 .scratch/check-proof/a.bend --check-only
+end 1792620387792838401 1914368
+start 1792620390661247621 1919739 2050:34612307 .scratch/check-proof/b.bend --check-only
+end 1792620392666846699 1919739
+start 1792620398566957309 1925976 2050:34612307 .scratch/check-proof/c.bend --check-only
+end 1792620399572839780 1925976
+start 1792620405445351117 1931755 2050:34612307 .scratch/check-proof/d.bend --check-only
+end 1792620405449711674 1931755
+start 1792620409836459910 1935649 2050:34612307 .scratch/check-proof/e.bend --check-only
+start 1792620414139395720 1939360 2050:34612307 .scratch/check-proof/f.bend --check-only
+end 1792620414142994178 1939360
+== interval check ==
+intervals=6 same_lock=yes no_overlap=yes

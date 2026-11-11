@@ -1,0 +1,69 @@
+--- /tmp/ref-cq.sh	2026-10-21 14:05:52.588078460 -0700
++++ /tmp/check-queue.sh	2026-10-21 15:02:12.295745956 -0700
+@@ -179,7 +179,7 @@
+   printf 'entry=%s\n' "$entry"
+   sort "$options_file" | sed 's/^/option=/'
+   cq_compiler_identity "$compiler"
+-  if [ "$kind" = cgen ]; then
++  if [ "$kind" = cgen ] || [ "$kind" = check ]; then
+     cq_source_digest "$source_root" "$entry"
+   fi
+   if [ -f "$input_map" ]; then
+@@ -396,7 +396,7 @@
+   printf 'kind=%s\n' "$kind" >> "$keydir/active"
+   printf 'setsid=%s\n' "$setsid_flag" >> "$keydir/active"
+   printf 'started_ns=%s\n' "$started" >> "$keydir/active"
+-  if [ "$kind" = cgen ]; then
++  if [ "$kind" = cgen ] || [ "$kind" = check ]; then
+     cq_trace 'cgen-lock-wait'
+     if ! flock -x 8; then
+       cq_write_result "$attempt/result" failed 1 "$kind" "$key" "$started" "$(cq_now_ns)" \
+@@ -429,7 +429,7 @@
+   cq_trace "command-end status=$status"
+   child=''
+   finished=$(cq_now_ns)
+-  if [ "$status" -eq 0 ] && [ "$kind" = cgen ]; then
++  if [ "$status" -eq 0 ] && { [ "$kind" = cgen ] || [ "$kind" = check ]; }; then
+     after=$(cq_source_digest "$source_root" "$entry" | cq_sha_stdin)
+     before=$(sed -n 's/^digest=//p' "$attempt/source-digest" | head -n 1)
+     if [ "$before" != "$after" ]; then
+@@ -567,7 +567,7 @@
+ 
+ cq_usage() {
+   cat >&2 <<'EOF'
+-usage: compile-queue.sh run --kind cgen|cc --state-root DIR --cwd DIR [options] -- COMMAND...
++usage: compile-queue.sh run --kind cgen|cc|check --state-root DIR --cwd DIR [options] -- COMMAND...
+        compile-queue.sh key --kind cgen|cc [options]
+        compile-queue.sh cancel --state-root DIR --key KEY
+        compile-queue.sh wait --state-root DIR --key KEY
+@@ -627,7 +627,7 @@
+       *) cq_die 2 "unknown option $1" ;;
+     esac
+   done
+-  [ "$cq_kind" = cgen ] || [ "$cq_kind" = cc ] || cq_die 2 'kind must be cgen or cc'
++  [ "$cq_kind" = cgen ] || [ "$cq_kind" = check ] || [ "$cq_kind" = cc ] || cq_die 2 'kind must be cgen, cc or check'
+   [ -d "$cq_cwd" ] || cq_die 2 "cwd is unavailable: $cq_cwd"
+   case $cq_state_root in /*) ;; *) cq_die 2 'state root must be absolute' ;; esac
+   cq_command_count=$#
+@@ -686,9 +686,9 @@
+ # Commands
+ # ---------------------------------------------------------------------------
+ cq_validate_source() {
+-  [ "$cq_kind" = cgen ] || return 0
+-  [ -n "$cq_source_root" ] || cq_die 2 'cgen requires --source-root'
+-  [ -n "$cq_entry" ] || cq_die 2 'cgen requires --entry'
++  [ "$cq_kind" = cgen ] || [ "$cq_kind" = check ] || return 0
++  [ -n "$cq_source_root" ] || cq_die 2 'cgen or check requires --source-root'
++  [ -n "$cq_entry" ] || cq_die 2 'cgen or check requires --entry'
+   case $cq_entry in
+     /*) entry_file=$cq_entry ;;
+     *) entry_file="$cq_source_root/$cq_entry" ;;
+@@ -791,7 +791,7 @@
+       printf 'artifact_name=%s\n' "$name"
+     done < "$cq_tmp/artifact-map"
+   } > "$attempt/meta"
+-  if [ "$cq_kind" = cgen ]; then
++  if [ "$cq_kind" = cgen ] || [ "$cq_kind" = check ]; then
+     cq_source_digest "$cq_source_root" "$cq_entry" | cq_sha_stdin |
+       sed 's/^/digest=/' > "$attempt/source-digest"
+   fi
