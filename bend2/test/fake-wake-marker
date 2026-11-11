@@ -1,0 +1,7 @@
+#!/bin/sh
+# Test self for the usage-window post-reset continuation. The scheduler runs
+# the self as: SELF --dispatch-message DB MESSAGE. This script stands in for
+# the coordinator dispatch and applies the same receipt gate: a message that
+# already has a delivery keeps it, and a repeated dispatch adds nothing.
+sqlite3 "$2" "INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES('$3','delivered');"
+sqlite3 "$2" "INSERT OR IGNORE INTO wake_reports(id) VALUES('$3:usage-window-held-report');"
