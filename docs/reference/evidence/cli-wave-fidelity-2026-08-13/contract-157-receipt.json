@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:03:45.531Z",
+  "salt": "x720260813070345",
+  "role": "contract-157",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-d56c5a144bdfd55eca1bbb980ac7be7f"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-157",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-157": {
+      "pin": "6b0a95ab114cb3ecc20f65693a9d3d186630413e",
+      "paths": [
+        "docs/reference/evidence/cli-wave-fidelity-2026-08-13/cli-wave-fidelity-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 460,
+  "verdict": "CONTRACT-157-OK"
+}

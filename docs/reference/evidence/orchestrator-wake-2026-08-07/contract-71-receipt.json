@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T06:42:19.322Z",
+  "salt": "c920260807064219",
+  "role": "contract-71",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a6a54acab34e96184200106782c67d16"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-71",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-71": {
+      "pin": "6f71e170cf03ef80b9bea91f5f0bc73877cd3ca6",
+      "paths": [
+        "docs/reference/evidence/orchestrator-wake-2026-08-07/orchestrator-wake-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 373,
+  "verdict": "CONTRACT-71-OK"
+}

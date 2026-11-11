@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "route": {
+    "harness": "glm",
+    "model": "glm-5.2",
+    "effort": "xhigh",
+    "state": "ready"
+  },
+  "group": {
+    "schemaVersion": 1,
+    "state": "ready",
+    "counts": {
+      "total": 1,
+      "active": 0,
+      "waiting": 0,
+      "ready": 1,
+      "completed": 0,
+      "failed": 0,
+      "stopped": 0,
+      "terminal": 0,
+      "attention": 0,
+      "cleanupIncomplete": 0,
+      "byPhase": {
+        "work_completed": 1
+      }
+    },
+    "members": [
+      {
+        "runId": "run-93b004db46a193776676218ab1b00c80",
+        "objective": "Perform a narrow closure review of the Phase 87 MCP-over-Web replay fix. Read the concrete defect section in glm-review.md, the authorizeReplay implementation in impl/src/mcp-web-bridge.mjs, the relevant completed-replay path in impl/src/mcp-northbound.mjs, and the bridge/MCP assertions in impl/test/phase87-semantic-action-authority.test.mjs. Use no more than six repository reads. Decide whether current capabilities, persisted semantic authority, action identity, registry effect/capabilities, digest, and opaque MCP transport authority are all checked before a cached completed result is returned. Identify any remaining concrete bypass separately from test gaps. Do not invoke nested Baton or run the full suite. Use rtk for every shell operation, exactly one command per call, with no pipes, &&, semicolons, or unwrapped shell commands. Do not mutate home state, credentials, toolchains, shims, caches, global configuration, runtime paths, or main checkout. Write only docs/reference/evidence/phase87-semantic-action-authority-dogfood-live-2026-07-18/glm-closure-review.md, then finish immediately.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "glm-5.2",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "f96c6abdfd96675c0e2fc938a1a4cc01dd4213ece25e2fb5a093cddf13849692"
+      }
+    ]
+  },
+  "materialized": {
+    "path": "docs/reference/evidence/phase87-semantic-action-authority-dogfood-live-2026-07-18/glm-closure-review.md",
+    "sha": "42b5ca09d01e6f17c6d4df9b649cab78b52127bd"
+  },
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-93b004db46a193776676218ab1b00c80",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "at": "2026-07-12T00:29:10.730Z",
+  "checks": {
+    "startRedirect": true,
+    "providerRedirect": true,
+    "callbackSession": true,
+    "operatorPage": true,
+    "sessionProjection": true,
+    "command": true,
+    "stream": true,
+    "logoutRevokes": true
+  },
+  "details": {
+    "origin": "https://127.0.0.1:53669",
+    "auditEvents": 11,
+    "sessionEvents": 2
+  },
+  "pass": true
+}

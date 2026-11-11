@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "arm": "homogeneous",
+  "failure": {
+    "name": "Error",
+    "code": "application_action_unavailable",
+    "message": "Run action context_eval is unavailable"
+  },
+  "contextEvidence": [],
+  "outcomes": [],
+  "steering": [],
+  "stopReceipts": [],
+  "stops": [],
+  "progress": []
+}

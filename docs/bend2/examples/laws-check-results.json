@@ -1,0 +1,327 @@
+{
+  "scope": "Pure models, the transition witness and two existing JavaScript regression rows; application laws remain open.",
+  "compiler": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+  "sha256": {
+    "laws.bend": "ed79d69ba32e5dcc5ec52a432e16d6eb0167a76e3210a9e7962354bcaf53eade",
+    "examples/laws-history-model.bend": "3e1d3da76c5038e655979b2a57570838c13f5b950bb38fb332bdcf7688ece532",
+    "examples/laws-worker-model.bend": "d5278dac4bfb1bc1b3a91fff934a62403d46af94922b494213b6ff5a943dbd92",
+    "examples/laws-refusal-model.bend": "27444694ef9f0ee7784a6f9b1b22179bd2f3eda50a3aac10aefb3840089168dc",
+    "examples/laws-decision-model.bend": "71232284d46d94113557746d3d004c55b9968ba586457b602231ded7770eed4d",
+    "examples/laws-proof.bend": "b0ff3a8c85dca79a865b70d959bc2996d3eaa70708214e723df47c33dda8d6d4",
+    "examples/laws-transition.bend": "fd44069c4d642de6a431deb0b40532530022c8c97dceacb0cd15d15045a294f1",
+    "examples/laws-transition.js": "d9426d03c783664dc2bf9217a584db90ed22527aa83a3cc6bbf1d34d2fefe957"
+  },
+  "results": [
+    {
+      "label": "toolchain",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "version"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 0,
+      "expectedExit": 0,
+      "output": "bend 2.0.25\n",
+      "passed": true
+    },
+    {
+      "label": "open obligations",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "docs/bend2/laws.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error: 10 TODOs found.\nThe code is incomplete, and not a valid proof yet.\n",
+      "passed": true
+    },
+    {
+      "label": "model proofs",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "docs/bend2/examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 0,
+      "expectedExit": 0,
+      "output": "All terms check.\n",
+      "passed": true
+    },
+    {
+      "label": "model run",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "docs/bend2/examples/laws-proof.bend"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 0,
+      "expectedExit": 0,
+      "output": "M-5 reviews, M-10 worker admission, M-14 refusal rows and M-18 landing decision: model proofs checked.\n",
+      "passed": true
+    },
+    {
+      "label": "transition witness",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "docs/bend2/examples/laws-transition.bend"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 0,
+      "expectedExit": 0,
+      "output": "reviews n=0 real 0 model 0 agree\nreviews n=1 real 1 model 1 agree\nreviews n=2 real 5 model 5 agree\nreviews n=3 real 18 model 18 agree\nreviews n=4 real 55 model 55 agree\nworker tight=0 free=4096 real 1 model 1 agree\nworker tight=18 free=64 real 1 model 1 agree\nworker tight=64 free=1 real 1 model 1 agree\ntransition witness: 8 cases compared; every line above must read agree.\nAll terms check, but 3 defs rely on unsafe or foreign code:\n- Real.reviews_fingerprint\n- Real.worker_room\n- main\n",
+      "passed": true
+    },
+    {
+      "label": "erase prior history",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/0",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : {row <> ../examples/laws-history-model.prefix(../examples/laws-history-model.length(t), []) == h <> t : List<&2, ../examples/laws-history-model.Review>}\n- observed : {h <> ../examples/laws-history-model.prefix(../examples/laws-history-model.length(t), [row]) == h <> t : List<&2, ../examples/laws-history-model.Review>}\nContext:\n- h   : ../examples/laws-history-model.Review\n- t   : List<&2, ../examples/laws-history-model.Review>\n- row : ../examples/laws-history-model.Review\nLocation: ../laws.m5_prior_reviews\n14 |     case h <> t:\n15>|       %Laws.m5_prior_reviews(t, row) : {h <> History.prefix(History.length(t), History.append_review(t, row)) == h <> _ : +List<History.Review>}\n16 |       {==}\n",
+      "passed": true
+    },
+    {
+      "label": "drop new row",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/1",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : []\n- observed : [row]\nContext:\n- row : ../examples/laws-history-model.Review\nLocation: ../laws.m5_appended_review\n19 |   match history:\n20>|     case Nil{}: {==}\n21 |     case h <> t:\n",
+      "passed": true
+    },
+    {
+      "label": "empty result",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/2",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : {[] == h <> t : List<&2, ../examples/laws-history-model.Review>}\n- observed : {h <> ../examples/laws-history-model.prefix(../examples/laws-history-model.length(t), []) == h <> t : List<&2, ../examples/laws-history-model.Review>}\nContext:\n- h   : ../examples/laws-history-model.Review\n- t   : List<&2, ../examples/laws-history-model.Review>\n- row : ../examples/laws-history-model.Review\nLocation: ../laws.m5_prior_reviews\n14 |     case h <> t:\n15>|       %Laws.m5_prior_reviews(t, row) : {h <> History.prefix(History.length(t), History.append_review(t, row)) == h <> _ : +List<History.Review>}\n16 |       {==}\n",
+      "passed": true
+    },
+    {
+      "label": "reorder rows",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/3",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : {row <> ../examples/laws-history-model.prefix(../examples/laws-history-model.length(t), ../examples/laws-history-model.append_review(t, h)) == h <> t : List<&2, ../examples/laws-history-model.Review>}\n- observed : {h <> ../examples/laws-history-model.prefix(../examples/laws-history-model.length(t), ../examples/laws-history-model.append_review(t, row)) == h <> t : List<&2, ../examples/laws-history-model.Review>}\nContext:\n- h   : ../examples/laws-history-model.Review\n- t   : List<&2, ../examples/laws-history-model.Review>\n- row : ../examples/laws-history-model.Review\nLocation: ../laws.m5_prior_reviews\n14 |     case h <> t:\n15>|       %Laws.m5_prior_reviews(t, row) : {h <> History.prefix(History.length(t), History.append_review(t, row)) == h <> _ : +List<History.Review>}\n16 |       {==}\n",
+      "passed": true
+    },
+    {
+      "label": "alter identity",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/4",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : [../examples/laws-history-model.Row{0n, 0n, 0n, 0n, ../examples/laws-history-model.Accept{}}]\n- observed : [row]\nContext:\n- row : ../examples/laws-history-model.Review\nLocation: ../laws.m5_appended_review\n19 |   match history:\n20>|     case Nil{}: {==}\n21 |     case h <> t:\n",
+      "passed": true
+    },
+    {
+      "label": "deny workers",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/5",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : False{}\n- observed : True{}\nContext:\n- mt : Bool\n- bf : Bool\nLocation: ../laws.m10_worker_admitted\n24 | def Laws.m10_worker_admitted(mt, bf):\n25>|   {==}\n26 | \n",
+      "passed": true
+    },
+    {
+      "label": "refusal field drifts",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/6",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : ../examples/laws-refusal-model.Args{}\n- observed : ../examples/laws-refusal-model.Payload{}\nContext:\n- c : ../examples/laws-refusal-model.Context\nLocation: ../laws.m14_field_matches_row\n29 |     case Refusal.UnknownField{}: {==}\n30>|     case Refusal.ClosedSet{}: {==}\n31 |     case Refusal.RequiredField{}: {==}\n",
+      "passed": true
+    },
+    {
+      "label": "refusal rule drifts",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/7",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : ../examples/laws-refusal-model.UnknownFieldRule{}\n- observed : ../examples/laws-refusal-model.ClosedSetRule{}\nContext:\n- c : ../examples/laws-refusal-model.Context\nLocation: ../laws.m14_rule_matches_row\n38 |     case Refusal.UnknownField{}: {==}\n39>|     case Refusal.ClosedSet{}: {==}\n40 |     case Refusal.RequiredField{}: {==}\n",
+      "passed": true
+    },
+    {
+      "label": "refusal remedy drifts",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/8",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : ../examples/laws-refusal-model.Admitted{3n}\n- observed : ../examples/laws-refusal-model.Admitted{2n}\nLocation: ../laws.m14_remedy_from_row\n47 |     case Refusal.UnknownField{}: {==}\n48>|     case Refusal.ClosedSet{}: {==}\n49 |     case Refusal.RequiredField{}: {==}\n",
+      "passed": true
+    },
+    {
+      "label": "refusal table drifts",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/9",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : ../examples/laws-refusal-model.ClosedSetRule{}\n- observed : ../examples/laws-refusal-model.UnknownFieldRule{}\nContext:\n- c : ../examples/laws-refusal-model.Context\nLocation: ../laws.m14_rule_matches_row\n38 |     case Refusal.UnknownField{}: {==}\n39>|     case Refusal.ClosedSet{}: {==}\n40 |     case Refusal.RequiredField{}: {==}\n",
+      "passed": true
+    },
+    {
+      "label": "refusal unredacted secret",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/10",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : s\n- observed : 0n\nContext:\n- s : Nat\nLocation: ../laws.m14_context_redacted\n55 |   match k:\n56>|     case Refusal.UnknownField{}: {==}\n57 |     case Refusal.ClosedSet{}: {==}\n",
+      "passed": true
+    },
+    {
+      "label": "decision infers a remote",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/11",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : 0n\n- observed : r\nContext:\n- r : Nat\nLocation: ../laws.m18_dispatch_targets_declared_remote\n63 | def Laws.m18_dispatch_targets_declared_remote(r):\n64>|   {==}\n65 | \n",
+      "passed": true
+    },
+    {
+      "label": "decision codes a publishing outcome",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/12",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : 1n\n- observed : 0n\nContext:\n- r : Nat\nLocation: ../laws.m18_declared_does_not_refuse\n69 | def Laws.m18_declared_does_not_refuse(r):\n70>|   {==}\n71 | \n",
+      "passed": true
+    },
+    {
+      "label": "decision publishes undeclared",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "examples/laws-proof.bend",
+        "--check-only"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/13",
+      "exit": 1,
+      "expectedExit": 1,
+      "output": "Error:\n- expected : 0n\n- observed : 1n\nLocation: ../laws.m18_undeclared_refuses\n66 | def Laws.m18_undeclared_refuses():\n67>|   {==}\n68 | \n",
+      "passed": true
+    },
+    {
+      "label": "witness control drops a row",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/witness/examples/laws-transition.bend"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 0,
+      "expectedExit": 0,
+      "output": "reviews n=0 real 0 model 0 agree\nreviews n=1 real 0 model 1 DISAGREE\nreviews n=2 real 1 model 5 DISAGREE\nreviews n=3 real 5 model 18 DISAGREE\nreviews n=4 real 18 model 55 DISAGREE\nworker tight=0 free=4096 real 1 model 1 agree\nworker tight=18 free=64 real 1 model 1 agree\nworker tight=64 free=1 real 1 model 1 agree\ntransition witness: 8 cases compared; every line above must read agree.\nAll terms check, but 3 defs rely on unsafe or foreign code:\n- Real.reviews_fingerprint\n- Real.worker_room\n- main\n",
+      "passed": true
+    },
+    {
+      "label": "native build",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/node_modules/.bend/bin/bend",
+        "docs/bend2/examples/laws-proof.bend",
+        "-o",
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/laws-proof"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 0,
+      "expectedExit": 0,
+      "output": "",
+      "passed": true
+    },
+    {
+      "label": "native run",
+      "argv": [
+        "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80/docs/bend2/examples/laws-check-aamawsuf/laws-proof"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 0,
+      "expectedExit": 0,
+      "output": "M-5 reviews, M-10 worker admission, M-14 refusal rows and M-18 landing decision: model proofs checked.\n",
+      "passed": true
+    },
+    {
+      "label": "JavaScript review retention",
+      "argv": [
+        "node",
+        "--test",
+        "--test-reporter=spec",
+        "--test-name-pattern=opposing reviews are both retained",
+        "impl/test/swarm-state.test.mjs"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 0,
+      "expectedExit": 0,
+      "output": "\u25b6 accepted contribution \u2014 author still active\n  \u2714 opposing reviews are both retained \u2014 no last-review erasure (5.328459ms)\n\u2714 accepted contribution \u2014 author still active (7.401625ms)\n\u2139 tests 1\n\u2139 suites 1\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 338.196916\n",
+      "passed": true
+    },
+    {
+      "label": "JavaScript worker admission",
+      "argv": [
+        "node",
+        "--test",
+        "--test-reporter=spec",
+        "--test-name-pattern=^HC-2:",
+        "impl/test/issue297-issue307-host-capacity.test.mjs"
+      ],
+      "cwd": "/private/tmp/baton-resident-20260921/.baton/wt/ws-2fb50f061eda13769d1f9b86eb19fd80",
+      "exit": 0,
+      "expectedExit": 0,
+      "output": "\u2714 HC-2: two residents share one host lease directory; a worker holds no slot and is admitted at any load (#541), and a verify charges the suite budget (FIFO, visible position, in-order drainage) (1087.975042ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 1846.973166\n",
+      "passed": true
+    }
+  ]
+}

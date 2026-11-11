@@ -1,0 +1,5 @@
+#!/bin/sh
+# Recorded OMP usage report consumed by bend2/test/usage-windows-store.bend.
+# The fixture runs its recorded harness command as `<command> usage --json`;
+# this script ignores the arguments and prints the report the fixture asserts.
+printf '%s\n' '{"reports":[{"provider":"kimi-code","limits":[{"window":{"id":"5h","resetsAt":1893456000000},"amount":{"usedFraction":0.42}}]}]}'

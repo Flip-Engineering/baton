@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-03T00:31:32.494Z",
+  "members": [
+    "authority-attacker",
+    "lifecycle-attacker"
+  ],
+  "outcomes": [
+    {
+      "role": "authority-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "2d36a13a646d1b0b012f9be047d32986c04a2ce9"
+    },
+    {
+      "role": "lifecycle-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "c7c4d2c7c8c632755c46a6837a2c6b1afa440576"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "authority-attacker",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "lifecycle-attacker",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "lifecycle-attacker",
+      "requestId": "pause:baton-da6ac97fa4254913db5a5bec-work:530",
+      "at": "2026-08-03T00:40:29.507Z"
+    },
+    {
+      "role": "authority-attacker",
+      "requestId": "pause:baton-fefaec60a1761013785a3e3c-work:148",
+      "at": "2026-08-03T00:43:35.881Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "lifecycle-attacker",
+      "requestId": "pause:baton-da6ac97fa4254913db5a5bec-work:554",
+      "at": "2026-08-03T00:41:59.142Z",
+      "code": "claimed"
+    },
+    {
+      "role": "authority-attacker",
+      "requestId": "pause:baton-fefaec60a1761013785a3e3c-work:176",
+      "at": "2026-08-03T00:44:37.384Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 1,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:fef86fea4ac0fdc48ce11e14106c098a",
+    "idempotencyKey": "bd3-redteam-2026-08-03",
+    "recipeDigest": "8a9c56ba8151256f1da73f073d7feae92541ec7f335553f8552d6b18e0fddfb7",
+    "salt": "69a57f84-025d-4cc3-99f4-248b6db55553",
+    "renderedMembers": [
+      {
+        "role": "authority-attacker",
+        "objective": "Adversarially red-team the BD3 collaboration-spine contract (AUTHORITY angle). Contract: docs/reference/evidence/bidirectional-v3-2026-08-02/bidirectional-v3-decisions.md (v1.0 worker-validated + v1.1 layers matrix). Ground every claim in file:line. Anchors: claude-session.mjs scanForScratchpadWrite :88 + the assistant-message handler :1022, coordinator.mjs scratchpad.write admission :10697 + writeScratchpad :9689, messages.mjs buildKnowledgeSlice :477-500 (the bounded serving shapes), application-semantics.mjs UNTRUSTED framing conventions, coordination-store.mjs readScratch/checkScratch + scratch.read evidence class. Attack: (1) BD3-A viewer scope — the query kinds (knowledge/board/scratchpad/finding): can a worker read outside its run's horizons by any of the four kinds (find the re-derivation point or its absence)? Is `finding`-by-id a cross-run leak (a cited id is a guessable digest)? (2) read answers as injection — the response is content into the worker's context: is the UNTRUSTED framing mandatory at the admission seam or documentation-only? (3) BD3-B context-packs: orchestrator-authored but worker-consumed — the staleness rule (a brief citing a superseded pack must fail at spawn) — is there a validity/ supersession chain strong enough, or can stale packs serve forever (compare the KG's expiry machinery)? (4) BD3-C lane: worker replies only to a received message — can that be laundered into worker-to-worker sends (reply-to-reply chains, quoted bodies)? (5) BD3-D inbox: targets as leak (a viewer naming runs outside its scope) + the candidacy_review wake reason revealing candidates the viewer has no authority to review. (6) One authority hole the contract missed entirely. Verdict each: CONFIRMED-HOLE / DEFENDED / NEEDS-AMENDMENT + amendment.\nRed-team the BD3 collaboration-spine contract\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nRead-only review: do not edit impl/ files; your only write target is your report path.\n[attempt: 69a57f84-025d-4cc3-99f4-248b6db55553 authority-attacker]",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/bidirectional-v3-2026-08-02/**"
+        ],
+        "report": "docs/reference/evidence/bidirectional-v3-2026-08-02/redteam-authority.md"
+      },
+      {
+        "role": "lifecycle-attacker",
+        "objective": "Adversarially red-team the BD3 collaboration-spine contract (LIFECYCLE angle). Contract: docs/reference/evidence/bidirectional-v3-2026-08-02/bidirectional-v3-decisions.md (v1.0+v1.1). Ground every claim in file:line. Anchors: coordinator.mjs followOnce wake laws + cursor chains, wave-driver.mjs poll loop + reducer, decision settle tombstones (BD-B), followDowngraded lanes, the run.stop/close lifecycle. Attack: (1) BD3-D inbox correctness: the wave driver's poll loop becomes ONE consumer — walk every driver action today (nudge, claim, decision answer, finalization, terminal harvest) and map each to the proposed wake reasons: which action has NO corresponding wake reason (the driver could not actually run wake-only)? (2) cursor honesty across a 93B re-attach: the detached wave's record must feed the stream identically — what breaks when a wake reason spans the detach boundary? (3) wake-storm coalescing: a 64-member wave terminalizing — the proposed coalescing (one wake per reason-class per cursor window) — what information is lost, and does any lost reason change driver behavior? (4) BD3-A read receipts as evidence: reads mint scratch.read events — do those reads now weight KG promotion paths (minScratchReaders!) in ways a worker can farm to self-promote its own notes? (5) BD3-B pack lifecycle: who reaps packs (validity windows, run-scoped vs project- scoped retention, the sweep's relation to them)? (6) BD3-C delivery receipts (delivered vs read vs acted-on): what does a receipt mean for a worker whose process died between delivery and read? Verdict each: CONFIRMED-HOLE / DEFENDED / NEEDS-AMENDMENT + amendment.\nRed-team the BD3 collaboration-spine contract\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nRead-only review: do not edit impl/ files; your only write target is your report path.\n[attempt: 69a57f84-025d-4cc3-99f4-248b6db55553 lifecycle-attacker]",
+        "exact": {
+          "harness": "glm",
+          "model": "glm-5.2",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/bidirectional-v3-2026-08-02/**"
+        ],
+        "report": "docs/reference/evidence/bidirectional-v3-2026-08-02/redteam-lifecycle.md"
+      }
+    ]
+  }
+}

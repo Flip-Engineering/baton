@@ -1,0 +1,49 @@
+{
+  "description": "Retained public-log bytes for one controlled OMP frame workload, before and after the issue #686 log policy. Both runs use the same driver, the same batches and the same provider-free fixture; only the executable differs.",
+  "source_revisions": {
+    "baseline": "fca7af876c8260c32d17f95f3e19bc68ee1bf561",
+    "candidate_feature": "1edeb0f9501679a6819426eab825e820faf33119",
+    "candidate_measured": "f438f2d3d8927df64d40843d3f7fa172aefe8fc4",
+    "candidate_branch": "codex/logging-impl-20261006"
+  },
+  "executable_sha256": {
+    "baseline": "972d620ce6209193cb91273350a9c1ea2713cac6b4b2bcf692a6303df75c766c",
+    "candidate": "d50be605d6d48217836c22b55b4664bb6c4a9d310f66c407811f0378d4cb3206"
+  },
+  "hosts": {
+    "baseline": "Darwin arm64 development host, release 1.1.0 executable",
+    "candidate": "Linux x86_64 homelab runner, bend 2.0.25 with clang-19"
+  },
+  "workload": {
+    "driver": "bend2/scripts/measure-omp-stream.py",
+    "batches": {
+      "small": "1000 message_update frames with a 128-character step",
+      "cumulative": "1000 message_update frames with a 51-character step, each carrying the whole accumulated message",
+      "tool": "1000 tool_execution_update frames with a 51-character step, each carrying the whole accumulated partial result",
+      "raw": "8 fixed lines that pin the classification of frames whose type field is unusual"
+    },
+    "default_policy": {"level": "default", "budgetBytes": 33554432, "keepSegments": 2}
+  },
+  "retained_bytes": {
+    "baseline": {"small": 113, "cumulative": 118, "tool": 26164652, "retained_log_bytes": 26165554},
+    "candidate": {"small": 113, "cumulative": 118, "tool": 112, "retained_log_bytes": 53163}
+  },
+  "emitted_bytes": {"small": 308000, "cumulative": 26213540, "tool": 26164540, "raw": 351},
+  "reduction": {
+    "tool_batch_bytes": "26164652 to 112",
+    "tool_batch_percent": 99.9996,
+    "workload_retained_bytes": "26165554 to 53163",
+    "workload_percent": 99.797
+  },
+  "semantics": {
+    "baseline": {"missing_retained": [], "unexpected_retained": [], "bytes": 351, "frames": 8},
+    "candidate": {"missing_retained": [], "unexpected_retained": [], "bytes": 351, "frames": 8}
+  },
+  "interpretation": "A `message_update` frame was already dropped before this change, so the `small` and `cumulative` batches retained the same bytes in both runs. The `tool` batch retains every frame in the baseline and one held frame in the candidate. The candidate's `retained_log_bytes` is larger than its per-batch figure because the turn writes the last held `tool_execution_update` when it ends: 52,812 bytes of partial result for the open call, plus the raw batch and the filter note. That write is the evidence an interrupted call would otherwise lose.",
+  "limits": [
+    "The fixture starts no provider; the batches are frames the driver writes, so the numbers cover the coordinator's retention and not a provider's own behaviour.",
+    "The CPU figures the driver records come from different hosts and are not comparable; only the byte figures are.",
+    "One receiver process, one database and one log path per run; concurrent writers are covered by bend2/test/logs.py and not by this driver.",
+    "The workload is one 1000-frame batch per frame type, not a working day of coordination."
+  ]
+}
