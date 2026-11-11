@@ -25,6 +25,17 @@ def models_args(cmd: String) -> List<String>:
 def arguments(cmd: String, model: String, effort: String, sessions: String) -> List<String>:
   [cmd,"--mode","rpc","--model",model,"--thinking",effort,"--approval-mode","yolo","--session-dir",sessions]
 
+# OMP reads its configured profile directory from PI_CODING_AGENT_DIR.
+def profile_arguments(binding: List<String>, cmd: String, model: String, effort: String, sessions: String) -> List<String>:
+  match binding:
+    case Nil{}: arguments(cmd,model,effort,sessions)
+    case other: List.append(&1,String,Con{"/usr/bin/env",binding},arguments(cmd,model,effort,sessions))
+
+def profile_argv(binding: List<String>, cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> String:
+  match fresh:
+    case True{}: P.argv(profile_arguments(binding,cmd,model,effort,sessions))
+    case False{}: P.argv(List.append(&1,String,profile_arguments(binding,cmd,model,effort,sessions),["--resume",session]))
+
 def argv(cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> String:
   match fresh:
     case True{}: P.argv(arguments(cmd,model,effort,sessions))

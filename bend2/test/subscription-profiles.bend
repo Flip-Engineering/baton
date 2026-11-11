@@ -9,6 +9,7 @@ import Base
 import ../src/coordinator/subscription-fallback.bend as Subs
 import ../src/harness/codex-player.bend as Codex
 import ../src/harness/claude-player.bend as Claude
+import ../src/harness/omp-player.bend as Omp
 import ../src/git/text.bend as Tx
 
 def fixture_list() -> String:
@@ -71,6 +72,28 @@ def spaced_store_value(binding: List<String>) -> IO(Unit):
 
 def spaced_store(profiles: List<&2,Subs.Profile>) -> IO(Unit):
   spaced_store_value(Subs.store_binding("codex","/fixture/stores/codex alt"))
+
+def omp_binding_value(binding: List<String>) -> IO(Unit):
+  match binding:
+    case single <> Nil{}: check("omp-store-binding",String.eq(single,"PI_CODING_AGENT_DIR=/fixture/stores/omp agent"))
+    case other: IO.die(Unit,1,"fixture-profile OMP binding: expected one store assignment")
+
+def omp_profile_argv(argv: List<String>) -> IO(Unit):
+  match argv:
+    case env <> assignment <> command <> mode <> rpc <> model_flag <> model <> thinking <> effort <> approval <> yolo <> session_flag <> sessions <> Nil{}:
+      do IO<Unit>:
+        env_ok : Unit <- check("omp-profile-env-command",String.eq(env,"/usr/bin/env"))
+        assignment_ok : Unit <- check("omp-profile-store-path",String.eq(assignment,"PI_CODING_AGENT_DIR=/fixture/stores/omp agent"))
+        command_ok : Unit <- check("omp-profile-command",String.eq(command,"/fixture/bin/omp"))
+        args_ok : Unit <- check("omp-profile-arguments",Bool.and(String.eq(mode,"--mode"),Bool.and(String.eq(rpc,"rpc"),Bool.and(String.eq(model_flag,"--model"),Bool.and(String.eq(model,"deepseek/deepseek-flash"),Bool.and(String.eq(thinking,"--thinking"),Bool.and(String.eq(effort,"max"),Bool.and(String.eq(approval,"--approval-mode"),Bool.and(String.eq(yolo,"yolo"),Bool.and(String.eq(session_flag,"--session-dir"),String.eq(sessions,"/fixture/sessions"))))))))))
+        IO.pure(Unit,Unit{})
+    case other: IO.die(Unit,1,"fixture-profile OMP argv: unexpected arguments")
+
+def omp_profile() -> IO(Unit):
+  do IO<Unit>:
+    +binding : List<String> = Subs.store_binding("omp","/fixture/stores/omp agent")
+    checked : Unit <- omp_binding_value(binding)
+    omp_profile_argv(Omp.profile_arguments(binding,"/fixture/bin/omp","deepseek/deepseek-flash","max","/fixture/sessions"))
 
 # The corrected env order is proved on the real argv composition: env, both existing
 # key unbinds, then the store assignment, then the command.
@@ -248,6 +271,7 @@ def main() -> IO(Unit):
     started : Unit <- starts_at_head(profiles)
     advanced : Unit <- advances(profiles)
     spaced : Unit <- spaced_store(profiles)
+    omp_store : Unit <- omp_profile()
     codex : Unit <- codex_order("/fixture/stores/codex alt")
     plain : Unit <- codex_plain()
     claude : Unit <- claude_order("/fixture/stores/claude-main")

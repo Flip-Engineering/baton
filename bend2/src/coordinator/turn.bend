@@ -1119,7 +1119,7 @@ def current_history(+db: String, player: String) -> IO(String):
 # spawns exactly as before.
 def retained_profile_other(omp: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, +native: String) -> String:
   match omp:
-    case True{}: Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native))
+    case True{}: Omp.profile_argv(binding,cmd,model,effort,sessions,native,String.is_empty(native))
     case False{}: Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))
 
 def retained_profile_arguments(omp: Bool, claude: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, +native: String) -> String:
