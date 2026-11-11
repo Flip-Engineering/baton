@@ -1,0 +1,39 @@
+{
+  "attempt": "2026-08-12T21:37:13.395Z",
+  "salt": "f420260812213713",
+  "role": "fold-66b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-567d0d9f35a410ce6b52cbb96e232886"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-66b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-66b": {
+      "pin": "1f3c934d7f4a0ea759c476db3fae4eb11dc5b92a",
+      "paths": [
+        "impl/test/doubt-review-red.test.mjs",
+        "docs/reference/evidence/doubt-review-2026-08-12/suite-fold-2.md",
+        "docs/reference/evidence/doubt-review-2026-08-12/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 417,
+  "verdict": "FOLD-66B-OK"
+}

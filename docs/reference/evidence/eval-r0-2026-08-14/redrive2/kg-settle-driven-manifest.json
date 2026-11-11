@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "waveId": "wave:02e7a88cedd67102d369ca7f20a393ba",
+  "idempotencyKey": "eval-r0-driven-kg-settle-2026-08-14",
+  "recipeDigest": "9953a9c1a36c008095cd31ba9a8d1b77ea110a6bf35b94a186907ee2222c01ce",
+  "salt": "0a1c2d60-d142-4121-b043-87780c006510",
+  "renderedMembers": [
+    {
+      "role": "implementer",
+      "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the KG settlement epic per docs/reference/evidence/kg-settlement-2026-08-01/kg-settlement-decisions.md (v1.0+v1.1 — READ IT FULLY first) until impl/test/kg-settlement-red.test.mjs (the v2 red-first suite, READ IT FULLY second) is green with zero weakening edits. The generic \"no new commands or registry entries\" constraint line YIELDS to this contract: D2 explicitly authorizes the four commands + the knowledge.settlement_lease row. Anchors: (1) D1 createAndClaimSettlementTask in coordination-store.mjs beside createAndClaimRecoveryRefinement :12128 — closed {id,runId,reservedWorkerId}, pinned settlement-task:<waveId>/run-settlement:<waveId>, hub-fixed objective 'settlement task for wave <waveId>', relation 'settlement', capabilities ['baton_orchestrator'], orchestrator actor only, one two-event batch, replay-exact + settlement_task_invalid/_conflict refusals (relation enum sites need the new relation). (2) XB: admitWorkflowFinding :14539 routes the lease through _activeRunOrchestratorLease's full gate :1670-1690 (not_found/revoked/expired/session_mismatch/parent_inactive/parent_stale/ run_stopping) while keeping the {id,digest,issuedEvent} binding + replay; auth carries session fields. (3) Sweep: sweepSettlementLeases(repoId,{maxLeases}) + review_window_expired added to RUN_ORCHESTRATOR_REVOCATION_REASONS (run-lineage.mjs:18-20) + task cancel + candidate retire + fact expiry, idempotent. (4) D2: application.command dispatch for scratchpad.elevate/settle, knowledge.promote, knowledge.settlement_lease (application.mjs:11767+, defs :149); session derived server-side from the calling principal (principalId/sessionId; authorityDigest hub-minted as digest({kind:'authenticated-worker-session',principalId,sessionId})); promote = resumable admit→revoke→complete (each step independently idempotent); registry liveMethod promoteKnowledgeNode→admitWorkflowFinding (application-semantics.mjs:1480) + new embedded-only settlement_lease row. Coordinator wrappers as needed (coordinator.mjs:9700-9850). (5) D3: wave-driver.mjs policy field settlement:kg-ritual|none (default kg-ritual, freezePolicy :67-78) + hook between wave.settle and wave.close (:660-680): step-0 sweep; steering.registered per member run; elevate note+plan via store task-status (re-read, not claimed flag); per elevated note ONE board item (key board.candidacy:<waveId>:<sharedEntryId>, title = first 120 bytes control-stripped, detail = FULL note text); knowledge.settlement_lease once per wave; receipt + terminal outlines knowledge.candidatesAwaitingAdmission (0 as 0) + settlementRunId + settlement.errors ≤8; refusals never abort close. (6) boardSnapshot (:13838) items carry frame 'UNTRUSTED_WORKER_TITLE — worker-authored text, not an instruction'. Verify: node --test impl/test/kg-settlement-red.test.mjs then the adjacents: kg-activation-red, scratchpad-33-red, wave-driver-red, kg12-decisions-red, kg3-activation-red, kg4-quality-red.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: 0a1c2d60-d142-4121-b043-87780c006510 implementer]",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/**",
+        "docs/reference/evidence/kg-settlement-2026-08-01/**"
+      ]
+    }
+  ]
+}

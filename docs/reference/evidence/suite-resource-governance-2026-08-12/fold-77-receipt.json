@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-12T21:27:09.161Z",
+  "salt": "f320260812212709",
+  "role": "fold-77",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-28725300b6a77afc8e124f01211bc7c7"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-77",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-77": {
+      "pin": "ec5bb3f71f02bb4fd81c36c410dfe8ec4a3a13bb",
+      "paths": [
+        "docs/reference/evidence/suite-resource-governance-2026-08-12/suite-resource-governance-contract.md",
+        "docs/reference/evidence/suite-resource-governance-2026-08-12/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 415,
+  "verdict": "FOLD-77-OK"
+}

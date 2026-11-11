@@ -1,0 +1,75 @@
+{
+  "at": "2026-07-13T02:56:49.876Z",
+  "repoHead": "3c491af40c8d6082cca832cc7a481c91fa0cbb44",
+  "runId": "phase43-adverse-harness-matrix",
+  "rows": [
+    {
+      "taskId": "phase43-adverse-glm-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "workerId": "w-1",
+      "pid": 99739,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 84115,
+        "usd": 0.55823
+      },
+      "verifyAccept": true,
+      "reportCaptured": true,
+      "terminal": {
+        "status": "completed",
+        "summary": "Done. I've written the adversarial review to `reviews/dogfood/phase43-adverse-glm-review.md` with:\n\n- **Verdict**: CLEAN — No P0-P1 findings\n- **P0-P1 findings**: None (correct implementation of AF3/AF4/AF5/AF6/AF8/AF9/AF10)\n- **Required red tests**: Existing test suite already covers all adversarial gates\n\nKey findings grounded in exact source seams:\n- `coordination-store.mjs:294`: `reuse_provider_guarded` check fences reuse decisions\n- Green non-clearance is intentional per AF3 spec: green cle",
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "verification": {
+          "command": null,
+          "claimedExit": null
+        },
+        "openQuestions": [],
+        "budgetUsed": {
+          "tokens": 84115,
+          "usd": 0.55823
+        }
+      }
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase43-adverse-glm-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "runnerHealthy": true,
+    "allHarnessesAdmitted": true,
+    "allExactRoutesRequested": true,
+    "glmCredentialedNativePid": true,
+    "glmFreshVerified": true,
+    "allControlSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": true
+}

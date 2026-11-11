@@ -1,0 +1,2085 @@
+{
+  "schema": 1,
+  "run_directory": "/Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run",
+  "outcomes": {
+    "native_work": "completed_and_checked_landed",
+    "original_driver": {
+      "exit_code": 1,
+      "sha256": "aa0858434963409bbd84e08a6d237da3724dbb180cf337dd68cf3b4536a16196",
+      "issue": "https://github.com/Flip-Engineering/baton/issues/637",
+      "failure": "Initial-base worker scope assertion includes inherited merge changes; original landing receipts also precede correction landings. Original assertions and evidence remain unchanged."
+    },
+    "repaired_verifier": {
+      "status": "passed_retained_run_verification",
+      "new_native_calls": 0,
+      "commit": "061411c972a2ae7d69307b94e23b1fc95714a6b2",
+      "tree": "098ee6ba146421c92cf8c2160a8af7ba51387b0c",
+      "sha256": "ddeabaa7cd7deb39dffe2280f5d69a77377f69fabe0dde2df77d83259e535122",
+      "regression_tests": {
+        "passed": 7,
+        "seconds": 22.803,
+        "command": "python3 bend2/test/accept-kimi-hierarchy.py"
+      },
+      "full_result_path": "/Users/wahargis/Development/Experiments/baton-bend2-hierarchy-637-20260928/.scratch/issue637/retained-run-verification.json",
+      "full_result_sha256": "479fa3eb42b7bda6f70a14e9d181640060823b91f79f6dd16ba77ca07d7e2e3e"
+    }
+  },
+  "source": {
+    "commit": "08ee671b62528888a2facd0d3a8ce2af34e5ef98",
+    "tree": "c06e2bb1d2be32c04c7e89d185c7a10f6723bfa2",
+    "coordinator_build": {
+      "mode": "built_from_selected_clone",
+      "command": [
+        "sh",
+        "/Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/repo/bend2/scripts/build-native.sh",
+        "bend2/src/coordinator/main.bend",
+        "/Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/baton2"
+      ],
+      "build_log": "/Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/build.log",
+      "generated_c_sha256": "3b4348810795331d9a359752405ed0b924c955c3a05f265c8c3d9e736a16ae8c",
+      "compiler": {
+        "path": "/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend",
+        "version": "bend 2.0.25",
+        "executable_sha256": "3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c"
+      }
+    },
+    "coordinator_sha256": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+    "helper_sha256": "b01af1f378839882799735f4b570706758247291d1285b2be550f5cf124f5cab",
+    "instrumentation": {
+      "pid": 73868,
+      "ppid": 1676,
+      "started_unix": 1790638001.821957,
+      "source": "08ee671b62528888a2facd0d3a8ce2af34e5ef98",
+      "source_directory": "/Users/wahargis/Development/Experiments/baton-bend2-root-20260928",
+      "output": "/Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run",
+      "wrapper_sha256": "9031e9963c1478a3823d996524fcf5dc51de812bddc1735ab02858800fe12922",
+      "driver_sha256": "aa0858434963409bbd84e08a6d237da3724dbb180cf337dd68cf3b4536a16196",
+      "tasks_sha256": "8ee4555213205a04ba69294ed546ba2fc4db10a89a1fd7b46fe469a11dac0f63",
+      "routes_sha256": "4477aede43179c9e25e18befe3a73448b2d6d5da60ac21c01be391ac0681ecb7"
+    },
+    "prompt_sha256": {
+      "root.md": "77d5b88e9cf2274e4bbb8c3792bd102b08faaa68ad5c8be2424efe85a26640a3",
+      "lead.md": "ee72de2f710688acb5edfd47640899d12297a8ceebb2341e186fcbc2ee92c406",
+      "deepseek.md": "8d82895974df10f283676463836704b50ff5390d6c9de0490e108b6d096f7c3e",
+      "muse.md": "367416b88fa405e36e2ebfc49b27669b8ed6dcfed25e654b354ae471f03ab420",
+      "guidance.txt": "082b4fa4e3b27aae6e5964f733f54fa79166390b5c64866c3629b59fae5dda83"
+    },
+    "binary_preflight": {
+      "source": "08ee671b62528888a2facd0d3a8ce2af34e5ef98",
+      "expected_sha256": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+      "actual_sha256": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+      "matched": true,
+      "verified_unix": 1790638024.41602,
+      "wrapper_sha256": "9031e9963c1478a3823d996524fcf5dc51de812bddc1735ab02858800fe12922"
+    },
+    "executables": {
+      "observed_unix": 1790639259.9865248,
+      "executables": {
+        "codex": {
+          "path": "/Users/wahargis/.codex/packages/standalone/releases/0.154.0-aarch64-apple-darwin/bin/codex",
+          "bytes": 222655232,
+          "sha256": "4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc"
+        },
+        "lead": {
+          "path": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+          "bytes": 123041280,
+          "sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba"
+        },
+        "omp": {
+          "path": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+          "bytes": 123041280,
+          "sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba"
+        },
+        "muse": {
+          "path": "/Users/wahargis/.local/bin/muse",
+          "bytes": 32737,
+          "sha256": "c6db294799a190ca380da274beb3b9c0e160e0da9681a3d364ce8b0e5fa3a4bc"
+        },
+        "coordinator": {
+          "path": "/Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/baton2",
+          "bytes": 2413864,
+          "sha256": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4"
+        },
+        "python": {
+          "path": "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+          "bytes": 52640,
+          "sha256": "f13707ff725eb3675d57e0f04527a4dada0511cebfb7cbd80f5cab72733a2a9d"
+        },
+        "compiler": {
+          "path": "/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend",
+          "bytes": 63726818,
+          "sha256": "3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c"
+        },
+        "observed_muse_binary": {
+          "path": "/Users/wahargis/.local/bin/muse-bin-1.4.0-R4302.1",
+          "bytes": 327341696,
+          "sha256": "b7e1ebdf6b5c7e67ddb8ff4b917461f555758545c7db25076b3696d84018d752"
+        }
+      }
+    },
+    "prior_exact_tree_gates": {
+      "summary_path": "/Users/wahargis/Development/Experiments/baton-bend2-root-20260928/.scratch/root-handoff-20260928/20260928T230149.267520Z/summary.json",
+      "summary_sha256": "b26601d7e4c0918f703f089fba0fa148c68cb432c53734870daec4a8ed009b3d",
+      "status": "passed",
+      "validation": {
+        "laws": {
+          "laws": 223,
+          "mutations": 2,
+          "compiles": 226,
+          "failures": 0
+        },
+        "native": {
+          "python_tests": 128,
+          "python_suites": [
+            {
+              "file": "bend2/test/check-unittest.py",
+              "tests": 13,
+              "seconds": 2.546
+            },
+            {
+              "file": "bend2/test/codex-root.py",
+              "tests": 10,
+              "seconds": 8.99
+            },
+            {
+              "file": "bend2/test/coordinator.py",
+              "tests": 19,
+              "seconds": 7.583
+            },
+            {
+              "file": "bend2/test/end-to-end.py",
+              "tests": 1,
+              "seconds": 0.672
+            },
+            {
+              "file": "bend2/test/land.py",
+              "tests": 19,
+              "seconds": 22.327
+            },
+            {
+              "file": "bend2/test/mcp-root.py",
+              "tests": 9,
+              "seconds": 5.208
+            },
+            {
+              "file": "bend2/test/omp-root.py",
+              "tests": 11,
+              "seconds": 9.488
+            },
+            {
+              "file": "bend2/test/process.py",
+              "tests": 6,
+              "seconds": 0.531
+            },
+            {
+              "file": "bend2/test/receive.py",
+              "tests": 22,
+              "seconds": 30.721
+            },
+            {
+              "file": "bend2/test/recruit.py",
+              "tests": 4,
+              "seconds": 1.591
+            },
+            {
+              "file": "bend2/test/turn.py",
+              "tests": 14,
+              "seconds": 12.798
+            }
+          ],
+          "bend_results": [
+            "git-lane checks: all green",
+            "land checks: all green"
+          ]
+        }
+      },
+      "log_sha256": {
+        "laws-check.log": "59fab953c7dc050829c82bf228fda9933adbdefe24b715e186ad173aa1848d65",
+        "check-native.log": "0b2fbe9e99aff478f098129aed3cdda8f59ab67686b3b7f64bfe2a1ec8fe3840",
+        "build-native.resources.txt": "ce5961f22d4a266e5c81f74aa878a6eea4ce731ad9a7745c4729e77c998c2ac0",
+        "laws-check.resources.txt": "f993bb1ea1ea488e47737bda6e9831fb43f0e6274eed79427df64b5d4d21853d",
+        "check-native.resources.txt": "cd62ead6cd0796132ffdeff682e217527f7ea26b2f9519bde80a80f5d40200aa",
+        "build-native.log": "b4c3ff1bf07b24889022a4ea62f164496cbf7059c7fedbbabee7055f72156182"
+      }
+    }
+  },
+  "routes": {
+    "codex": {
+      "executable": "/Users/wahargis/.codex/packages/standalone/releases/0.154.0-aarch64-apple-darwin/bin/codex",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "executable_sha256": "4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc"
+    },
+    "lead": {
+      "executable": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "executable_sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba"
+    },
+    "omp": {
+      "executable": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+      "model": "deepseek/deepseek-flash",
+      "effort": "low",
+      "executable_sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba"
+    },
+    "muse": {
+      "executable": "/Users/wahargis/.local/bin/muse",
+      "model": "muse-spark-1.3-contributor",
+      "effort": "low",
+      "executable_sha256": "c6db294799a190ca380da274beb3b9c0e160e0da9681a3d364ce8b0e5fa3a4bc"
+    }
+  },
+  "tasks": {
+    "deepseek": {
+      "task": "Update ONLY docs/bend2/target-architecture.md. It is the approved target architecture and now contains stale implementation descriptions: a live slice still due, a local service with one database writer, a proposed command list and operation IDs, host effects still needing implementations, and publication deferred beyond local landing. Read docs/bend2/architecture.md, bend2/README.md, current coordinator/main.bend and commands.bend, receive/turn/store/root code, host boundaries, and git/land.bend as needed to identify the actual behavior. Correct those stale claims concisely, preserving the approved architectural scope and deliberate omissions. Link canonical implementation descriptions and the specific retained acceptance evidence; distinguish current implementation from validated boundaries. Keep future design intent explicit where implementation differs, and avoid creating a new architecture or promising unsupported recovery.\n\nRead AGENTS.md and write plain technical English. Preserve the approved architecture and the surrounding useful text. Make only the assigned documentation correction, with no runtime, test, dependency, or other documentation edits. Inspect the actual implementation and canonical documents; distinguish implemented behavior from evidence and its limitations. Verify each new relative link resolves in this checkout, and review the changed text against the source before committing. Run git diff --check. The selected check is bend2/test/check-unittest.py: create .scratch/bend2, then run python3 bend2/test/check-unittest.py. This exercises checked-landing plumbing and does not verify documentation accuracy; state that limitation in your report. Commit the finished change on your assigned branch. Report the commit, exact source paths/functions supporting the changed claims, resolved links, diff review, and actual check results. Ask the lead to independently review source claims and links before landing.",
+      "files": [
+        "docs/bend2/target-architecture.md"
+      ],
+      "checks": [
+        "bend2/test/check-unittest.py"
+      ]
+    },
+    "muse": {
+      "task": "Update ONLY the native-receive section of bend2/README.md. Explain surviving-process-owner recovery after Bend receive-observer loss, including continued native ownership and replay, and the recognized missing-conversation fallback that starts a fresh native identity while preserving pending input and the workspace. Read docs/bend2/architecture.md, docs/bend2/receive-recovery-2026-09-28.md, and the current receive/turn/guidance and host process code enough to verify the claims. Keep this introduction concise and link the detailed recovery description and its limits. Do not claim recovery from owner loss or host reboot is established by observer-loss evidence. Preserve all existing CLI, Kimi-route, and law text, and keep the edit within the native-receive section.\n\nRead AGENTS.md and write plain technical English. Preserve the approved architecture and the surrounding useful text. Make only the assigned documentation correction, with no runtime, test, dependency, or other documentation edits. Inspect the actual implementation and canonical documents; distinguish implemented behavior from evidence and its limitations. Verify each new relative link resolves in this checkout, and review the changed text against the source before committing. Run git diff --check. The selected check is bend2/test/check-unittest.py: create .scratch/bend2, then run python3 bend2/test/check-unittest.py. This exercises checked-landing plumbing and does not verify documentation accuracy; state that limitation in your report. Commit the finished change on your assigned branch. Report the commit, exact source paths/functions supporting the changed claims, resolved links, diff review, and actual check results. Ask the lead to independently review source claims and links before landing.",
+      "files": [
+        "bend2/README.md"
+      ],
+      "checks": [
+        "bend2/test/check-unittest.py"
+      ]
+    },
+    "guidance": "In your target-architecture correction, explicitly distinguish message/native-input acceptance from completion of parent review or branch landing. A receipt alone establishes neither review nor landing. Also preserve the checked-landing concurrency contract: observed target movement blocks that invocation while retaining work; a fresh land-checked invocation prepares and checks against the current target. Verify the exact current source and link the canonical description/evidence. Keep the assigned file scope and concise documentation style."
+  },
+  "codex_login": {
+    "method": "chatgpt",
+    "exit_code": 0,
+    "status_sha256": "16118df3eb3595e44a4721878cef0f79910e6564e10ff0e78e451e7c4e478947"
+  },
+  "session_identities": [
+    {
+      "id": "operator",
+      "parent": null,
+      "harness": "terminal",
+      "model": "",
+      "effort": "",
+      "native": "",
+      "observed_harness": "",
+      "observed_model": "",
+      "observed_effort": "",
+      "branch": "",
+      "base": ""
+    },
+    {
+      "id": "root",
+      "parent": null,
+      "harness": "codex",
+      "model": "",
+      "effort": "",
+      "native": "01a0ea57-ed3a-7873-b158-a8e7502e7716",
+      "observed_harness": "",
+      "observed_model": "",
+      "observed_effort": "",
+      "branch": "",
+      "base": ""
+    },
+    {
+      "id": "lead",
+      "parent": "root",
+      "harness": "omp",
+      "model": "kimi-code/k3",
+      "effort": "high",
+      "native": "01a0ea58-60eb-7000-9355-ac3479dc4526",
+      "observed_harness": "",
+      "observed_model": "kimi-code/k3",
+      "observed_effort": "",
+      "branch": "hierarchy-lead",
+      "base": "08ee671b62528888a2facd0d3a8ce2af34e5ef98"
+    },
+    {
+      "id": "deepseek",
+      "parent": "lead",
+      "harness": "omp",
+      "model": "deepseek/deepseek-flash",
+      "effort": "low",
+      "native": "01a0ea59-20f5-7000-99da-9c94fabf2710",
+      "observed_harness": "",
+      "observed_model": "deepseek/deepseek-flash",
+      "observed_effort": "",
+      "branch": "hierarchy-deepseek",
+      "base": "08ee671b62528888a2facd0d3a8ce2af34e5ef98"
+    },
+    {
+      "id": "muse",
+      "parent": "lead",
+      "harness": "muse",
+      "model": "muse-spark-1.3-contributor",
+      "effort": "low",
+      "native": "01a0ea59-1e63-7282-a83a-e36622ab3b52",
+      "observed_harness": "",
+      "observed_model": "muse-spark-1.3-contributor",
+      "observed_effort": "",
+      "branch": "hierarchy-muse",
+      "base": "08ee671b62528888a2facd0d3a8ce2af34e5ef98"
+    }
+  ],
+  "native_invocations": {
+    "root": {
+      "requested_model": "gpt-6-astra",
+      "observed_model": null,
+      "native_session_id": "01a0ea57-ed3a-7873-b158-a8e7502e7716",
+      "invocations": 8,
+      "native_seconds": 406.8698196411133,
+      "intervals": [
+        {
+          "native_pid": 4146,
+          "wrapper_pid": 3863,
+          "started_unix": 1790638024.867149,
+          "ended_unix": 1790638057.827032,
+          "native_seconds": 32.959882974624634,
+          "wrapper_seconds": 32.96259880065918,
+          "exit_code": 0,
+          "frames": "native-root-3863.native.jsonl",
+          "frames_bytes": 13398,
+          "frames_sha256": "b7d1c050ace02b806d3dd9526523b4fdac1f630ce28a40498e109aaf792a755f"
+        },
+        {
+          "native_pid": 54723,
+          "wrapper_pid": 54718,
+          "started_unix": 1790638129.483156,
+          "ended_unix": 1790638148.944376,
+          "native_seconds": 19.461220026016235,
+          "wrapper_seconds": 19.463720083236694,
+          "exit_code": 0,
+          "frames": "native-root-54718.native.jsonl",
+          "frames_bytes": 10995,
+          "frames_sha256": "3e310fd821ea784e22bb1ee9d0c6b24b094f346e00b3914404140e9299aa9589"
+        },
+        {
+          "native_pid": 40307,
+          "wrapper_pid": 40250,
+          "started_unix": 1790638300.681875,
+          "ended_unix": 1790638322.275711,
+          "native_seconds": 21.593836069107056,
+          "wrapper_seconds": 21.60101294517517,
+          "exit_code": 0,
+          "frames": "native-root-40250.native.jsonl",
+          "frames_bytes": 6358,
+          "frames_sha256": "9d19e716111b5d556aef61e9ef6a966463ce6af00c516aebad772169381ffc7f"
+        },
+        {
+          "native_pid": 54156,
+          "wrapper_pid": 54148,
+          "started_unix": 1790638531.677475,
+          "ended_unix": 1790638587.6337888,
+          "native_seconds": 55.95631384849548,
+          "wrapper_seconds": 55.95877408981323,
+          "exit_code": 0,
+          "frames": "native-root-54148.native.jsonl",
+          "frames_bytes": 95848,
+          "frames_sha256": "3f7bc6722ec952f32e45b035d4fac042a88315384251ff242043f02af6777d2a"
+        },
+        {
+          "native_pid": 62285,
+          "wrapper_pid": 62279,
+          "started_unix": 1790638587.681209,
+          "ended_unix": 1790638614.843143,
+          "native_seconds": 27.16193389892578,
+          "wrapper_seconds": 27.16620683670044,
+          "exit_code": 0,
+          "frames": "native-root-62279.native.jsonl",
+          "frames_bytes": 12863,
+          "frames_sha256": "e4a728e450dc26c79cc96c2c657a285e6d42c1e61238917b0304e785067a5621"
+        },
+        {
+          "native_pid": 11006,
+          "wrapper_pid": 10995,
+          "started_unix": 1790638980.024641,
+          "ended_unix": 1790639063.952257,
+          "native_seconds": 83.92761588096619,
+          "wrapper_seconds": 83.94030117988586,
+          "exit_code": 0,
+          "frames": "native-root-10995.native.jsonl",
+          "frames_bytes": 114733,
+          "frames_sha256": "109c0790df094a1c7b18b2757ea2083957aa48bac67401082529069e89284a45"
+        },
+        {
+          "native_pid": 14141,
+          "wrapper_pid": 14140,
+          "started_unix": 1790639063.998419,
+          "ended_unix": 1790639080.6131032,
+          "native_seconds": 16.614684104919434,
+          "wrapper_seconds": 16.61767292022705,
+          "exit_code": 0,
+          "frames": "native-root-14140.native.jsonl",
+          "frames_bytes": 9371,
+          "frames_sha256": "0e1723e878dc93e8af07ae3fbc32ec048c763fae0b382df544beb8bf9819f727"
+        },
+        {
+          "native_pid": 39693,
+          "wrapper_pid": 39692,
+          "started_unix": 1790639199.088087,
+          "ended_unix": 1790639348.28242,
+          "native_seconds": 149.19433283805847,
+          "wrapper_seconds": 149.19751024246216,
+          "exit_code": 0,
+          "frames": "native-root-39692.native.jsonl",
+          "frames_bytes": 55617,
+          "frames_sha256": "8eaa2ccdd9679cea32e36943b111e82b24f3d5c1c6f14e523d9081c039610c57"
+        }
+      ],
+      "usage": {
+        "source": "turn.completed.usage",
+        "final_cumulative": {
+          "input_tokens": 2245451,
+          "cached_input_tokens": 2134400,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 9894,
+          "reasoning_output_tokens": 329
+        },
+        "aggregation": "Use final cumulative conversation counters; do not sum resumed terminal totals."
+      },
+      "native_cumulative_proof": [
+        {
+          "path": "/Users/wahargis/.codex/sessions/2026/09/28/rollout-2026-09-28T16-27-06-01a0ea57-ed3a-7873-b158-a8e7502e7716.jsonl",
+          "sha256": "94feeeb34b8114798360a5cf886147ae5696c2844ac390cbb74e6448039fcb7b",
+          "token_count_records": 34,
+          "last": {
+            "timestamp": "2026-09-28T23:49:07.723Z",
+            "total_token_usage": {
+              "input_tokens": 2245451,
+              "cached_input_tokens": 2134400,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 9894,
+              "reasoning_output_tokens": 329,
+              "total_tokens": 2255345
+            },
+            "last_token_usage": {
+              "input_tokens": 117553,
+              "cached_input_tokens": 114816,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 93,
+              "reasoning_output_tokens": 0,
+              "total_tokens": 117646
+            }
+          }
+        }
+      ]
+    },
+    "lead": {
+      "requested_model": "kimi-code/k3",
+      "observed_model": "kimi-code/k3",
+      "native_session_id": "01a0ea58-60eb-7000-9355-ac3479dc4526",
+      "invocations": 6,
+      "native_seconds": 979.4634749889374,
+      "intervals": [
+        {
+          "native_pid": 59618,
+          "wrapper_pid": 59331,
+          "started_unix": 1790638054.4336221,
+          "ended_unix": 1790638129.189709,
+          "native_seconds": 74.75608682632446,
+          "wrapper_seconds": 74.75972986221313,
+          "exit_code": 0,
+          "frames": "native-lead-59331.native.jsonl",
+          "frames_bytes": 491324,
+          "frames_sha256": "ac1b86546fecd72d4c7b9a210c20a87a2a9d0a28ba938e16a9498b2312d04298"
+        },
+        {
+          "native_pid": 83064,
+          "wrapper_pid": 82953,
+          "started_unix": 1790638153.6730728,
+          "ended_unix": 1790638299.496186,
+          "native_seconds": 145.8231132030487,
+          "wrapper_seconds": 145.8265609741211,
+          "exit_code": 0,
+          "frames": "native-lead-82953.native.jsonl",
+          "frames_bytes": 955794,
+          "frames_sha256": "3be1930001dc410bd0859469edb697e210216dd7ed7a054f27081d79e3107c64"
+        },
+        {
+          "native_pid": 84843,
+          "wrapper_pid": 84780,
+          "started_unix": 1790638390.9375439,
+          "ended_unix": 1790638572.466677,
+          "native_seconds": 181.52913308143616,
+          "wrapper_seconds": 181.53473472595215,
+          "exit_code": 0,
+          "frames": "native-lead-84780.native.jsonl",
+          "frames_bytes": 829139,
+          "frames_sha256": "b632246517eb01db764c3f3bcbc5c331393c5543f5a2c701b91e1e4dd2cabdb1"
+        },
+        {
+          "native_pid": 61531,
+          "wrapper_pid": 61523,
+          "started_unix": 1790638584.144295,
+          "ended_unix": 1790638979.717361,
+          "native_seconds": 395.57306599617004,
+          "wrapper_seconds": 395.5750970840454,
+          "exit_code": 0,
+          "frames": "native-lead-61523.native.jsonl",
+          "frames_bytes": 831118,
+          "frames_sha256": "cebe13b61b6a9a596431db362b1c19cc2e1cb80316b5829f73f7f0f8997a1ee4"
+        },
+        {
+          "native_pid": 11007,
+          "wrapper_pid": 10998,
+          "started_unix": 1790638980.02127,
+          "ended_unix": 1790639021.079999,
+          "native_seconds": 41.05872893333435,
+          "wrapper_seconds": 41.06077313423157,
+          "exit_code": 0,
+          "frames": "native-lead-10998.native.jsonl",
+          "frames_bytes": 223426,
+          "frames_sha256": "4e0c20f0437ff3b449edb8f906687f046c140c007944384147010b5c84c73eaa"
+        },
+        {
+          "native_pid": 14121,
+          "wrapper_pid": 14120,
+          "started_unix": 1790639058.22222,
+          "ended_unix": 1790639198.945567,
+          "native_seconds": 140.72334694862366,
+          "wrapper_seconds": 140.72539401054382,
+          "exit_code": 0,
+          "frames": "native-lead-14120.native.jsonl",
+          "frames_bytes": 417574,
+          "frames_sha256": "588e0ea90ae4310c86a81df1f8beb1e482a7b768e2b0a487df9ecc93428e2db7"
+        }
+      ],
+      "usage": {
+        "source": "message_end.message.usage for assistant messages",
+        "aggregation": "Sum unique completed assistant messages; exclude repeated turn_end/agent_end usage.",
+        "assistant_messages": 72,
+        "duplicate_messages_excluded": 0,
+        "missing_usage": 0,
+        "field_presence": {
+          "input": 72,
+          "output": 72,
+          "cacheRead": 72,
+          "cacheWrite": 72,
+          "totalTokens": 72,
+          "cost": 72
+        },
+        "total": {
+          "input": 105266,
+          "output": 39958,
+          "cacheRead": 4472320,
+          "cacheWrite": 0,
+          "totalTokens": 4617544
+        },
+        "native_reported_cost": {
+          "input": 0.0,
+          "output": 0.0,
+          "cacheRead": 0.0,
+          "cacheWrite": 0.0,
+          "total": 0.0
+        }
+      }
+    },
+    "deepseek": {
+      "requested_model": "deepseek/deepseek-flash",
+      "observed_model": "deepseek/deepseek-flash",
+      "native_session_id": "01a0ea59-20f5-7000-99da-9c94fabf2710",
+      "invocations": 3,
+      "native_seconds": 339.31412529945374,
+      "intervals": [
+        {
+          "native_pid": 27565,
+          "wrapper_pid": 26981,
+          "started_unix": 1790638104.015771,
+          "ended_unix": 1790638381.81422,
+          "native_seconds": 277.79844903945923,
+          "wrapper_seconds": 277.8057222366333,
+          "exit_code": 0,
+          "frames": "native-deepseek-26981.native.jsonl",
+          "frames_bytes": 4498961,
+          "frames_sha256": "ff8c15271f252ab316203688f8262392ee0521a24c946a51ad69c7779cc40ed6"
+        },
+        {
+          "native_pid": 74382,
+          "wrapper_pid": 74380,
+          "started_unix": 1790638708.525961,
+          "ended_unix": 1790638748.914818,
+          "native_seconds": 40.38885712623596,
+          "wrapper_seconds": 40.390690088272095,
+          "exit_code": 0,
+          "frames": "native-deepseek-74380.native.jsonl",
+          "frames_bytes": 1088284,
+          "frames_sha256": "e9667cb86c8baf6840e553c6608541181ecf9a636cf9a2ec8225cb2bc8c4a442"
+        },
+        {
+          "native_pid": 23271,
+          "wrapper_pid": 23270,
+          "started_unix": 1790639101.947263,
+          "ended_unix": 1790639123.0740821,
+          "native_seconds": 21.126819133758545,
+          "wrapper_seconds": 21.12870502471924,
+          "exit_code": 0,
+          "frames": "native-deepseek-23270.native.jsonl",
+          "frames_bytes": 373436,
+          "frames_sha256": "41f450768c8f63f5672fa674b90cbdd380d07d39e060aebd6eb9891e84158dc1"
+        }
+      ],
+      "usage": {
+        "source": "message_end.message.usage for assistant messages",
+        "aggregation": "Sum unique completed assistant messages; exclude repeated turn_end/agent_end usage.",
+        "assistant_messages": 48,
+        "duplicate_messages_excluded": 0,
+        "missing_usage": 0,
+        "field_presence": {
+          "input": 48,
+          "output": 48,
+          "cacheRead": 48,
+          "cacheWrite": 48,
+          "totalTokens": 48,
+          "cost": 48,
+          "reasoningTokens": 44
+        },
+        "total": {
+          "input": 113825,
+          "output": 41308,
+          "cacheRead": 5422848,
+          "cacheWrite": 0,
+          "totalTokens": 5577981,
+          "reasoningTokens": 27178
+        },
+        "native_reported_cost": {
+          "input": 0.03414750000000001,
+          "output": 0.0495696,
+          "cacheRead": 0.032537088,
+          "cacheWrite": 0.0,
+          "total": 0.11625418799999998
+        }
+      }
+    },
+    "muse": {
+      "requested_model": "muse-spark-1.3-contributor",
+      "observed_model": "muse-spark-1.3-contributor",
+      "native_session_id": "01a0ea59-1e63-7282-a83a-e36622ab3b52",
+      "invocations": 2,
+      "native_seconds": 75.33877515792847,
+      "intervals": [
+        {
+          "native_pid": 27476,
+          "wrapper_pid": 26954,
+          "started_unix": 1790638103.922635,
+          "ended_unix": 1790638153.595488,
+          "native_seconds": 49.672852993011475,
+          "wrapper_seconds": 49.675617933273315,
+          "exit_code": 0,
+          "frames": "native-muse-26954.native.jsonl",
+          "frames_bytes": 481223,
+          "frames_sha256": "86932eac39f40623aff03a2de2ab048cd17feb03ef1590ca1ecedea04b7afb54"
+        },
+        {
+          "native_pid": 74381,
+          "wrapper_pid": 74379,
+          "started_unix": 1790638708.52066,
+          "ended_unix": 1790638734.186582,
+          "native_seconds": 25.665922164916992,
+          "wrapper_seconds": 25.668363094329834,
+          "exit_code": 0,
+          "frames": "native-muse-74379.native.jsonl",
+          "frames_bytes": 141553,
+          "frames_sha256": "cf9198f56afafd24019dc2a386805e055004da99597556c767472ec54c7b7a3b"
+        }
+      ],
+      "usage": {
+        "observed_usage_fields": [],
+        "total": null,
+        "aggregation": "No inferred token or cost total."
+      }
+    }
+  },
+  "elapsed_seconds": 1323.415270805359,
+  "initial_workers": {
+    "overlap_seconds": 49.57971715927124,
+    "concurrent_process_snapshot": {
+      "observed_unix": 1790638104.277272,
+      "child_pids": [
+        27565,
+        27476
+      ],
+      "processes": [
+        [
+          "27476",
+          "26954",
+          "S",
+          "/Users/wahargis/.local/bin/muse-bin-1.4.0-R4302.1"
+        ],
+        [
+          "27565",
+          "26981",
+          "R",
+          "/opt/homebrew/Cellar/omp/17.4.0/bin/omp"
+        ]
+      ]
+    }
+  },
+  "guidance": {
+    "message_id": "unexpected-success-guidance",
+    "sender": "lead",
+    "recipient": "deepseek",
+    "body": "In your target-architecture correction, explicitly distinguish message/native-input acceptance from completion of parent review or branch landing. A receipt alone establishes neither review nor landing. Also preserve the checked-landing concurrency contract: observed target movement blocks that invocation while retaining work; a fresh land-checked invocation prepares and checks against the current target. Verify the exact current source and link the canonical description/evidence. Keep the assigned file scope and concise documentation style.",
+    "receipt": {
+      "id": "unexpected-success-guidance",
+      "type": "response",
+      "command": "steer",
+      "success": true
+    },
+    "tool_observation": {
+      "observed_unix": 1790638107.815474,
+      "process": 26981,
+      "event": {
+        "type": "tool_execution_start",
+        "received_unix": 1790638107.284837,
+        "offset": 134364,
+        "bytes": 264
+      }
+    },
+    "lead_native_tool_calls": [
+      {
+        "type": "tool_execution_start",
+        "toolCallId": "tool_K90lpF79ieFoxK8bw3naeufl",
+        "toolName": "bash",
+        "args": {
+          "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB message-file unexpected-success-guidance lead deepseek guidance $STATE/guidance.txt"
+        },
+        "intent": "Sending unexpected-success guidance to deepseek"
+      }
+    ],
+    "native_steer_event": {
+      "type": "response",
+      "command": "steer",
+      "id": "unexpected-success-guidance",
+      "success": true,
+      "received_unix": 1790638112.4941719,
+      "offset": 650224,
+      "bytes": 88
+    },
+    "native_terminal_event": {
+      "type": "agent_end",
+      "isTerminal": true,
+      "received_unix": 1790638380.127296,
+      "offset": 3573417,
+      "bytes": 925440
+    }
+  },
+  "parent_reports": [
+    {
+      "id": "receive:lead:2:14fa663e00c3b8ea7aae36eab607dd86",
+      "sender": "lead",
+      "recipient": "root",
+      "bytes": 1606,
+      "sha256": "dffb67183e18fb3cda0a3833a02297cf2da80fffd50d0dd31fde2624ece4d1f6",
+      "matches_native_final": true,
+      "receipt": "Accepted progress. Coordinator state confirms both workers are recruited under lead with requested models, efforts, branches, workspaces and native sessions. Final independent review and checked landing remain pending LEAD_READY."
+    },
+    {
+      "id": "muse-turn",
+      "sender": "muse",
+      "recipient": "lead",
+      "bytes": 2412,
+      "sha256": "89c25aacf206b77dda63286725a7c6aec90c7a8dccc9a47131dc5cfe5f4ad02f",
+      "matches_native_final": true,
+      "receipt": "Reviewed: diff matches report (18-line addition, native-receive section only); claims verified against receive.bend/turn.bend/session-lock.bend and canonical docs; both links resolve with headings present; git diff --check clean; check-unittest.py 13 tests OK in muse workspace. Approved for landing."
+    },
+    {
+      "id": "receive:lead:5:11a0458966f008ebdc50e4478a1a09e3",
+      "sender": "lead",
+      "recipient": "root",
+      "bytes": 2298,
+      "sha256": "cc92b033780062bd62d3b1b6e39ee97f4bf0062121384ab2a2e125552de9732a",
+      "matches_native_final": true,
+      "receipt": "Accepted progress. Verified landing-muse.json reports landed at ed291c7b960141f09584889dedf900aa012d6366 and hierarchy-lead resolves to that commit. Root independent documentation review and final landing remain pending LEAD_READY."
+    },
+    {
+      "id": "deepseek-turn",
+      "sender": "deepseek",
+      "recipient": "lead",
+      "bytes": 5017,
+      "sha256": "e9a03be0da4019bb5bbc87ece5448a91052a1d0b43e0c2b68787717df9974e01",
+      "matches_native_final": true,
+      "receipt": "Reviewed: diff matches report (1 file, 113+/60-, target-architecture.md only). Claims verified against commands.bend, store.bend, guidance.bend, git/land.bend, coordinator/land.bend, types.bend and canonical architecture.md:60-65; guidance criteria (receipt vs review/landing; target-movement contract) incorporated correctly; all 15 relative links resolve; git diff --check clean; check-unittest.py 13 tests OK in deepseek workspace. Approved for landing."
+    },
+    {
+      "id": "receive:lead:7:29e8398881eabd13220a9d067d1c9e01",
+      "sender": "lead",
+      "recipient": "root",
+      "bytes": 3404,
+      "sha256": "233344617b5bbecd17d4bab1e79d50c1516a27bca4e6ff2fc942193e20d5af9b",
+      "matches_native_final": true,
+      "receipt": "Report received; final readiness not accepted. Both reported worker tips still contain the three source-review defects recorded in review-clarification and root-review-clarification. The steer receipt proves input acceptance only. Corrected worker tips, same-native continuation evidence and fresh checked landings are required before root landing."
+    },
+    {
+      "id": "muse-correction",
+      "sender": "muse",
+      "recipient": "lead",
+      "bytes": 1531,
+      "sha256": "991f8b14e2cdc6301035638d776aef8d26a3676ec077230a9798c632571eca0c",
+      "matches_native_final": true,
+      "receipt": "Reviewed correction 7597e63e: limits now stated directly (owner loss requires separate work+validation, process-loss record covers all-process loss with host/storage running, host reboot/power-loss unvalidated); links resolve; diff --check clean; check-unittest.py 13 OK. Approved for fresh landing."
+    },
+    {
+      "id": "deepseek-correction",
+      "sender": "deepseek",
+      "recipient": "lead",
+      "bytes": 2947,
+      "sha256": "c4638cf6767c8a6008731616b447454676b0888c53278e32c2830d48b24ed980",
+      "matches_native_final": true,
+      "receipt": "Reviewed correction e9fd1b6a: attach now binds ID/HARNESS/NATIVE/ENDPOINT with branches from recruit and land/land-checked (matches main.bend usage and Commands.Attach); delivery described as read-only SELECT with receive as the re-send path (matches Commands.Delivery and receive.bend). diff --check clean. Approved for fresh landing."
+    },
+    {
+      "id": "receive:lead:10:4cca0e69b31d63b83ec13bd360350d28",
+      "sender": "lead",
+      "recipient": "root",
+      "bytes": 3638,
+      "sha256": "33ddebc65231d8d25256ca0515937f8aff20c963639dc3a7a55c1f471eb0ceb6",
+      "matches_native_final": true,
+      "receipt": "Accepted report and verified the three corrections, preserved corrected file contents through merge integration, both correction landing JSON answers, all added relative links and diff --check. Final acceptance withheld for one additional source mismatch: target-architecture says push reports command output, but coordinator/land.bend push_pick discards out and push_ok emits status plus branch/remote or a generated reason. A narrow worker correction is required."
+    },
+    {
+      "id": "receive:lead:11:24147f296467643953264e31ed13223f",
+      "sender": "lead",
+      "recipient": "root",
+      "bytes": 4164,
+      "sha256": "c1f7e6528f7aae30ec042a3eb82a95a28245cea423a5fa2d9d5d6360b6a56bd4",
+      "matches_native_final": true,
+      "receipt": "Accepted as a restatement of the reviewed three-correction state at d65934c8. The newer root-push-description-task remains a separate outstanding factual correction; final acceptance and root landing await its corrected worker tip and fresh checked landing."
+    },
+    {
+      "id": "deepseek-push-correction",
+      "sender": "deepseek",
+      "recipient": "lead",
+      "bytes": 2237,
+      "sha256": "dcb0bcaf19bc7308417b3fad962b888e0530c481713fbd52292f4bf7ccde7945",
+      "matches_native_final": true,
+      "receipt": "Reviewed 73f432a8: push answer now described from actual fields (pushed with branch/remote; rejected with generated reason naming failed command) matching land.bend push_pick/push_ok and git/text.bend cmd_failed; output claim removed; rest of paragraph and architecture.md untouched; links resolve; diff --check clean; check-unittest.py 13 OK. Approved for fresh landing."
+    },
+    {
+      "id": "receive:lead:16:3327ccdf8118e8931915021844b636ad",
+      "sender": "lead",
+      "recipient": "root",
+      "bytes": 3064,
+      "sha256": "cdf01e79f73acde7b4064ce4805b2937626c4e31b908b80481eedfec7182728b",
+      "matches_native_final": true,
+      "receipt": "Accepted after independent final source/link review, correction-content comparison, native identity/turn and steering receipt inspection, clean worker/composed diffs, and selected checks passing on both workers and lead. Proceeding with root checked landing; completion remains conditional on landed status, exact tree equality and target checks."
+    }
+  ],
+  "assertions": {
+    "all_parent_reports_match_native": true,
+    "all_parent_reports_receipted": true,
+    "all_native_exits_zero": true
+  },
+  "git": {
+    "tips": {
+      "target": "cbef941389397c4631c8c86dad9446aa53fdeabf",
+      "lead": "c52b0ebb31e13ce7ed63ff016ff3a5b90bd02a56",
+      "deepseek": "73f432a85eaa3a702930cf6a6966f9b8d6a59e95",
+      "muse": "58b066c56ab4620e1609bd66afd081b196ad8a00"
+    },
+    "target_tree": "f647749c9bc6322b24cf9b7ef0a1ff98175a2147",
+    "commits": [
+      {
+        "commit": "cbef941389397c4631c8c86dad9446aa53fdeabf",
+        "parents": [
+          "08ee671b62528888a2facd0d3a8ce2af34e5ef98"
+        ],
+        "tree": "f647749c9bc6322b24cf9b7ef0a1ff98175a2147",
+        "subject": "Describe the push answer from its actual fields"
+      },
+      {
+        "commit": "c52b0ebb31e13ce7ed63ff016ff3a5b90bd02a56",
+        "parents": [
+          "d65934c88b46affd0986984f29ba74be04a13ffd"
+        ],
+        "tree": "f647749c9bc6322b24cf9b7ef0a1ff98175a2147",
+        "subject": "Describe the push answer from its actual fields"
+      },
+      {
+        "commit": "73f432a85eaa3a702930cf6a6966f9b8d6a59e95",
+        "parents": [
+          "fd73a2bb7ecb2aa9c17af8262e7dba7b02013d0a"
+        ],
+        "tree": "f647749c9bc6322b24cf9b7ef0a1ff98175a2147",
+        "subject": "Describe the push answer from its actual fields"
+      },
+      {
+        "commit": "d65934c88b46affd0986984f29ba74be04a13ffd",
+        "parents": [
+          "0a91c74ed656c5676082f21b42e0a58f924c8f52"
+        ],
+        "tree": "60603b2a7e67ddd15695ed6070d0239d749eca32",
+        "subject": "Merge branch 'hierarchy-lead' into hierarchy-deepseek"
+      },
+      {
+        "commit": "fd73a2bb7ecb2aa9c17af8262e7dba7b02013d0a",
+        "parents": [
+          "e9fd1b6a5227f24dabfc2d902076f0704cb0c82a",
+          "0a91c74ed656c5676082f21b42e0a58f924c8f52"
+        ],
+        "tree": "60603b2a7e67ddd15695ed6070d0239d749eca32",
+        "subject": "Merge branch 'hierarchy-lead' into hierarchy-deepseek"
+      },
+      {
+        "commit": "0a91c74ed656c5676082f21b42e0a58f924c8f52",
+        "parents": [
+          "8b919a2edb43a41f14d76b26a1ea122b3ec91508"
+        ],
+        "tree": "0163a611c80841e295db8dd21585e290abdabab4",
+        "subject": "Merge branch 'hierarchy-lead' into hierarchy-muse"
+      },
+      {
+        "commit": "58b066c56ab4620e1609bd66afd081b196ad8a00",
+        "parents": [
+          "7597e63eb792af95edada0b5cec93d487e265e13",
+          "8b919a2edb43a41f14d76b26a1ea122b3ec91508"
+        ],
+        "tree": "0163a611c80841e295db8dd21585e290abdabab4",
+        "subject": "Merge branch 'hierarchy-lead' into hierarchy-muse"
+      },
+      {
+        "commit": "e9fd1b6a5227f24dabfc2d902076f0704cb0c82a",
+        "parents": [
+          "891fd45a5949acd90c145dc0d95e5f5ea451b07a"
+        ],
+        "tree": "b6af3a58e81872f15c07bade04d92c8a0e47c72e",
+        "subject": "Correct the attach and delivery descriptions in the Bend2 target architecture"
+      },
+      {
+        "commit": "7597e63eb792af95edada0b5cec93d487e265e13",
+        "parents": [
+          "ac5d4d5958e747d79eb60ab39119032a9d6be3f2"
+        ],
+        "tree": "8009730aca53196d7b5019bd6b709db7cfcdb53a",
+        "subject": "Correct receive recovery limits: owner loss unvalidated, process loss separate"
+      },
+      {
+        "commit": "8b919a2edb43a41f14d76b26a1ea122b3ec91508",
+        "parents": [
+          "ed291c7b960141f09584889dedf900aa012d6366"
+        ],
+        "tree": "080855be756311bddfc80c17e882cdaa64303c4a",
+        "subject": "Correct stale implementation claims in the Bend2 target architecture"
+      },
+      {
+        "commit": "891fd45a5949acd90c145dc0d95e5f5ea451b07a",
+        "parents": [
+          "08ee671b62528888a2facd0d3a8ce2af34e5ef98"
+        ],
+        "tree": "1c442443e15995abdf541dfe627e4e9d94371ed5",
+        "subject": "Correct stale implementation claims in the Bend2 target architecture"
+      },
+      {
+        "commit": "ed291c7b960141f09584889dedf900aa012d6366",
+        "parents": [
+          "08ee671b62528888a2facd0d3a8ce2af34e5ef98"
+        ],
+        "tree": "8da086aa1476ea4f9cc73d032f947b7cd62b53ad",
+        "subject": "Document receive observer-loss recovery and missing-conversation fallback"
+      },
+      {
+        "commit": "ac5d4d5958e747d79eb60ab39119032a9d6be3f2",
+        "parents": [
+          "08ee671b62528888a2facd0d3a8ce2af34e5ef98"
+        ],
+        "tree": "8da086aa1476ea4f9cc73d032f947b7cd62b53ad",
+        "subject": "Document receive observer-loss recovery and missing-conversation fallback"
+      }
+    ],
+    "landing_receipts": {
+      "landing-muse-correction.json": {
+        "status": "landed",
+        "target": "hierarchy-lead",
+        "commit": "0a91c74ed656c5676082f21b42e0a58f924c8f52"
+      },
+      "landing-deepseek.json": {
+        "status": "landed",
+        "target": "hierarchy-lead",
+        "commit": "8b919a2edb43a41f14d76b26a1ea122b3ec91508"
+      },
+      "landing-muse-conflict.json": {
+        "status": "conflict",
+        "files": "bend2/README.md",
+        "dir": "/Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/repo/.scratch/bend2-land-muse-EA0ED86BB2DBA41E"
+      },
+      "landing-root.json": {
+        "status": "landed",
+        "target": "bend2-trial",
+        "commit": "cbef941389397c4631c8c86dad9446aa53fdeabf"
+      },
+      "landing-deepseek-correction.json": {
+        "status": "landed",
+        "target": "hierarchy-lead",
+        "commit": "d65934c88b46affd0986984f29ba74be04a13ffd"
+      },
+      "landing-deepseek-push.json": {
+        "status": "landed",
+        "target": "hierarchy-lead",
+        "commit": "c52b0ebb31e13ce7ed63ff016ff3a5b90bd02a56"
+      },
+      "landing-muse.json": {
+        "status": "landed",
+        "target": "hierarchy-lead",
+        "commit": "ed291c7b960141f09584889dedf900aa012d6366"
+      }
+    },
+    "selected_worker_receipts": {
+      "deepseek": "landing-deepseek-push.json",
+      "muse": "landing-muse-correction.json"
+    },
+    "assigned_file_entries": {
+      "deepseek": {
+        "docs/bend2/target-architecture.md": {
+          "worker_tip": "100644 blob 6ed339140ec1dae783b3fa1eecc0392af61f723e\tdocs/bend2/target-architecture.md",
+          "worker_landing": "100644 blob 6ed339140ec1dae783b3fa1eecc0392af61f723e\tdocs/bend2/target-architecture.md",
+          "final_target": "100644 blob 6ed339140ec1dae783b3fa1eecc0392af61f723e\tdocs/bend2/target-architecture.md"
+        }
+      },
+      "muse": {
+        "bend2/README.md": {
+          "worker_tip": "100644 blob 805549e52b6bbaf49ae1803e219fa9dfff3cd37b\tbend2/README.md",
+          "worker_landing": "100644 blob 805549e52b6bbaf49ae1803e219fa9dfff3cd37b\tbend2/README.md",
+          "final_target": "100644 blob 805549e52b6bbaf49ae1803e219fa9dfff3cd37b\tbend2/README.md"
+        }
+      }
+    }
+  },
+  "review": {
+    "selected_test": "bend2/test/check-unittest.py",
+    "selected_tests_passed": 13,
+    "scope": "Selected tests cover landing checker behavior. Native parents separately reviewed source claims, relative links and git diff --check.",
+    "operator_clarification": "Three possible documentation inaccuracies were sent to root; Codex independently checked them and found a further push-answer claim error.",
+    "corrections": [
+      "Observer/owner/reboot proof limits",
+      "attach argument semantics",
+      "delivery read-only behavior",
+      "push answer fields"
+    ],
+    "raw_root_report": "root-report.md"
+  },
+  "coordinator_tool_call_intervals": [
+    {
+      "seat": "root",
+      "native_pid": 4146,
+      "tool_call_id": "item_2",
+      "frames": "native-root-3863.native.jsonl",
+      "start_offset": 507,
+      "end_offset": 834,
+      "started_unix": 1790638033.170412,
+      "ended_unix": 1790638033.171123,
+      "seconds": 0.0007109642028808594,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 4146,
+      "tool_call_id": "item_3",
+      "frames": "native-root-3863.native.jsonl",
+      "start_offset": 4432,
+      "end_offset": 4959,
+      "started_unix": 1790638039.21105,
+      "ended_unix": 1790638039.212379,
+      "seconds": 0.0013289451599121094,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 4146,
+      "tool_call_id": "item_4",
+      "frames": "native-root-3863.native.jsonl",
+      "start_offset": 7720,
+      "end_offset": 8192,
+      "started_unix": 1790638044.0535622,
+      "ended_unix": 1790638045.445081,
+      "seconds": 1.3915188312530518,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 4146,
+      "tool_call_id": "item_5",
+      "frames": "native-root-3863.native.jsonl",
+      "start_offset": 10908,
+      "end_offset": 11801,
+      "started_unix": 1790638054.156404,
+      "ended_unix": 1790638054.1579468,
+      "seconds": 0.001542806625366211,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 54723,
+      "tool_call_id": "item_2",
+      "frames": "native-root-54718.native.jsonl",
+      "start_offset": 470,
+      "end_offset": 812,
+      "started_unix": 1790638137.7513568,
+      "ended_unix": 1790638137.757051,
+      "seconds": 0.005694150924682617,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 54723,
+      "tool_call_id": "item_3",
+      "frames": "native-root-54718.native.jsonl",
+      "start_offset": 9092,
+      "end_offset": 9669,
+      "started_unix": 1790638145.446819,
+      "ended_unix": 1790638145.4481978,
+      "seconds": 0.001378774642944336,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 40307,
+      "tool_call_id": "item_2",
+      "frames": "native-root-40250.native.jsonl",
+      "start_offset": 523,
+      "end_offset": 914,
+      "started_unix": 1790638313.295697,
+      "ended_unix": 1790638313.3020039,
+      "seconds": 0.006306886672973633,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 40307,
+      "tool_call_id": "item_3",
+      "frames": "native-root-40250.native.jsonl",
+      "start_offset": 4441,
+      "end_offset": 5020,
+      "started_unix": 1790638318.9692018,
+      "ended_unix": 1790638318.974245,
+      "seconds": 0.0050432682037353516,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 54156,
+      "tool_call_id": "item_2",
+      "frames": "native-root-54148.native.jsonl",
+      "start_offset": 562,
+      "end_offset": 1256,
+      "started_unix": 1790638542.4453251,
+      "ended_unix": 1790638542.447445,
+      "seconds": 0.002119779586791992,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 54156,
+      "tool_call_id": "item_6",
+      "frames": "native-root-54148.native.jsonl",
+      "start_offset": 87095,
+      "end_offset": 90201,
+      "started_unix": 1790638584.125165,
+      "ended_unix": 1790638584.126226,
+      "seconds": 0.0010609626770019531,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 62285,
+      "tool_call_id": "item_2",
+      "frames": "native-root-62279.native.jsonl",
+      "start_offset": 602,
+      "end_offset": 1125,
+      "started_unix": 1790638597.252574,
+      "ended_unix": 1790638597.2532978,
+      "seconds": 0.0007238388061523438,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 62285,
+      "tool_call_id": "item_3",
+      "frames": "native-root-62279.native.jsonl",
+      "start_offset": 8279,
+      "end_offset": 10089,
+      "started_unix": 1790638611.5311842,
+      "ended_unix": 1790638611.532085,
+      "seconds": 0.0009007453918457031,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 11006,
+      "tool_call_id": "item_2",
+      "frames": "native-root-10995.native.jsonl",
+      "start_offset": 579,
+      "end_offset": 1404,
+      "started_unix": 1790638996.354778,
+      "ended_unix": 1790638996.3564532,
+      "seconds": 0.0016751289367675781,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 11006,
+      "tool_call_id": "item_7",
+      "frames": "native-root-10995.native.jsonl",
+      "start_offset": 108365,
+      "end_offset": 110998,
+      "started_unix": 1790639058.20561,
+      "ended_unix": 1790639058.20663,
+      "seconds": 0.0010199546813964844,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 14141,
+      "tool_call_id": "item_2",
+      "frames": "native-root-14140.native.jsonl",
+      "start_offset": 508,
+      "end_offset": 1195,
+      "started_unix": 1790639075.276175,
+      "ended_unix": 1790639075.276951,
+      "seconds": 0.0007760524749755859,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 39693,
+      "tool_call_id": "item_2",
+      "frames": "native-root-39692.native.jsonl",
+      "start_offset": 532,
+      "end_offset": 1398,
+      "started_unix": 1790639212.3054159,
+      "ended_unix": 1790639212.418218,
+      "seconds": 0.11280202865600586,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 39693,
+      "tool_call_id": "item_4",
+      "frames": "native-root-39692.native.jsonl",
+      "start_offset": 20592,
+      "end_offset": 22237,
+      "started_unix": 1790639261.203004,
+      "ended_unix": 1790639264.22523,
+      "seconds": 3.022226095199585,
+      "exit_code": 0
+    },
+    {
+      "seat": "root",
+      "native_pid": 39693,
+      "tool_call_id": "item_7",
+      "frames": "native-root-39692.native.jsonl",
+      "start_offset": 28113,
+      "end_offset": 36852,
+      "started_unix": 1790639343.590741,
+      "ended_unix": 1790639343.5938282,
+      "seconds": 0.003087282180786133,
+      "exit_code": 0
+    },
+    {
+      "seat": "lead",
+      "native_pid": 59618,
+      "tool_call_id": "tool_9xQJLdpQn7zbKkRo0xmdUnY8",
+      "frames": "native-lead-59331.native.jsonl",
+      "start_offset": 139308,
+      "end_offset": 141049,
+      "started_unix": 1790638063.853366,
+      "ended_unix": 1790638063.9033458,
+      "seconds": 0.04997992515563965,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && echo \"B2=$B2\"; echo \"DB=$DB\"; echo \"REPO=$REPO\"; echo \"STATE=$STATE\"; echo \"PYTHON=$PYTHON\"; echo \"DEEPSEEK_MODEL=$DEEPSEEK_MODEL\"; echo \"DEEPSEEK_EFFORT=$DEEPSEEK_EFFORT\"; echo \"MUSE_MODEL=$MUSE_MODEL\"; echo \"MUSE_EFFORT=$MUSE_EFFORT\"; echo \"CHECK=$CHECK\""
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 59618,
+      "tool_call_id": "tool_bJgwVo7oG1R0aNzfh1Xv4gYi",
+      "frames": "native-lead-59331.native.jsonl",
+      "start_offset": 151785,
+      "end_offset": 163091,
+      "started_unix": 1790638068.187351,
+      "ended_unix": 1790638068.241929,
+      "seconds": 0.05457806587219238,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB inbox lead && $B2 $DB status && $B2 $DB workers"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 59618,
+      "tool_call_id": "tool_KQ0S7RWgkPxl2xKRz1zgn44z",
+      "frames": "native-lead-59331.native.jsonl",
+      "start_offset": 179646,
+      "end_offset": 180320,
+      "started_unix": 1790638073.022932,
+      "ended_unix": 1790638073.047128,
+      "seconds": 0.02419590950012207,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB ack lead-task lead accepted"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 59618,
+      "tool_call_id": "tool_ctBDzu9STzcPCFXvX65RrojE",
+      "frames": "native-lead-59331.native.jsonl",
+      "start_offset": 194212,
+      "end_offset": 250188,
+      "started_unix": 1790638081.880833,
+      "ended_unix": 1790638084.313029,
+      "seconds": 2.4321961402893066,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB recruit deepseek lead omp $DEEPSEEK_MODEL $DEEPSEEK_EFFORT $REPO hierarchy-deepseek $STATE/deepseek hierarchy-lead && $B2 $DB recruit muse lead muse $MUSE_MODEL $MUSE_EFFORT $REPO hierarchy-muse $STATE/muse hierarchy-lead"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 59618,
+      "tool_call_id": "tool_XMy7bSOAS0MbNEBQF8rcPpKH",
+      "frames": "native-lead-59331.native.jsonl",
+      "start_offset": 284444,
+      "end_offset": 288282,
+      "started_unix": 1790638091.153953,
+      "ended_unix": 1790638091.2129369,
+      "seconds": 0.058983802795410156,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB 2>&1 | head -50; echo ---; $B2 2>&1 | head -50"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 59618,
+      "tool_call_id": "tool_K90lpF79ieFoxK8bw3naeufl",
+      "frames": "native-lead-59331.native.jsonl",
+      "start_offset": 357610,
+      "end_offset": 359052,
+      "started_unix": 1790638112.3217862,
+      "ended_unix": 1790638112.345819,
+      "seconds": 0.0240328311920166,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB message-file unexpected-success-guidance lead deepseek guidance $STATE/guidance.txt"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 59618,
+      "tool_call_id": "tool_7ibJZGCXrYLh9UJErkCdxEVH",
+      "frames": "native-lead-59331.native.jsonl",
+      "start_offset": 374576,
+      "end_offset": 376558,
+      "started_unix": 1790638117.7672472,
+      "ended_unix": 1790638117.7837598,
+      "seconds": 0.016512632369995117,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB workers"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 83064,
+      "tool_call_id": "tool_D8Co0IjWX3S7Js9argQbgy19",
+      "frames": "native-lead-82953.native.jsonl",
+      "start_offset": 137042,
+      "end_offset": 140632,
+      "started_unix": 1790638165.026159,
+      "ended_unix": 1790638165.214188,
+      "seconds": 0.18802905082702637,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB inbox lead"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 83064,
+      "tool_call_id": "tool_za2esfkTlfpSaQRPnHNQIyFf",
+      "frames": "native-lead-82953.native.jsonl",
+      "start_offset": 460238,
+      "end_offset": 734638,
+      "started_unix": 1790638243.324984,
+      "ended_unix": 1790638255.20508,
+      "seconds": 11.880095958709717,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB ack muse-turn lead \"Reviewed: diff matches report (18-line addition, native-receive section only); claims verified against receive.bend/turn.bend/session-lock.bend and canonical docs; both links resolve with headings present; git diff --check clean; check-unittest.py 13 tests OK in muse workspace. Approved for landing.\" && $B2 $DB land-checked muse $REPO hierarchy-lead $CHECK \"bend2/test/check-unittest.py\" | tee $STATE/landing-muse.json",
+        "timeout": 300
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 84843,
+      "tool_call_id": "tool_HEaV82Xad8RsCEq2Ir6Jd7b1",
+      "frames": "native-lead-84780.native.jsonl",
+      "start_offset": 143741,
+      "end_offset": 149586,
+      "started_unix": 1790638404.760706,
+      "ended_unix": 1790638404.927836,
+      "seconds": 0.1671299934387207,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB inbox lead | head -5"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 84843,
+      "tool_call_id": "tool_1XJeSXV3JFDCQFPvjwiJJfDh",
+      "frames": "native-lead-84780.native.jsonl",
+      "start_offset": 535483,
+      "end_offset": 539458,
+      "started_unix": 1790638499.150454,
+      "ended_unix": 1790638504.7766578,
+      "seconds": 5.626203775405884,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB ack deepseek-turn lead \"Reviewed: diff matches report (1 file, 113+/60-, target-architecture.md only). Claims verified against commands.bend, store.bend, guidance.bend, git/land.bend, coordinator/land.bend, types.bend and canonical architecture.md:60-65; guidance criteria (receipt vs review/landing; target-movement contract) incorporated correctly; all 15 relative links resolve; git diff --check clean; check-unittest.py 13 tests OK in deepseek workspace. Approved for landing.\" && $B2 $DB land-checked deepseek $REPO hierarchy-lead $CHECK \"bend2/test/check-unittest.py\" 2>$STATE/landing-deepseek.stderr | tee $STATE/landing-deepseek.json",
+        "timeout": 300
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 84843,
+      "tool_call_id": "tool_zNcm9r6WmuzZcfffJbCEz7vA",
+      "frames": "native-lead-84780.native.jsonl",
+      "start_offset": 571346,
+      "end_offset": 574229,
+      "started_unix": 1790638523.585116,
+      "ended_unix": 1790638523.6027892,
+      "seconds": 0.017673254013061523,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB delivery unexpected-success-guidance"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_TDx2795Vwyztx4Fe8PjaogmQ",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 145764,
+      "end_offset": 146337,
+      "started_unix": 1790638641.5597272,
+      "ended_unix": 1790638641.559766,
+      "seconds": 3.886222839355469e-05,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB ack root-review-clarification lead \"Accepted: will continue both workers' recorded native conversations with fresh turn IDs and same native IDs to resolve the three findings, then fresh land-checked of corrected tips.\" && $B2 $DB workers && ps aux | grep -c \"[b]aton2.*turn\" || true"
+      },
+      "is_error": true
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_vTGkHAO9Pnr2MnkvRZsEtTrZ",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 179268,
+      "end_offset": 228700,
+      "started_unix": 1790638649.944043,
+      "ended_unix": 1790638649.993154,
+      "seconds": 0.049111127853393555,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB ack root-review-clarification lead \"Accepted: will continue both workers' recorded native conversations with fresh turn IDs and same native IDs to resolve the three findings, then fresh land-checked of corrected tips.\" && $B2 $DB workers; pgrep -fl \"baton2.*turn\" || echo NO_ACTIVE_TURNS"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_cXR1GLSg4YIOYzg5v8UVWyxD",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 260854,
+      "end_offset": 263100,
+      "started_unix": 1790638668.510344,
+      "ended_unix": 1790638668.580058,
+      "seconds": 0.06971406936645508,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB workers | python3 -c \"import json,sys; [print(w['id'], w['native'], w['lastTurnId'], w['lastTurnEvent']) for w in json.load(sys.stdin)]\" && ls -la $STATE/deepseek-native $STATE/muse-native 2>&1 | awk '{print $1, $NF}'"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_nNeMiHd5hO1vuxeFD0vbmV9g",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 323403,
+      "end_offset": 323881,
+      "started_unix": 1790638708.45338,
+      "ended_unix": 1790638708.454367,
+      "seconds": 0.0009868144989013672,
+      "arguments": {
+        "async": true,
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB turn muse muse-correction $STATE/muse-native $MUSE_MODEL $MUSE_EFFORT $STATE/muse $STATE/muse-correction.md $STATE/muse.jsonl 01a0ea59-1e63-7282-a83a-e36622ab3b52",
+        "timeout": 0
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_3I5iIiBws1jdHh9RaPvtkdeJ",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 322889,
+      "end_offset": 324992,
+      "started_unix": 1790638708.453335,
+      "ended_unix": 1790638708.454759,
+      "seconds": 0.0014238357543945312,
+      "arguments": {
+        "async": true,
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB turn deepseek deepseek-correction $STATE/deepseek-native $DEEPSEEK_MODEL $DEEPSEEK_EFFORT $STATE/deepseek $STATE/deepseek-correction.md $STATE/deepseek.jsonl 01a0ea59-20f5-7000-99da-9c94fabf2710",
+        "timeout": 0
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_wEhFzY7TxHRPKMjIpEZXND0X",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 339232,
+      "end_offset": 340165,
+      "started_unix": 1790638713.5358112,
+      "ended_unix": 1790638716.5562181,
+      "seconds": 3.02040696144104,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && sleep 3 && pgrep -fl \"baton2.*turn.*correction\" | cut -c1-120"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_oECVhgDwAWXVcwRSCbTvwiOB",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 502284,
+      "end_offset": 520790,
+      "started_unix": 1790638770.834141,
+      "ended_unix": 1790638771.970305,
+      "seconds": 1.1361639499664307,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB ack muse-correction lead \"Reviewed correction 7597e63e: limits now stated directly (owner loss requires separate work+validation, process-loss record covers all-process loss with host/storage running, host reboot/power-loss unvalidated); links resolve; diff --check clean; check-unittest.py 13 OK. Approved for fresh landing.\" && $B2 $DB land-checked muse $REPO hierarchy-lead $CHECK \"bend2/test/check-unittest.py\" 2>$STATE/landing-muse-correction.stderr | tee $STATE/landing-muse-correction.json",
+        "timeout": 300
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_VRQxly5lJwM69CGhMdig9EUM",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 592357,
+      "end_offset": 595323,
+      "started_unix": 1790638884.3882391,
+      "ended_unix": 1790638887.704013,
+      "seconds": 3.3157739639282227,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && cd $STATE/muse && git diff 7597e63e HEAD -- bend2/README.md | wc -l && git diff hierarchy-lead HEAD -- docs/bend2/target-architecture.md | wc -l && git diff hierarchy-lead..hierarchy-muse --stat && $B2 $DB land-checked muse $REPO hierarchy-lead $CHECK \"bend2/test/check-unittest.py\" 2>$STATE/landing-muse-correction.stderr | tee $STATE/landing-muse-correction.json",
+        "timeout": 300
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_nzEHr5J0tAvg8OjzqC1T5Z0C",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 609985,
+      "end_offset": 615253,
+      "started_unix": 1790638896.5388129,
+      "ended_unix": 1790638896.658249,
+      "seconds": 0.11943602561950684,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB ack deepseek-correction lead \"Reviewed correction e9fd1b6a: attach now binds ID/HARNESS/NATIVE/ENDPOINT with branches from recruit and land/land-checked (matches main.bend usage and Commands.Attach); delivery described as read-only SELECT with receive as the re-send path (matches Commands.Delivery and receive.bend). diff --check clean. Approved for fresh landing.\" && cd $STATE/deepseek && git merge --no-edit -Xours hierarchy-lead && git diff e9fd1b6a HEAD -- docs/bend2/target-architecture.md | wc -l && git diff hierarchy-lead HEAD -- bend2/README.md | wc -l && git diff hierarchy-lead..hierarchy-deepseek --stat"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_xITl26BW2hvNbjolYaNZFaVu",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 631871,
+      "end_offset": 633798,
+      "started_unix": 1790638904.134007,
+      "ended_unix": 1790638907.899382,
+      "seconds": 3.7653751373291016,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && cd $STATE/deepseek && mkdir -p .scratch/bend2 && python3 bend2/test/check-unittest.py 2>&1 | tail -3 && $B2 $DB land-checked deepseek $REPO hierarchy-lead $CHECK \"bend2/test/check-unittest.py\" 2>$STATE/landing-deepseek-correction.stderr | tee $STATE/landing-deepseek-correction.json",
+        "timeout": 300
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 61531,
+      "tool_call_id": "tool_bVBd1eJbU54ONFnxFFYRdHBd",
+      "frames": "native-lead-61523.native.jsonl",
+      "start_offset": 687950,
+      "end_offset": 691641,
+      "started_unix": 1790638939.200089,
+      "ended_unix": 1790638939.643007,
+      "seconds": 0.442918062210083,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && git -C $REPO worktree remove $STATE/lead-check && $B2 $DB turns deepseek | python3 -c \"import json,sys; [print(t['id'], t['eventType'], 'receipt:' + str(bool(t['receipt']))) for t in json.load(sys.stdin)]\" && $B2 $DB turns muse | python3 -c \"import json,sys; [print(t['id'], t['eventType'], 'receipt:' + str(bool(t['receipt']))) for t in json.load(sys.stdin)]\" && $B2 $DB workers | python3 -c \"import json,sys; [print(w['id'], 'native='+w['native']) for w in json.load(sys.stdin)]\""
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 11007,
+      "tool_call_id": "tool_V4RF8X7YU7VZfrKIcCMovNX8",
+      "frames": "native-lead-10998.native.jsonl",
+      "start_offset": 137207,
+      "end_offset": 141129,
+      "started_unix": 1790638991.45502,
+      "ended_unix": 1790638991.5758872,
+      "seconds": 0.12086725234985352,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB inbox lead | python3 -c \"import json,sys; [print(m['id'], m['kind'], m['sender']) for m in json.load(sys.stdin)]\" && git -C $REPO log --oneline 08ee671b..hierarchy-lead && git -C $STATE/muse log --oneline -2 && git -C $STATE/deepseek log --oneline -2 && ls $STATE/landing-*.json"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 11007,
+      "tool_call_id": "tool_KdrSzkD2BqHnRFUpLDKSysBO",
+      "frames": "native-lead-10998.native.jsonl",
+      "start_offset": 160326,
+      "end_offset": 164289,
+      "started_unix": 1790639002.847141,
+      "ended_unix": 1790639002.888563,
+      "seconds": 0.04142189025878906,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && grep -c \"requires separate recovery work and validation\" $STATE/muse/bend2/README.md && grep -c \"attach ID HARNESS NATIVE\" $STATE/deepseek/docs/bend2/target-architecture.md && grep -c \"reads the stored message and that endpoint without sending it\" $STATE/deepseek/docs/bend2/target-architecture.md && cat $STATE/landing-muse-correction.json $STATE/landing-deepseek-correction.json && git -C $REPO rev-parse hierarchy-lead && $B2 $DB ack root-correction-task lead \"Correction work already completed per root-review-clarification: muse 7597e63e and deepseek e9fd1b6a corrected via same-native continuation turns, landed fresh as 0a91c74e and d65934c8 (both status landed); hierarchy-lead at d65934c8 contains all three fixes; both landing generations and native evidence preserved. New LEAD_READY follows.\""
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 14121,
+      "tool_call_id": "tool_O0Sm1WBAu4Pk9uOEMshDjt9e",
+      "frames": "native-lead-14120.native.jsonl",
+      "start_offset": 136180,
+      "end_offset": 139782,
+      "started_unix": 1790639074.372698,
+      "ended_unix": 1790639074.402139,
+      "seconds": 0.029440879821777344,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB ack root-push-description-task lead \"Accepted: will continue deepseek same-native with a fresh turn to correct the push answer description, then review and fresh-land.\" && pgrep -fl \"baton2.*turn\" || echo NO_ACTIVE_TURNS"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 14121,
+      "tool_call_id": "tool_7YjvhVuUx2t8GhbjUmqRPi1u",
+      "frames": "native-lead-14120.native.jsonl",
+      "start_offset": 189486,
+      "end_offset": 190010,
+      "started_unix": 1790639101.856694,
+      "ended_unix": 1790639101.859,
+      "seconds": 0.0023059844970703125,
+      "arguments": {
+        "async": true,
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB turn deepseek deepseek-push-correction $STATE/deepseek-native $DEEPSEEK_MODEL $DEEPSEEK_EFFORT $STATE/deepseek $STATE/deepseek-push-correction.md $STATE/deepseek.jsonl 01a0ea59-20f5-7000-99da-9c94fabf2710",
+        "timeout": 0
+      },
+      "is_error": false
+    },
+    {
+      "seat": "lead",
+      "native_pid": 14121,
+      "tool_call_id": "tool_BcRFpoeZEyPvPjk6NRFTQulj",
+      "frames": "native-lead-14120.native.jsonl",
+      "start_offset": 279807,
+      "end_offset": 283436,
+      "started_unix": 1790639147.3526442,
+      "ended_unix": 1790639151.0587158,
+      "seconds": 3.706071615219116,
+      "arguments": {
+        "command": "source /Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/environment.sh && $B2 $DB ack deepseek-push-correction lead \"Reviewed 73f432a8: push answer now described from actual fields (pushed with branch/remote; rejected with generated reason naming failed command) matching land.bend push_pick/push_ok and git/text.bend cmd_failed; output claim removed; rest of paragraph and architecture.md untouched; links resolve; diff --check clean; check-unittest.py 13 OK. Approved for fresh landing.\" && $B2 $DB land-checked deepseek $REPO hierarchy-lead $CHECK \"bend2/test/check-unittest.py\" 2>$STATE/landing-deepseek-push.stderr | tee $STATE/landing-deepseek-push.json",
+        "timeout": 300
+      },
+      "is_error": false
+    },
+    {
+      "seat": "deepseek",
+      "native_pid": 27565,
+      "tool_call_id": "call_01_p66cgmcP0KEak3aVwVAx9155",
+      "frames": "native-deepseek-26981.native.jsonl",
+      "start_offset": 208117,
+      "end_offset": 214149,
+      "started_unix": 1790638109.278388,
+      "ended_unix": 1790638109.3175528,
+      "seconds": 0.03916478157043457,
+      "arguments": {
+        "command": "source ../environment.sh; ls -la; echo \"=== B2 ===\"; ls -la $B2; echo \"=== docs/bend2 ===\"; ls -la docs/bend2 2>/dev/null",
+        "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/deepseek"
+      },
+      "is_error": false
+    },
+    {
+      "seat": "deepseek",
+      "native_pid": 27565,
+      "tool_call_id": "call_00_qOYtPbq6Va76qItl2AB36956",
+      "frames": "native-deepseek-26981.native.jsonl",
+      "start_offset": 3300488,
+      "end_offset": 3307821,
+      "started_unix": 1790638366.187265,
+      "ended_unix": 1790638366.195961,
+      "seconds": 0.00869607925415039,
+      "arguments": {
+        "command": "source ../environment.sh; ls -la \"$DB\" \"$B2\" 2>&1; if [ -f \"$DB\" ]; then $B2 \"$DB\" status 2>&1 | head -c 2000; echo; fi",
+        "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-law-hierarchy-20260928/run/deepseek"
+      },
+      "is_error": false
+    }
+  ],
+  "owned_process_audit": {
+    "observed_unix": 1790639636.058492,
+    "cwd_matches": [],
+    "prior_audit_note": "The earlier cwd snapshot overlapped the read-only Git review commands; its recorded native/coordinator PID set was already absent."
+  },
+  "raw_artifacts": {
+    "acceptance.py": {
+      "bytes": 26807,
+      "sha256": "aa0858434963409bbd84e08a6d237da3724dbb180cf337dd68cf3b4536a16196"
+    },
+    "binary-preflight.json": {
+      "bytes": 379,
+      "sha256": "795fed8974d2061ac5f723de8ee43929aac57b96e730a3b49178112b42dc6db7"
+    },
+    "concurrent-native-processes.json": {
+      "bytes": 320,
+      "sha256": "83fa1ec5616756a3e5a1a5f3f5e9412efde4746c2807eae2dd836b5d98fee061"
+    },
+    "executable-pins.json": {
+      "bytes": 1764,
+      "sha256": "d90f093ae168a2dc4a4f6421b587f7e9a227494dcb304d835a122f42520539c6"
+    },
+    "failure-state.json": {
+      "bytes": 1896710,
+      "sha256": "a97538c7a9790d773ab39791fc4cbff6cc3885957def89bfdbe554435c7aa624"
+    },
+    "guidance-observation.json": {
+      "bytes": 194,
+      "sha256": "7d2cac186e246e3fa16a0eaaa9f1eaf93e55e0e462edc71fd580024528430b9f"
+    },
+    "landing-deepseek-correction.json": {
+      "bytes": 98,
+      "sha256": "45116e13521eecf03f5823c21fa62a2f69e5eb858a485165313d8292a896de24"
+    },
+    "landing-deepseek-push.json": {
+      "bytes": 98,
+      "sha256": "f68ad785b94fe6076a2d2075b60cd18a17c3eabbe06a73195824293d1406e7fc"
+    },
+    "landing-deepseek.json": {
+      "bytes": 98,
+      "sha256": "ce5c95751de34be27fc4ac050cde4db4066e40b69c1d94a7b1b3107a60eb42f5"
+    },
+    "landing-muse-conflict.json": {
+      "bytes": 182,
+      "sha256": "495f1a1e6a78d1fd50d05e22f413f31312f4f3c6dd16ae9d0de7d49b152d2ae6"
+    },
+    "landing-muse-correction.json": {
+      "bytes": 98,
+      "sha256": "148b9ad97cd7d530a1b449e08a530a036b39940047c523ec5084bb8e21236580"
+    },
+    "landing-muse.json": {
+      "bytes": 98,
+      "sha256": "1122729639d3fd6b4f67671463bc804fc2e84cb4b74517ee62a0bf6a04b77cfa"
+    },
+    "landing-root.json": {
+      "bytes": 95,
+      "sha256": "d5038253b93ceef3c64275270797ed94c202eac48294ae7eac51a149aa43b5b9"
+    },
+    "native-deepseek-23270.events.jsonl": {
+      "bytes": 7686,
+      "sha256": "ec612e9857a84e675e10b862da2b2dd2d47d466763bca70785a294652a175b63"
+    },
+    "native-deepseek-23270.native.jsonl": {
+      "bytes": 373436,
+      "sha256": "41f450768c8f63f5672fa674b90cbdd380d07d39e060aebd6eb9891e84158dc1"
+    },
+    "native-deepseek-23270.process.json": {
+      "bytes": 1067,
+      "sha256": "6247b8f0e4c2fb88a079896093cea6af599a3a7ad32cc8b3dc3415298b59eca0"
+    },
+    "native-deepseek-26981.events.jsonl": {
+      "bytes": 34424,
+      "sha256": "58a8344fb76c527ee1a190f118b5b0d81ec1fe5b742f4a080f08b8ac9fbed0f2"
+    },
+    "native-deepseek-26981.native.jsonl": {
+      "bytes": 4498961,
+      "sha256": "ff8c15271f252ab316203688f8262392ee0521a24c946a51ad69c7779cc40ed6"
+    },
+    "native-deepseek-26981.process.json": {
+      "bytes": 879,
+      "sha256": "8fa1639944a22d8cb355496d6c286231f2bb1d9089e0091c76d2c85744d55df1"
+    },
+    "native-deepseek-74380.events.jsonl": {
+      "bytes": 11599,
+      "sha256": "a276458f05cbaacce851e93a26aaa8dfb9d6506bc0dec60b8c287276ad5bae31"
+    },
+    "native-deepseek-74380.native.jsonl": {
+      "bytes": 1088284,
+      "sha256": "e9667cb86c8baf6840e553c6608541181ecf9a636cf9a2ec8225cb2bc8c4a442"
+    },
+    "native-deepseek-74380.process.json": {
+      "bytes": 1068,
+      "sha256": "29265e51f9a50102d9005dade6f3f365335d80ec62c4d6aa8c86c31504ea16f3"
+    },
+    "native-lead-10998.events.jsonl": {
+      "bytes": 3655,
+      "sha256": "dc63f2e1692737a04f6520fd02dc13b0dfdedf3695f57c309aab09a96787b1e9"
+    },
+    "native-lead-10998.native.jsonl": {
+      "bytes": 223426,
+      "sha256": "4e0c20f0437ff3b449edb8f906687f046c140c007944384147010b5c84c73eaa"
+    },
+    "native-lead-10998.process.json": {
+      "bytes": 1058,
+      "sha256": "d476859193dac2c347cc4371ae711c4a6780075a76814bdf45d8b90b05371958"
+    },
+    "native-lead-14120.events.jsonl": {
+      "bytes": 13568,
+      "sha256": "ff3e41e2edb826c883edeaa62731dbfac77435f64b44dff4c39b4930404a4ba0"
+    },
+    "native-lead-14120.native.jsonl": {
+      "bytes": 417574,
+      "sha256": "588e0ea90ae4310c86a81df1f8beb1e482a7b768e2b0a487df9ecc93428e2db7"
+    },
+    "native-lead-14120.process.json": {
+      "bytes": 1061,
+      "sha256": "0a7f2a57cdbf2437c4d82326d913ae3a102f5563e45f6ae36da9e4dcf4fc1098"
+    },
+    "native-lead-59331.events.jsonl": {
+      "bytes": 12931,
+      "sha256": "00f599c21193f3f4f73038b1e95f89a55267b6fd12020addf5b4acaa6ef320ac"
+    },
+    "native-lead-59331.native.jsonl": {
+      "bytes": 491324,
+      "sha256": "ac1b86546fecd72d4c7b9a210c20a87a2a9d0a28ba938e16a9498b2312d04298"
+    },
+    "native-lead-59331.process.json": {
+      "bytes": 867,
+      "sha256": "f6aca3627ea1c16470f994e373a75cdee8add3b870077f7eefdedb81252a47b3"
+    },
+    "native-lead-61523.events.jsonl": {
+      "bytes": 21342,
+      "sha256": "002e53126a0b747a30d239450479e6d679241272c25f7d104224f63ff487d8f9"
+    },
+    "native-lead-61523.native.jsonl": {
+      "bytes": 831118,
+      "sha256": "cebe13b61b6a9a596431db362b1c19cc2e1cb80316b5829f73f7f0f8997a1ee4"
+    },
+    "native-lead-61523.process.json": {
+      "bytes": 1060,
+      "sha256": "82e2625367239683eff7ce45098ebd13a91fdb94f61e91d559751cb78d79cb62"
+    },
+    "native-lead-82953.events.jsonl": {
+      "bytes": 20564,
+      "sha256": "9d0b59813b13bda69155c29fd2321c7c30a0fc16af8b4dd2f67d59faa3028a02"
+    },
+    "native-lead-82953.native.jsonl": {
+      "bytes": 955794,
+      "sha256": "3be1930001dc410bd0859469edb697e210216dd7ed7a054f27081d79e3107c64"
+    },
+    "native-lead-82953.process.json": {
+      "bytes": 1062,
+      "sha256": "a17e25f2d55cae4bd5f3ddb9be9047b7e0f47e589f33e57a944c958785932818"
+    },
+    "native-lead-84780.events.jsonl": {
+      "bytes": 17697,
+      "sha256": "b10e10c40cbe509fb901ce03c8005b5f473f6cc5b8d861ae2b5d2ead713e3978"
+    },
+    "native-lead-84780.native.jsonl": {
+      "bytes": 829139,
+      "sha256": "b632246517eb01db764c3f3bcbc5c331393c5543f5a2c701b91e1e4dd2cabdb1"
+    },
+    "native-lead-84780.process.json": {
+      "bytes": 1063,
+      "sha256": "9a2b6200ce0a97e6c536a0d5addf63c6404ecaf525377646176870813abaaf62"
+    },
+    "native-muse-26954.events.jsonl": {
+      "bytes": 59551,
+      "sha256": "58a866a277e3c01d552022b03f7f789d9418e2172d249ae89250c8b841b20731"
+    },
+    "native-muse-26954.native.jsonl": {
+      "bytes": 481223,
+      "sha256": "86932eac39f40623aff03a2de2ab048cd17feb03ef1590ca1ecedea04b7afb54"
+    },
+    "native-muse-26954.process.json": {
+      "bytes": 841,
+      "sha256": "d2804c613a4082e82681c9a7df5291ed44df00a4f56d46a71220559c5cd6bc6a"
+    },
+    "native-muse-74379.events.jsonl": {
+      "bytes": 27246,
+      "sha256": "1f6252e5cdec2b092ba714d53452372836728fa70957a71be809df31bcc1d45a"
+    },
+    "native-muse-74379.native.jsonl": {
+      "bytes": 141553,
+      "sha256": "cf9198f56afafd24019dc2a386805e055004da99597556c767472ec54c7b7a3b"
+    },
+    "native-muse-74379.process.json": {
+      "bytes": 915,
+      "sha256": "b7b9475713cfc90421e1122faebfed7b82f145881637a182357c811a375b3473"
+    },
+    "native-root-10995.events.jsonl": {
+      "bytes": 1586,
+      "sha256": "a5e91922b8bea8496eeb8eaacd8b8a0c6ec1655eea7af8c4b9884215abee2586"
+    },
+    "native-root-10995.native.jsonl": {
+      "bytes": 114733,
+      "sha256": "109c0790df094a1c7b18b2757ea2083957aa48bac67401082529069e89284a45"
+    },
+    "native-root-10995.process.json": {
+      "bytes": 934,
+      "sha256": "4e37cdbfde57115ac1dbdb8209f727da77c1d2ac48563da0305e33f6720ee96e"
+    },
+    "native-root-14140.events.jsonl": {
+      "bytes": 731,
+      "sha256": "51c75fbe1ca10c3d0ad3bef09599a4ebc60e42125d5c803731c44ed7bc931fbd"
+    },
+    "native-root-14140.native.jsonl": {
+      "bytes": 9371,
+      "sha256": "0e1723e878dc93e8af07ae3fbc32ec048c763fae0b382df544beb8bf9819f727"
+    },
+    "native-root-14140.process.json": {
+      "bytes": 936,
+      "sha256": "b98554102e084b1a054628fb9c91c55a2899ca6d912dba248cdd7fd7b30def14"
+    },
+    "native-root-3863.events.jsonl": {
+      "bytes": 1291,
+      "sha256": "6393c5a8170fcf6f143980bc783c4b560057d71b540cfa6e656a6593110aa0f2"
+    },
+    "native-root-3863.native.jsonl": {
+      "bytes": 13398,
+      "sha256": "b7d1c050ace02b806d3dd9526523b4fdac1f630ce28a40498e109aaf792a755f"
+    },
+    "native-root-3863.process.json": {
+      "bytes": 872,
+      "sha256": "272a3d28020f5a84963be68653b4db9145b8df3805db2d9b5de64ccf896f666f"
+    },
+    "native-root-39692.events.jsonl": {
+      "bytes": 1584,
+      "sha256": "3616bb6c250cacdfa2665f45bf2f61db0d58f4a96c993f719c97415a587e0e8b"
+    },
+    "native-root-39692.native.jsonl": {
+      "bytes": 55617,
+      "sha256": "8eaa2ccdd9679cea32e36943b111e82b24f3d5c1c6f14e523d9081c039610c57"
+    },
+    "native-root-39692.process.json": {
+      "bytes": 934,
+      "sha256": "e79a53040f93f71571f53d1f8e92082cf4e0fa0fe9d6116aee6e02b943d3b6d7"
+    },
+    "native-root-40250.events.jsonl": {
+      "bytes": 918,
+      "sha256": "0bbcf1389cc2d52839d0e36790f74462eb35e5698b7bcd361b154991e6988701"
+    },
+    "native-root-40250.native.jsonl": {
+      "bytes": 6358,
+      "sha256": "9d19e716111b5d556aef61e9ef6a966463ce6af00c516aebad772169381ffc7f"
+    },
+    "native-root-40250.process.json": {
+      "bytes": 934,
+      "sha256": "041b7cfca7239093b746011fd8657d31d6252dd5dbd6d735b11d21b865b64e44"
+    },
+    "native-root-54148.events.jsonl": {
+      "bytes": 1489,
+      "sha256": "cf7bfe3a32db4d2bddc4c28153ad0e4bc74aedfa2af00dc8f8505533fb3f93ee"
+    },
+    "native-root-54148.native.jsonl": {
+      "bytes": 95848,
+      "sha256": "3f7bc6722ec952f32e45b035d4fac042a88315384251ff242043f02af6777d2a"
+    },
+    "native-root-54148.process.json": {
+      "bytes": 935,
+      "sha256": "78a650db31e39f964e6e810e48d0080afaf8c919b4703e6219568e1286aa4034"
+    },
+    "native-root-54718.events.jsonl": {
+      "bytes": 918,
+      "sha256": "c218068b4df4acc526eec2424270346f7cb5f626b49b34e60978501a722696ba"
+    },
+    "native-root-54718.native.jsonl": {
+      "bytes": 10995,
+      "sha256": "3e310fd821ea784e22bb1ee9d0c6b24b094f346e00b3914404140e9299aa9589"
+    },
+    "native-root-54718.process.json": {
+      "bytes": 934,
+      "sha256": "c366fce8c1925c8247e99f97ec64c9b00bda7ec9cd458b4309b019b65ab0d3e0"
+    },
+    "native-root-62279.events.jsonl": {
+      "bytes": 923,
+      "sha256": "5f0aa08f76cbe50668df53bf3d3c40981836abea057d8b3ef167db37e4f26f10"
+    },
+    "native-root-62279.native.jsonl": {
+      "bytes": 12863,
+      "sha256": "e4a728e450dc26c79cc96c2c657a285e6d42c1e61238917b0304e785067a5621"
+    },
+    "native-root-62279.process.json": {
+      "bytes": 935,
+      "sha256": "33fcb3fb9c971e1b4352cfae32cbf98c36deab266bc3ddd97e01cd6d1d55bd05"
+    },
+    "outcome.json": {
+      "bytes": 2539,
+      "sha256": "931e9e630e48a9b33c24b2a58d0d1e5fb5bb7919b64528c3230ed10e04c0b412"
+    },
+    "owned-process-audit-final.json": {
+      "bytes": 218,
+      "sha256": "75e387a0cbbf79d51b9ed727f8d9717c4a2f1cbc454371ce3c9fef3495e9e344"
+    },
+    "owned-process-audit.json": {
+      "bytes": 881,
+      "sha256": "4d7b4423c778cc432d0f147288c7d1952595651cded8fff2fc1c5b039dc619b7"
+    },
+    "review-clarification.md": {
+      "bytes": 1984,
+      "sha256": "fdb3d500a939899e75e7a6f55912fb7589773b0e881634877df2a5812b9179f3"
+    },
+    "review-prompt-pins.json": {
+      "bytes": 417,
+      "sha256": "d835d9764b8ad877544c5eaec4d19cf8915fb8b4776c2557442f7b8c3afdda02"
+    },
+    "root-final-validation.json": {
+      "bytes": 1517,
+      "sha256": "cbd07c24fe671b7590979eeaa20b02455dabb8cffaf9cfa672d01bf0be24421c"
+    },
+    "root-report.md": {
+      "bytes": 8923,
+      "sha256": "3464e2797cae871db6c5b0766978d1156fa21e78707f4cf8f9e4bf71ab439b7d"
+    },
+    "root-target-verification.json": {
+      "bytes": 251,
+      "sha256": "48977c5bf2b5b1cba57797fecb4bcfe5ca0550d5b152dd596b0796abc2e605ad"
+    },
+    "run.json": {
+      "bytes": 7148,
+      "sha256": "30438376aaf28dce4fd7e1cf7f13af3b8c304df1387212c1ee089d7aa803cce4"
+    },
+    "state.db": {
+      "bytes": 1892352,
+      "sha256": "3eeaa09456eaec02a09fd756f819364fcc1a34daec5f9591d4310ce37f662434"
+    },
+    "usage-timeline.json": {
+      "bytes": 110061,
+      "sha256": "8e89b405c21d8dd2004d3c8109e01590c17a055e19c0ac5594714565b88fa414"
+    }
+  },
+  "limitations": [
+    "Native child duration includes harness startup, tools, model work and exit handling.",
+    "Tool-call intervals containing coordinator commands can include shell setup, tests and other commands; they are not isolated coordinator latency.",
+    "OMP cost fields are native-reported values, not verified subscription charges or invoices.",
+    "Codex observed model and cost are absent; its configured model is retained separately.",
+    "Reasoning/output and cached/input fields overlap; do not add all usage fields together.",
+    "No old-Baton performance comparison is established by this native hierarchy run.",
+    "Original driver exited 1 after completed native work. Repaired verification reused immutable retained run records; no end-to-end native rerun was performed for the verifier repair.",
+    "Final file scope and latest landing equality do not classify intermediate commit authorship; native parent review provides task attribution.",
+    "Raw native logs, database, report bodies and command text remain in the retained local run directory.",
+    "Native process and wrapper timestamps observe process lifetimes, including tools and model work; they do not isolate coordinator runtime."
+  ]
+}

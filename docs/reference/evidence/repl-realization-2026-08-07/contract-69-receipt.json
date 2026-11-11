@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T06:04:15.297Z",
+  "salt": "c720260807060415",
+  "role": "contract-69",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-e7ff511f476c67feb773ec4b1cc0ee7f"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-69",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-69": {
+      "pin": "2ae8c8f367f539e3d43fe8a7443801123be84e3d",
+      "paths": [
+        "docs/reference/evidence/repl-realization-2026-08-07/repl-realization-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 367,
+  "verdict": "CONTRACT-69-OK"
+}

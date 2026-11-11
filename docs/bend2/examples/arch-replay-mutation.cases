@@ -1,0 +1,13 @@
+# arch-replay-mutation.cases — the case inputs both halves read, one CASE record per line.
+#
+# CASE|<case-id>|<request>|<rows-before>|<reader-cursor>
+#
+# The trace this corpus replays is not recorded rows but a request the implementation must judge. Each
+# case seeds a store holding two rows (a task and its claim) and then offers one run-orchestrator
+# lease request against it: `valid` is the request admission accepts, `unknown_field` is the same
+# request carrying one field the request shape does not admit, and `expired_session` is the same
+# request whose session expired before the event clock. rows-before is the ledger row count the
+# request is offered against; reader-cursor is a consumer that has read through seq 1.
+CASE|mutation-valid|valid|2|1
+CASE|mutation-unknown-field|unknown_field|2|1
+CASE|mutation-expired-session|expired_session|2|1

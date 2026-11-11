@@ -1,0 +1,4 @@
+{"kind":"capability.op.started","actor":"orchestrator","op":"representation.ceiling","path":"impl/src/coordinator.mjs"}
+{"kind":"capability.op.completed","actor":"orchestrator","op":"representation.ceiling","path":"impl/src/coordinator.mjs","digest":"3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5","status":"needs_resume"}
+{"kind":"capability.op.started","actor":"policy","op":"representation.ceiling","path":"impl/src/coordinator.mjs"}
+{"kind":"capability.op.completed","actor":"policy","op":"representation.ceiling","path":"impl/src/coordinator.mjs","digest":"3a2ea503967d2f3b5215abe4030912784a4ad12d3218b1cbf804cf389afafcf5","status":"ok"}

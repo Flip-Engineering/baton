@@ -1,0 +1,203 @@
+{
+  "at": "2026-07-13T16:56:51.343Z",
+  "implementationSha": "7fa58561ccfe93b3392c64548f08f1d529dd70df",
+  "runId": "phase56-live-harness-drain",
+  "selectedTaskIds": [
+    "phase56-glm-review"
+  ],
+  "interpretation": {
+    "lifecyclePass": "all 1 selected exact routes admitted, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared",
+    "matrixPass": "lifecyclePass plus 1 fresh-verified report(s) and identical worker/verifier toolchain projection binding"
+  },
+  "manualWorkerKills": false,
+  "legacyDriverClose": false,
+  "closureReceipt": {
+    "schemaVersion": 1,
+    "state": "closed",
+    "fleet": {
+      "schemaVersion": 1,
+      "state": "drained",
+      "scope": "local-controller",
+      "repoId": "baton-phase56-live",
+      "targetCount": 1,
+      "remainingCount": 0,
+      "targetDigest": "68c387967d09dc0c3ccf6505c189d0ee06723dea3e8a9ab5321339eea721be26",
+      "counts": {
+        "pendingCancelled": 0,
+        "killConfirmed": 1,
+        "alreadyTerminal": 0,
+        "processesObserved": 1,
+        "processesClosed": 1
+      },
+      "checks": {
+        "admissionClosed": true,
+        "authorityOpsDrained": true,
+        "stopWaitersDrained": true,
+        "cleanupDrained": true,
+        "localWorkerAuthorityReleased": true
+      },
+      "effects": {
+        "coordinatorClosed": false,
+        "writerReleased": false,
+        "transportsClosed": false
+      },
+      "receiptDigest": "2b3e340a6b8f36b9c03cf18371fcbd7bdb7013087ecab9f64be02cd30bab660b"
+    },
+    "supervisors": {
+      "sessionRecovery": "absent",
+      "providerProcessing": "absent",
+      "providerPolling": "absent"
+    },
+    "authority": {
+      "coordinatorClosed": true,
+      "writerReleased": true
+    },
+    "receiptDigest": "7f1461caac48f6c56096d158ee51aef0d5beb4a6d5acb83dc6f7945a7b664f7a"
+  },
+  "credentialMeasurements": {
+    "glm": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "codex": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "grok": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    }
+  },
+  "simultaneousGrokSamples": [],
+  "attempts": [
+    {
+      "taskId": "phase56-glm-review",
+      "admitted": true,
+      "error": null
+    }
+  ],
+  "rows": [
+    {
+      "taskId": "phase56-glm-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "workerId": "w-1",
+      "pid": 18535,
+      "processGroupId": 18535,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 71234,
+        "usd": 0.607499
+      },
+      "verifyAccept": true,
+      "budgetAdmission": {
+        "hardExceeded": false,
+        "refereeAccept": true,
+        "used": {
+          "tokens": 71234,
+          "usd": 0.607499
+        },
+        "limits": {
+          "tokens": 120000,
+          "usd": 3
+        }
+      },
+      "reportCaptured": true,
+      "processStartedSeq": 5,
+      "processClosedSeq": 30,
+      "terminalReason": ""
+    }
+  ],
+  "responses": [],
+  "routeAdmission": {
+    "allAttempted": true,
+    "allAdmitted": true,
+    "exactRequestedResolved": true,
+    "noObservedMismatch": true
+  },
+  "providerProof": {
+    "startedProcessCount": 1,
+    "allSelectedProcessesStarted": true,
+    "simultaneousActiveGrokPidSampleObserved": false,
+    "everyStartedProcessClosedExactly": true,
+    "everyStartedLeaderGone": true,
+    "everyStartedGroupGone": true
+  },
+  "cleanup": {
+    "closureReceiptPresent": true,
+    "coordinatorClosed": true,
+    "writerReleased": true,
+    "taskWorktreesGone": true,
+    "runtimesGone": true,
+    "taskBranchesGone": true,
+    "targetDependencyAbsent": true,
+    "ownershipSnapshotRestored": true
+  },
+  "projectionProof": {
+    "identity": {
+      "schemaVersion": 1,
+      "sourceId": "baton-local-node-toolchain",
+      "manifestDigest": "b35c83cea12285a9236ad7912dd37ab6c0e3b4dd55a14c77cf77dff45dcc86ed",
+      "mappingCount": 1,
+      "fileCount": 22,
+      "directoryCount": 6,
+      "byteCount": 7357718,
+      "limits": {
+        "maxMappings": 1,
+        "maxFiles": 50000,
+        "maxDirectories": 10000,
+        "maxBytes": 536870912,
+        "maxFileBytes": 67108864,
+        "maxPathBytes": 2048,
+        "maxDepth": 64
+      },
+      "projectionDigest": "e46aa5673aaebf908b58137910ce645da0b762c2324e649ed1416e614da80d5a"
+    },
+    "allWorkersBound": true,
+    "allVerifiersBound": true,
+    "sourcePathAbsentFromBoundedEvents": true
+  },
+  "reviewProof": {
+    "terminalTaskCount": 1,
+    "verifiedReports": [
+      "phase56-glm-review"
+    ],
+    "allSelectedVerified": true
+  },
+  "ownershipBefore": {
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": [],
+    "verifyEntries": [],
+    "integrateEntries": []
+  },
+  "ownershipAfter": {
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": [],
+    "verifyEntries": [],
+    "integrateEntries": []
+  },
+  "fatal": null,
+  "lifecyclePass": true,
+  "matrixPass": true,
+  "targetWorktreeRemoved": true,
+  "removalError": null
+}

@@ -1,0 +1,49 @@
+{
+  "attempt": "2026-08-06T22:05:16.537Z",
+  "salt": "wd20260806220516",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-3a3635fe4f08f6e9863630500429c7dc",
+          "run-eb272c33b4c560bc679678d1d0d720cb"
+        ]
+      }
+    },
+    {
+      "step": "terminal:wad-redteam",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:wad-suite",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "wad-suite": {
+      "pin": "997b959cd95977b70040c8bb4c037b099fac246e",
+      "paths": [
+        "impl/test/workflow-as-data-red.test.mjs",
+        "docs/reference/evidence/workflow-as-data-2026-08-06/suite-draft-notes.md"
+      ]
+    },
+    "wad-redteam": {
+      "pin": "8500e81fcba1340e9173f5a769f6612064f9fb92",
+      "paths": [
+        "docs/reference/evidence/workflow-as-data-2026-08-06/contract-redteam.md"
+      ]
+    }
+  },
+  "verdict": "WAD-WAVE-OK"
+}

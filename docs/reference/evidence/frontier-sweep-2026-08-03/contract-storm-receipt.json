@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-03T00:49:31.314Z",
+  "members": [
+    "board-workerhalf-contract",
+    "orientation-contract",
+    "readiness-credentials-contract",
+    "browser-use-contract"
+  ],
+  "outcomes": [
+    {
+      "role": "board-workerhalf-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "f5f432534b66e8937cb6849f5ea886be51230da4"
+    },
+    {
+      "role": "orientation-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "2134d205745a1cae4da5efc218e012dda609e3be"
+    },
+    {
+      "role": "readiness-credentials-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "de690ca7e26554d5247bd0e0d97f13b7b9f9cac4"
+    },
+    {
+      "role": "browser-use-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "746a886975e190c0a2588dc0911c19e739b78609"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "board-workerhalf-contract",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "orientation-contract",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "readiness-credentials-contract",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "browser-use-contract",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "readiness-credentials-contract",
+      "requestId": "pause:baton-5a82a7158f0b9848812dcdbb-work:180",
+      "at": "2026-08-03T00:56:00.547Z"
+    },
+    {
+      "role": "orientation-contract",
+      "requestId": "pause:baton-cfb5c2cb8bea1b2d8dfaf58c-work:128",
+      "at": "2026-08-03T00:56:55.320Z"
+    },
+    {
+      "role": "browser-use-contract",
+      "requestId": "pause:baton-6923299bc78a865b6655fce1-work:122",
+      "at": "2026-08-03T00:57:57.451Z"
+    },
+    {
+      "role": "board-workerhalf-contract",
+      "requestId": "pause:baton-4f454783529e6b18adde8975-work:92",
+      "at": "2026-08-03T01:01:13.080Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "orientation-contract",
+      "requestId": "pause:baton-cfb5c2cb8bea1b2d8dfaf58c-work:148",
+      "at": "2026-08-03T00:57:47.787Z",
+      "code": "claimed"
+    },
+    {
+      "role": "readiness-credentials-contract",
+      "requestId": "pause:baton-5a82a7158f0b9848812dcdbb-work:250",
+      "at": "2026-08-03T00:58:13.629Z",
+      "code": "claimed"
+    },
+    {
+      "role": "browser-use-contract",
+      "requestId": "pause:baton-6923299bc78a865b6655fce1-work:140",
+      "at": "2026-08-03T00:58:22.125Z",
+      "code": "claimed"
+    },
+    {
+      "role": "board-workerhalf-contract",
+      "requestId": "pause:baton-4f454783529e6b18adde8975-work:109",
+      "at": "2026-08-03T01:01:54.133Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 3,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:3f3e870f3c0e0fb7ee2a5cebe8a6dc55",
+    "idempotencyKey": "l2-contract-storm-2026-08-03",
+    "recipeDigest": "030ef6fa6c3cb2a61a6448191288978f8c1331fe8ec2331bcfd31d0403cad8ad",
+    "salt": "92961ae0-b013-427b-9c32-524981e73866",
+    "renderedMembers": [
+      {
+        "role": "board-workerhalf-contract",
+        "objective": "Produce a FULL epic contract: seed + code-verified ground truth (file:line) + question + numbered decisions with red-team targets + non-goals + red-first acceptance. grep -an + sed -n (NUL files). Consult the sweep doc + bidirectional-v3-2026-08-02/ + PROGRESS.md. Control law: controls eval-able, constructive, or conversational — never clocks/turn-limits. YOUR EPIC: #78 — the board worker-half. board.claim/board.report are registry ghosts (application-semantics.mjs:1407-1419, profile worker, surfaces []). Enable them as the shared task list + worker handoff channel: workers claim items, report results, the orchestrator reads the CAS’d envelope. Cover: the claim/report authority (which actor, which fence CAS — S-2’s sessionAuthority envelope conventions at coordination-store .mjs:13495+), worker-scoped board READS (transported reads currently need the orchestrator lease — the worker-scoped relaxation and its bounds), the waves.send claim grant (a steer carrying claim authority), idempotency/replay, and the #74 triage loop this enables (a coordinator-worker reading swarm members' claims/reports). Output: docs/reference/evidence/frontier-sweep-2026-08-03/board-workerhalf-contract.md\nDraft the four L2 epic contracts in parallel (grand sweep wave 3)\nWrite the contract skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nSpec-authoring only: do not edit impl/ files; your only write target is your contract path.\n[attempt: 92961ae0-b013-427b-9c32-524981e73866 board-workerhalf-contract]",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ],
+        "report": "docs/reference/evidence/frontier-sweep-2026-08-03/board-workerhalf-contract.md"
+      },
+      {
+        "role": "orientation-contract",
+        "objective": "Produce a FULL epic contract: seed + code-verified ground truth (file:line) + question + numbered decisions with red-team targets + non-goals + red-first acceptance. grep -an + sed -n (NUL files). Consult the sweep doc + bidirectional-v3-2026-08-02/ + PROGRESS.md. Control law: controls eval-able, constructive, or conversational — never clocks/turn-limits. YOUR EPIC: #81 — the orientation ladder (docs/reference/evidence/orientation-2026-08-03/ orientation-scoping.md is the seed — read it fully). code.orient.map (structural index ≤2KiB), .region (module surface ≤4KiB), .detail (exact lines with content-addressed citation); every answer a citable context-pack (BD3-B) and KG candidacy candidate; investigation receipts as knowledge (scratch.read-class evidence); conciseness-by- citation; the tooling feedback loop (agents rate orientations). Cover: ATLAS-index/ cartographer reuse honestly (what exists at atlas-index.mjs + cartographer-quartermaster .mjs and what is gate-private), freshness (treeSha-digested answers, never stale-as-fresh), the map authorship question (generated vs curated overlay in the KG), pagination for big answers, and spawn-time L0-in-every-brief vs pull-only. Output: docs/reference/evidence/frontier-sweep-2026-08-03/orientation-contract.md\nDraft the four L2 epic contracts in parallel (grand sweep wave 3)\nWrite the contract skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nSpec-authoring only: do not edit impl/ files; your only write target is your contract path.\n[attempt: 92961ae0-b013-427b-9c32-524981e73866 orientation-contract]",
+        "exact": {
+          "harness": "glm",
+          "model": "glm-5.2",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ],
+        "report": "docs/reference/evidence/frontier-sweep-2026-08-03/orientation-contract.md"
+      },
+      {
+        "role": "readiness-credentials-contract",
+        "objective": "Produce a FULL epic contract: seed + code-verified ground truth (file:line) + question + numbered decisions with red-team targets + non-goals + red-first acceptance. grep -an + sed -n (NUL files). Consult the sweep doc + bidirectional-v3-2026-08-02/ + PROGRESS.md. Control law: controls eval-able, constructive, or conversational — never clocks/turn-limits. YOUR EPIC: #47+#83+#84 — readiness + roster + programmatic credential controllers (one feature three ways). Cover: (a) the bounded actual-inference readiness tier per route (probe shape, cost bounds, cache semantics — never probe per call; what counts as proof of provider-alive vs static-ready, with the grok 28-min TTL and claude rotation receipts in docs/PROGRESS.md + issue #47 comments); (b) fleet.roster (routes × liveness × occupancy × route-learning observations — the store keeps routePolicy/routeObservations; projection shape + surfaces); (c) the credential controllers (#84: grok OIDC refresh_token grant on the #11 single-flight/CAS/revocation-latch pattern at claude-credential-cache.mjs; Claude v3.1 refresh-capable runtime shape; doctor findings on refresh-token death with corrective action). Output: docs/reference/evidence/frontier-sweep-2026-08-03/readiness-credentials-contract.md\nDraft the four L2 epic contracts in parallel (grand sweep wave 3)\nWrite the contract skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nSpec-authoring only: do not edit impl/ files; your only write target is your contract path.\n[attempt: 92961ae0-b013-427b-9c32-524981e73866 readiness-credentials-contract]",
+        "exact": {
+          "harness": "deepseek",
+          "model": "deepseek-v4-flash",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ],
+        "report": "docs/reference/evidence/frontier-sweep-2026-08-03/readiness-credentials-contract.md"
+      },
+      {
+        "role": "browser-use-contract",
+        "objective": "Produce a FULL epic contract: seed + code-verified ground truth (file:line) + question + numbered decisions with red-team targets + non-goals + red-first acceptance. grep -an + sed -n (NUL files). Consult the sweep doc + bidirectional-v3-2026-08-02/ + PROGRESS.md. Control law: controls eval-able, constructive, or conversational — never clocks/turn-limits. YOUR EPIC: #85 — browser-use integration (issue text is the seed). BU-2 the research worker class (browser-use workers with analysis:true producing provenance-receipted findings: every fetch/click a hub-admitted receipt event — TG2 progress evidence, audit trail, KG grounding with content-addressed sources; findings flow the candidacy gate) + BU-1 the web-surface QA lane. Cover HARD: page content as prompt injection (the least trusted content class there is — UNTRUSTED framing + sanitization design); action bounds (domain allowlists, no authenticated pages, no form submission in v1); receipt byte caps (digest + bounded extract, never raw HTML); the analysis:true honesty line (reports must ground to receipts); the capability-adapter posture (honest-empty, optionalDep engine, greenfield-minimal adapter contract — the ATLAS pattern at application-deployment.mjs normalizeAtlasDeployment); and which opensource engine class the contract blesses (evaluate playwright-class vs a minimal fetch+readability greenfield for v1, with the dependency-hygiene evidence). Output: docs/reference/evidence/frontier-sweep-2026-08-03/browser-use-contract.md\nDraft the four L2 epic contracts in parallel (grand sweep wave 3)\nWrite the contract skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion.\nSpec-authoring only: do not edit impl/ files; your only write target is your contract path.\n[attempt: 92961ae0-b013-427b-9c32-524981e73866 browser-use-contract]",
+        "exact": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ],
+        "report": "docs/reference/evidence/frontier-sweep-2026-08-03/browser-use-contract.md"
+      }
+    ]
+  }
+}

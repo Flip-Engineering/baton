@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T23:18:39.673Z",
+  "members": [
+    "setup-token-implementer-codex"
+  ],
+  "outcomes": [
+    {
+      "role": "setup-token-implementer-codex",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "8b1e11685e76cd2c0c8a7f404dd70f2d7c72848b"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "setup-token-implementer-codex",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "setup-token-implementer-codex",
+      "requestId": "pause:baton-43a0058ef0ef9d0c1ce59a6d-work:355",
+      "at": "2026-07-31T23:52:27.742Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "setup-token-implementer-codex",
+      "requestId": "pause:baton-43a0058ef0ef9d0c1ce59a6d-work:643",
+      "at": "2026-08-01T00:18:30.651Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}

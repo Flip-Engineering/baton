@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-12T19:47:01.446Z",
+  "salt": "re20260812194701",
+  "role": "redteam-72",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a9b776fd3c8a143cd6ba1fe2ef9ff3e7"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-72",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-72": {
+      "pin": "5ea961dd5b9f4545ce03acae0fd09b3ba2f7b199",
+      "paths": [
+        "docs/reference/evidence/prescriptive-doctor-2026-08-12/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 404,
+  "verdict": "RT-72-OK"
+}

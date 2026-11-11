@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T23:29:32.729Z",
+  "members": [
+    "ax-opus",
+    "ax-sonnet",
+    "ax-glm"
+  ],
+  "outcomes": [
+    {
+      "role": "ax-opus",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "5e659720bb51c63ff5119686e847256eb57537eb"
+    },
+    {
+      "role": "ax-sonnet",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "3a858e68249953ed748095c2209874a20d1e04f1"
+    },
+    {
+      "role": "ax-glm",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "11bbf4aa262e3cf3d642f37f5402c82f97cea94c"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "ax-opus",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "ax-sonnet",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "ax-glm",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "ax-glm",
+      "requestId": "pause:baton-0639bf7fda5bcbcff01b2399-work:74",
+      "at": "2026-07-31T23:34:10.962Z"
+    },
+    {
+      "role": "ax-opus",
+      "requestId": "pause:baton-b6cfcb769ddf939b97300052-work:54",
+      "at": "2026-07-31T23:34:31.284Z"
+    },
+    {
+      "role": "ax-sonnet",
+      "requestId": "pause:baton-eef15bff67c79c66135b157c-work:88",
+      "at": "2026-07-31T23:34:31.458Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "ax-sonnet",
+      "requestId": "pause:baton-eef15bff67c79c66135b157c-work:98",
+      "at": "2026-07-31T23:34:51.761Z",
+      "code": "claimed"
+    },
+    {
+      "role": "ax-glm",
+      "requestId": "pause:baton-0639bf7fda5bcbcff01b2399-work:86",
+      "at": "2026-07-31T23:34:57.732Z",
+      "code": "claimed"
+    },
+    {
+      "role": "ax-opus",
+      "requestId": "pause:baton-b6cfcb769ddf939b97300052-work:76",
+      "at": "2026-07-31T23:35:43.740Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": "5a7293e0-ad26-4c57-a94f-4db4a32d777d"
+}

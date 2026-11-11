@@ -1,0 +1,22 @@
+Executable: npm
+Arguments: ["test", "--prefix", "impl"]
+Working directory: assigned worktree root
+Execution: direct executable and argv, shell=false
+Exit: 1
+Signal: null
+Reviewed base: 130518132e8f23c0f7c8a2df2d58b6c5445544ad
+Full local log SHA256: 33d2a0213f94401d3fffca36ffe2ac834094242eda40e71dd41d7075026ff8a7
+
+baton test runner: plan — 725 file(s) in the whole suite: 700 in the parallel lane (x9), 25 in the serial lane; progress deadline 600000 ms per file
+baton test runner: proceeding WITHOUT a host verify lease (memory: 4393861120 bytes observed, 15461882262 required) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend
+baton suite verdict: RED — 6533 passed, 451 expected red (428 code, 23 environment-red), 0 of this run’s red rows cancelled by a dangling await earlier in their file, 9 unexpected failure(s), 0 stale expectation(s), 0 hung
+  expected red by reason class: issue=410, audit=6, credential=23, design=12
+  unexpected failure: test/deployment-omp-dispatch-red.test.mjs :: DEPLOYMENT-DISPATCH: the omp deployment seat admits dispatch after approval (worker policy satisfies the deployment default) — omp is not configured; complete the omp provider setup so ~/.omp/agent/agent.db exists, then reopen Baton.
+  unexpected failure: test/issue351-reconstruction-liveness.test.mjs :: RL-a: the heartbeat beats between the replay’s resolution and the reconstruction’s end — the open stalled the loop for 655ms — longer than the 400ms bound
+  unexpected failure: test/phase11-model-selection.test.mjs :: MS2: Codex exact model reaches thread/start and is reported from its response — Expected values to be strictly equal:
+  unexpected failure: test/phase11-model-selection.test.mjs :: MS2: Grok exact model reaches argv and prompt usage reports the observed model — Expected values to be strictly equal:
+  unexpected failure: test/phase50-cairn-scratch-correction.test.mjs :: SC8-SC9: scan/read/evidence/batch/result ceilings, cancellation, ACI preflight, and append failure leave no correction — condition not met
+  unexpected failure: test/phase50-cairn-scratch-correction.test.mjs :: SC4/SC9/SC10: correction restart and route, artifact, row, and contamination tampering fail replay — condition not met
+  unexpected failure: test/test-runner.test.mjs :: TF2/TF3: SIGTERM stops a hanging nested suite and reaps its fixture root — timed out waiting for nested test marker
+  unexpected failure: test/issue306a-reincarnate.test.mjs :: 306a-b/c: the successor takes the writer lease after the old release; the publication never lapses — exactly the two incarnations were published, in order: instance-07bb5d3d-1b66-41c6-8f1f-f1e1741e7e72
+  unexpected failure: test/issue360-drain-releases-settled.test.mjs :: 360b: the drain releases and names the capacity reservation a stopped seat left behind — fleet drain did not converge before its deployment deadline
