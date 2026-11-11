@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T22:46:54.053Z",
+  "members": [
+    "bd-a2-implementer-sonnet"
+  ],
+  "outcomes": [
+    {
+      "role": "bd-a2-implementer-sonnet",
+      "phase": "working",
+      "terminal": false,
+      "narrative": "1 worker(s) active.",
+      "resultSha": null
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "bd-a2-implementer-sonnet",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": false,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "stall",
+  "nudges": [],
+  "claims": [],
+  "salt": null
+}

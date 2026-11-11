@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-02T23:18:17.721Z",
+  "members": [
+    "implementer"
+  ],
+  "outcomes": [
+    {
+      "role": "implementer",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "1 worker(s) active.",
+      "resultSha": null
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-fe161c4fea02d73ae001f41a-work:1108",
+      "at": "2026-08-03T00:51:27.947Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-fe161c4fea02d73ae001f41a-work:1294",
+      "at": "2026-08-03T01:16:59.680Z",
+      "code": "worktree_cleanup_failed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:e259ad46a63e18eb703cafbfa9392351",
+    "idempotencyKey": "mcp-packaging-impl-2026-08-02",
+    "recipeDigest": "4cb28cd970c37ac6c8772606a35e694cc917206690140c6eff0b70b0a526b202",
+    "salt": "c0c8a902-7437-40ed-80bc-1974341b8400",
+    "renderedMembers": [
+      {
+        "role": "implementer",
+        "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the MCP-first + packaging epic per docs/reference/evidence/mcp-packaging-2026-08-02/ mcp-packaging-decisions.md (v1.0+v1.0.1 — READ FULLY first) until impl/test/mcp-packaging-red.test.mjs (READ FULLY second) is green with zero weakening edits. Anchors (verify each; some files contain NUL — grep -an + sed -n): (1) MCP-W1 tools in mcp-northbound.mjs (tool table/dispatch/capability entries, following the baton_decision_answer/baton_waves_attach patterns) riding NEW registry rows (application-semantics.mjs: waves.start/progress/send/stop, deployment.doctor; decision.answer gains ordinary-surface membership) + application.command handlers (application.mjs): waves.start detached {waveId, members:[{role,runId}]} with per-MEMBER quota + profile-route admission (application.mjs:2969-3008); waves.progress paginated ≤16/page cursor+nextCursor, per-member bounded — never application_run_view_oversize; waves.send/stop on member runIds. decision.answer: repository coordinate enforced BEFORE interaction read + already_resolved distinct typed result with resolvedBy. waves.attach response gains harvestReplayed. (2) MCP-W2: the four settlement tools (scratchpad.elevate/settle, knowledge.promote, knowledge.settlement_lease) — registry surfaces [embedded, mcp]; knowledge.promote REQUIRES the S-2 sessionAuthority envelope (coordination-store.mjs:13495 path); settlement_lease requires a settlement capability class on the MCP principal. STORE REORDER (codex #2b, MP8 pins the live hole): admitWorkflowFinding (coordination-store.mjs:14695) evaluates the session binding BEFORE the _byKey replay — a foreign-session replay refuses run_orchestrator_session_mismatch. KS9 pins in kg-settlement-red.test.mjs amend exactly for the mcp-enabled rows. (3) baton_deployment_doctor: quota-free, per-call fresh doctorReadiness, secret material stripped (canary-pinned). (4) PKG-1: NEW src/mcp-descriptor.mjs (loadMcpDescriptor — closed schema, field-named errors never values, env/keychain/file credential refs with repo-containment incl. symlink-out, frozen at open; createMcpServerFromDescriptor) + scripts/mcp-stdio.mjs + mcp-web.mjs accept the JSON descriptor path (back-compat with factory modules). (5) PKG-2: package.json files allowlist (src, scripts, MCP.md, CLI.md — never test/, evidence, .baton, keys) + exports map for baton/impl; lazy natives (index.mjs never eagerly imports atlas/ast-grep); MP15 install smoke must pass. (6) MCP.md rewritten descriptor-first (fenced json descriptor example, wave walkthrough, already_resolved semantics, single-orchestrator posture for settlement tools); the reflex suite's application-surface pin (mcp-reflex-surface-red.test.mjs:189) amends exactly for the admitted ordinary members (waves.*, deployment.doctor, decision.answer, the four settlement tools) — no other reflex tool crosses. Verify: node --test impl/test/mcp-packaging-red.test.mjs then adjacents mcp-reflex-surface-red, mcp-reflex-board-package-red, phase16-mcp-northbound, kg-settlement-red, surfacing-matrix-red — all from the repo root.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: c0c8a902-7437-40ed-80bc-1974341b8400 implementer]",
+        "exact": {
+          "harness": "deepseek",
+          "model": "deepseek-v4-flash",
+          "effort": "high"
+        },
+        "scope": [
+          "impl/**",
+          "docs/reference/evidence/mcp-packaging-2026-08-02/**"
+        ]
+      }
+    ]
+  }
+}

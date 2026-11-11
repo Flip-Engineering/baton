@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-07T05:27:30.588Z",
+  "salt": "s720260807052730",
+  "role": "suite-79",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-d17aa9f4d029fa635d2d43d4cd256d8d"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-79",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-79": {
+      "pin": "c745080a868637d6930a0377e6c7b8cfd6d7b1da",
+      "paths": [
+        "impl/test/worker-delivery-push-red.test.mjs",
+        "docs/reference/evidence/worker-delivery-push-2026-08-07/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 363,
+  "verdict": "SUITE-79-OK"
+}

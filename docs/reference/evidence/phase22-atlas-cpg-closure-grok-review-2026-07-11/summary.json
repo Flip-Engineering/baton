@@ -1,0 +1,94 @@
+{
+  "at": "2026-07-12T03:49:46.409Z",
+  "repoHead": "a0c797670c3802e3b059047eae7e636d1bb9bddf",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-cpg-impl-review-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-cpg-impl-review-45.md",
+      "workerId": "w-1"
+    },
+    {
+      "taskId": "grok-cpg-impl-review-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-cpg-impl-review-composer.md",
+      "workerId": "w-2"
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:4",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:5",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:6",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [],
+  "checks": {
+    "noHarnessError": false,
+    "twoReviews": true,
+    "distinctLivePids": false,
+    "concurrentTurns": false,
+    "exactModelsObserved": false,
+    "bothFreshVerified": false,
+    "reportsCaptured": false,
+    "bothKillsConfirmed": false,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": "Error: timeout waiting for grok-cpg-impl-review-45 verified result\n    at until (file:///private/tmp/baton-cpg-closure-review.rYRa1L/docs/reference/evidence/phase22-atlas-cpg-implementation-grok-review-2026-07-11/run.mjs:11:205)\n    at async Promise.all (index 0)\n    at async file:///private/tmp/baton-cpg-closure-review.rYRa1L/docs/reference/evidence/phase22-atlas-cpg-implementation-grok-review-2026-07-11/run.mjs:18:3",
+  "pass": false
+}

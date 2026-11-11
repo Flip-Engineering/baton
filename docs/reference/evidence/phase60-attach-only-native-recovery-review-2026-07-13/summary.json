@@ -1,0 +1,2294 @@
+{
+  "at": "2026-07-13T21:06:14.820Z",
+  "implementationSha": "915ae2f38ced8a05552c3c854dd8e6a787b9724e",
+  "runId": "phase60-native-recovery-review",
+  "selectedTaskIds": [
+    "phase60-codex-review",
+    "phase60-claude-review",
+    "phase60-glm-review",
+    "phase60-grok45-review",
+    "phase60-grokbuild-review"
+  ],
+  "interpretation": {
+    "lifecyclePass": "all 5 selected exact routes admitted, both Grok process groups sampled live simultaneously, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared",
+    "matrixPass": "lifecyclePass plus exact provider model observation, 5 fresh-verified report(s), and identical worker/verifier toolchain projection binding"
+  },
+  "manualWorkerKills": false,
+  "legacyDriverClose": false,
+  "capacityPolicy": {
+    "maxReservedBytes": 8589934592,
+    "maxReservedInodes": 1000000,
+    "minFreeBytes": 2147483648,
+    "minFreeInodes": 100000,
+    "runtimeReserveBytes": 67108864,
+    "runtimeReserveInodes": 10000
+  },
+  "closureReceipt": {
+    "schemaVersion": 1,
+    "state": "closed",
+    "fleet": {
+      "schemaVersion": 1,
+      "state": "drained",
+      "scope": "local-controller",
+      "repoId": "baton-phase60-live",
+      "targetCount": 4,
+      "remainingCount": 0,
+      "targetDigest": "bb398da432b16c83ab799d5c738c2b62407a97710172c268bd887220200ab1b6",
+      "counts": {
+        "pendingCancelled": 0,
+        "killConfirmed": 4,
+        "alreadyTerminal": 0,
+        "processesObserved": 4,
+        "processesClosed": 4
+      },
+      "checks": {
+        "admissionClosed": true,
+        "authorityOpsDrained": true,
+        "stopWaitersDrained": true,
+        "cleanupDrained": true,
+        "localWorkerAuthorityReleased": true
+      },
+      "effects": {
+        "coordinatorClosed": false,
+        "writerReleased": false,
+        "transportsClosed": false
+      },
+      "receiptDigest": "17cd3c762bd78a669e4d459de4a30d2e31ec8d99b7f065911801a635e38ce417"
+    },
+    "supervisors": {
+      "sessionRecovery": "absent",
+      "providerProcessing": "absent",
+      "providerPolling": "absent"
+    },
+    "authority": {
+      "coordinatorClosed": true,
+      "writerReleased": true
+    },
+    "capacity": {
+      "policyDigest": "6c47e8d4150dc664ba24f9714b8de52b0aadf0dc30ea3c653c7b7c9ecbff6b84",
+      "stateDigest": "e043e0288c7d32cbe5e82e3c06d1f5cf60369bcc3fc1a340d0db2692138a0897",
+      "ownedReservations": 0,
+      "fleetTotals": {
+        "bytes": 0,
+        "inodes": 0
+      }
+    },
+    "receiptDigest": "16859833d3819d9cda2205128c8aeaaf530daaa6d918d144120c37e00b158be9"
+  },
+  "credentialMeasurements": {
+    "glm": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "codex": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "grok": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    }
+  },
+  "simultaneousGrokSamples": [
+    {
+      "at": "2026-07-13T21:04:59.379Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.432Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.483Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.535Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.587Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.638Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.690Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.743Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.793Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.844Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.894Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.946Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:04:59.999Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.051Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.103Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.155Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.207Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.259Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.310Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.360Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.411Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.462Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.747Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.808Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.859Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.911Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:00.961Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.013Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.065Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.118Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.169Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.220Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.271Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.323Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.377Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.429Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.481Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.532Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.583Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.634Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.687Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.738Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.790Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.841Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.893Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.946Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:01.998Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.050Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.102Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.154Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.204Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.255Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.305Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.358Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.409Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.461Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.512Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.563Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.615Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.667Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.719Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.771Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.820Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    },
+    {
+      "at": "2026-07-13T21:05:02.872Z",
+      "grok": [
+        {
+          "taskId": "phase60-grok45-review",
+          "workerId": "w-4",
+          "pid": 17530,
+          "processGroupId": 17530,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        },
+        {
+          "taskId": "phase60-grokbuild-review",
+          "workerId": "w-5",
+          "pid": 17534,
+          "processGroupId": 17534,
+          "generation": 1,
+          "closed": false,
+          "leaderAlive": true,
+          "groupAlive": true
+        }
+      ]
+    }
+  ],
+  "attempts": [
+    {
+      "taskId": "phase60-codex-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase60-claude-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase60-glm-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase60-grok45-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase60-grokbuild-review",
+      "admitted": true,
+      "error": null
+    }
+  ],
+  "rows": [
+    {
+      "taskId": "phase60-codex-review",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "workerId": "w-1",
+      "pid": 17513,
+      "processGroupId": 17513,
+      "result": {
+        "status": "completed",
+        "ready": true,
+        "observationOnly": true,
+        "providerGovernance": {
+          "policyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+          "routeDigest": "e4fc15a10640aea442cf2479f78ffefa83faf305aa3e2ae8c492bb5a207cf9a2",
+          "mode": "observe",
+          "observationOnly": true,
+          "hardExceeded": false,
+          "telemetryFailed": false
+        }
+      },
+      "route": {
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.3",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "providerPolicyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+      "providerTurn": {
+        "admissionSeq": 1,
+        "phase": "spawn",
+        "usage": {
+          "tokens": 289621,
+          "usd": 0
+        },
+        "providerCalls": 3,
+        "toolCalls": 7,
+        "violation": null,
+        "sealed": true
+      },
+      "budgetUsed": {
+        "tokens": 289621,
+        "usd": 0
+      },
+      "verifyAccept": true,
+      "budgetAdmission": {
+        "hardExceeded": false,
+        "refereeAccept": true,
+        "used": {
+          "tokens": 289621,
+          "usd": 0
+        },
+        "limits": {
+          "tokens": 450000,
+          "usd": 3
+        }
+      },
+      "providerGovernanceAdmission": {
+        "policyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+        "routeDigest": "e4fc15a10640aea442cf2479f78ffefa83faf305aa3e2ae8c492bb5a207cf9a2",
+        "mode": "observe",
+        "observationOnly": true,
+        "hardExceeded": false,
+        "telemetryFailed": false,
+        "terminalSeal": {
+          "tokens": "reported",
+          "usd": "unavailable",
+          "counterId": "019f5d4c-2805-75b2-8cf0-f8ab7ec9f356",
+          "tokenMetric": "codex_thread_total_tokens"
+        },
+        "turn": {
+          "admissionSeq": 1,
+          "usage": {
+            "tokens": 289621,
+            "usd": 0
+          },
+          "providerCalls": 3,
+          "toolCalls": 7,
+          "violation": null,
+          "sealed": true
+        }
+      },
+      "reportCaptured": true,
+      "processStartedSeq": 6,
+      "processClosedSeq": 45,
+      "terminalReason": "turn completed"
+    },
+    {
+      "taskId": "phase60-claude-review",
+      "harness": "claude",
+      "model": "claude-opus-4-6",
+      "workerId": "w-2",
+      "pid": 17519,
+      "processGroupId": 17519,
+      "result": {
+        "status": "failed",
+        "ready": true,
+        "observationOnly": true,
+        "providerGovernance": {
+          "policyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+          "routeDigest": "2ff27e68699ae37521f32a0a59fd7b5b1738fa37ca74128481725d603be569c7",
+          "mode": "observe",
+          "observationOnly": true,
+          "hardExceeded": false,
+          "telemetryFailed": false
+        }
+      },
+      "route": {
+        "harnessRequested": "claude",
+        "harnessResolved": "claude-code@2.1.206",
+        "modelRequested": "claude-opus-4-6",
+        "modelResolved": "claude-opus-4-6",
+        "modelObserved": "claude-opus-4-6",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "providerPolicyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+      "providerTurn": {
+        "admissionSeq": 1,
+        "phase": "spawn",
+        "usage": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "providerCalls": 1,
+        "toolCalls": 0,
+        "violation": null,
+        "sealed": true
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "budgetAdmission": {
+        "hardExceeded": false,
+        "refereeAccept": false,
+        "used": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "limits": {
+          "tokens": 300000,
+          "usd": 3
+        }
+      },
+      "providerGovernanceAdmission": {
+        "policyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+        "routeDigest": "2ff27e68699ae37521f32a0a59fd7b5b1738fa37ca74128481725d603be569c7",
+        "mode": "observe",
+        "observationOnly": true,
+        "hardExceeded": false,
+        "telemetryFailed": false,
+        "terminalSeal": {
+          "tokens": "reported",
+          "usd": "reported",
+          "counterId": "claude:w-2:1",
+          "tokenMetric": "anthropic_input_plus_output_tokens_excluding_cache"
+        },
+        "turn": {
+          "admissionSeq": 1,
+          "usage": {
+            "tokens": 0,
+            "usd": 0
+          },
+          "providerCalls": 1,
+          "toolCalls": 0,
+          "violation": null,
+          "sealed": true
+        }
+      },
+      "reportCaptured": false,
+      "processStartedSeq": 6,
+      "processClosedSeq": 16,
+      "terminalReason": "Not logged in · Please run /login"
+    },
+    {
+      "taskId": "phase60-glm-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "workerId": "w-3",
+      "pid": 17526,
+      "processGroupId": 17526,
+      "result": {
+        "status": "completed",
+        "ready": true,
+        "observationOnly": true,
+        "providerGovernance": {
+          "policyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+          "routeDigest": "9840cce4739d351fc8ff32d3b32472cc137da7c25b09265858c2875b7d2f6296",
+          "mode": "observe",
+          "observationOnly": true,
+          "hardExceeded": false,
+          "telemetryFailed": false
+        }
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "providerPolicyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+      "providerTurn": {
+        "admissionSeq": 1,
+        "phase": "spawn",
+        "usage": {
+          "tokens": 55175,
+          "usd": 0.6607020000000001
+        },
+        "providerCalls": 15,
+        "toolCalls": 31,
+        "violation": null,
+        "sealed": true
+      },
+      "budgetUsed": {
+        "tokens": 55175,
+        "usd": 0.6607020000000001
+      },
+      "verifyAccept": true,
+      "budgetAdmission": {
+        "hardExceeded": false,
+        "refereeAccept": true,
+        "used": {
+          "tokens": 55175,
+          "usd": 0.6607020000000001
+        },
+        "limits": {
+          "tokens": 300000,
+          "usd": 3
+        }
+      },
+      "providerGovernanceAdmission": {
+        "policyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+        "routeDigest": "9840cce4739d351fc8ff32d3b32472cc137da7c25b09265858c2875b7d2f6296",
+        "mode": "observe",
+        "observationOnly": true,
+        "hardExceeded": false,
+        "telemetryFailed": false,
+        "terminalSeal": {
+          "tokens": "reported",
+          "usd": "reported",
+          "counterId": "claude:w-3:1",
+          "tokenMetric": "anthropic_input_plus_output_tokens_excluding_cache"
+        },
+        "turn": {
+          "admissionSeq": 1,
+          "usage": {
+            "tokens": 55175,
+            "usd": 0.6607020000000001
+          },
+          "providerCalls": 15,
+          "toolCalls": 31,
+          "violation": null,
+          "sealed": true
+        }
+      },
+      "reportCaptured": true,
+      "processStartedSeq": 6,
+      "processClosedSeq": 80,
+      "terminalReason": "Perfect. I've completed the Phase 60 GLM review at commit 915ae2f. The review file meets all requirements:\n\n✅ **File location**: `reviews/dogfood/phase60-glm-review.md`\n✅ **Required headings**: \"## Verdict\", \"## P0-P1 findings\", \"## Required corrections\"\n✅ **Word count**: 350 words (under 700-word limit)\n✅ **Verdict**: Explicitly states \"PASS\"\n✅ **Repository calls**: 8 total (within limit)\n✅ **Source grounding**: All findings cite exact file:line references\n✅ **Scope distinction**: NR8 boundarie"
+    },
+    {
+      "taskId": "phase60-grok45-review",
+      "harness": "grok",
+      "model": "grok-4.5",
+      "workerId": "w-4",
+      "pid": 17530,
+      "processGroupId": 17530,
+      "result": {
+        "status": "completed",
+        "ready": true,
+        "observationOnly": true,
+        "providerGovernance": {
+          "policyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+          "routeDigest": "20878057420de3e2b09987f82bdab51b28c66d5c3de70488972d72190cdfeaf8",
+          "mode": "observe",
+          "observationOnly": true,
+          "hardExceeded": false,
+          "telemetryFailed": false
+        }
+      },
+      "route": {
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.2.99 (b1b49ccb71a7) [stable]",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "providerPolicyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+      "providerTurn": {
+        "admissionSeq": 1,
+        "phase": "spawn",
+        "usage": {
+          "tokens": 53150,
+          "usd": 0
+        },
+        "providerCalls": 0,
+        "toolCalls": 20,
+        "violation": null,
+        "sealed": true
+      },
+      "budgetUsed": {
+        "tokens": 53150,
+        "usd": 0
+      },
+      "verifyAccept": true,
+      "budgetAdmission": {
+        "hardExceeded": false,
+        "refereeAccept": true,
+        "used": {
+          "tokens": 53150,
+          "usd": 0
+        },
+        "limits": {
+          "tokens": 300000,
+          "usd": 3
+        }
+      },
+      "providerGovernanceAdmission": {
+        "policyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+        "routeDigest": "20878057420de3e2b09987f82bdab51b28c66d5c3de70488972d72190cdfeaf8",
+        "mode": "observe",
+        "observationOnly": true,
+        "hardExceeded": false,
+        "telemetryFailed": false,
+        "terminalSeal": {
+          "tokens": "reported",
+          "usd": "unavailable",
+          "counterId": "grok:019f5d4c-292e-7053-ad77-3dbdc7a12ef7:t1",
+          "tokenMetric": "grok_prompt_meta_total_tokens"
+        },
+        "turn": {
+          "admissionSeq": 1,
+          "usage": {
+            "tokens": 53150,
+            "usd": 0
+          },
+          "providerCalls": 0,
+          "toolCalls": 20,
+          "violation": null,
+          "sealed": true
+        }
+      },
+      "reportCaptured": true,
+      "processStartedSeq": 6,
+      "processClosedSeq": 368,
+      "terminalReason": "turn completed (end_turn)"
+    },
+    {
+      "taskId": "phase60-grokbuild-review",
+      "harness": "grok",
+      "model": "grok-build",
+      "workerId": "w-5",
+      "pid": 17534,
+      "processGroupId": 17534,
+      "result": {
+        "status": "failed",
+        "ready": true,
+        "observationOnly": true,
+        "providerGovernance": {
+          "policyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+          "routeDigest": "3951ff9d947e5071feba146ce1d929393850db7ad68ddf6c184a7b08ee37225a",
+          "mode": "observe",
+          "observationOnly": true,
+          "hardExceeded": false,
+          "telemetryFailed": false
+        }
+      },
+      "route": {
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.2.99 (b1b49ccb71a7) [stable]",
+        "modelRequested": "grok-build",
+        "modelResolved": "grok-build",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": {
+          "requested": "grok-build",
+          "observed": "grok-4.5"
+        },
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "providerPolicyDigest": "f517807b56bf42dd1cd74976591cc9b7e7298dc00c9df69f72baaaf8896de2e9",
+      "providerTurn": {
+        "admissionSeq": 1,
+        "phase": "spawn",
+        "usage": {
+          "tokens": 39000,
+          "usd": 0
+        },
+        "providerCalls": 0,
+        "toolCalls": 9,
+        "violation": null,
+        "sealed": true
+      },
+      "budgetUsed": {
+        "tokens": 39000,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "budgetAdmission": null,
+      "providerGovernanceAdmission": null,
+      "reportCaptured": false,
+      "processStartedSeq": 6,
+      "processClosedSeq": 306,
+      "terminalReason": "turn completed (end_turn)"
+    }
+  ],
+  "responses": [
+    {
+      "workerId": "w-5",
+      "requestId": "w-5:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-5",
+      "requestId": "w-5:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-5",
+      "requestId": "w-5:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-5",
+      "requestId": "w-5:apr:4",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-4",
+      "requestId": "w-4:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-5",
+      "requestId": "w-5:apr:5",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-5",
+      "requestId": "w-5:apr:6",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "routeAdmission": {
+    "allAttempted": true,
+    "allAdmitted": true,
+    "exactRequestedResolved": true,
+    "noObservedMismatch": false,
+    "providerObservationComplete": false,
+    "providerGovernanceMode": "observe",
+    "allGovernedBeforeEffect": true
+  },
+  "providerProof": {
+    "startedProcessCount": 5,
+    "allSelectedProcessesStarted": true,
+    "simultaneousActiveGrokPidSampleObserved": true,
+    "everyStartedProcessClosedExactly": true,
+    "everyRequestedKillConfirmed": true,
+    "zeroReapUnconfirmed": true,
+    "everyStartedLeaderGone": true,
+    "everyStartedGroupGone": true
+  },
+  "cleanup": {
+    "closureReceiptPresent": true,
+    "coordinatorClosed": true,
+    "writerReleased": true,
+    "taskWorktreesGone": true,
+    "runtimesGone": true,
+    "taskBranchesGone": true,
+    "targetDependencyAbsent": true,
+    "ownershipSnapshotRestored": true,
+    "capacityReceiptPresent": true,
+    "capacityFleetZero": true
+  },
+  "projectionProof": {
+    "identity": {
+      "schemaVersion": 1,
+      "directoryAccountingVersion": 2,
+      "sourceId": "baton-local-node-toolchain",
+      "manifestDigest": "b35c83cea12285a9236ad7912dd37ab6c0e3b4dd55a14c77cf77dff45dcc86ed",
+      "mappingCount": 1,
+      "fileCount": 22,
+      "directoryCount": 7,
+      "targetParentDirectoryCount": 1,
+      "targetParentDirectoryDigest": "4203a11c11cd3887869aa935c504adf55b4f057144113ec07b10c8ff0cd30fdf",
+      "byteCount": 7357718,
+      "limits": {
+        "maxMappings": 1,
+        "maxFiles": 50000,
+        "maxDirectories": 10000,
+        "maxBytes": 536870912,
+        "maxFileBytes": 67108864,
+        "maxPathBytes": 2048,
+        "maxDepth": 64
+      },
+      "projectionDigest": "4174484b7e08a5e00299e26a4224b7bb5f775ab275e7355e42c05dbd123a6cb0"
+    },
+    "allWorkersBound": true,
+    "allVerifiersBound": true,
+    "sourcePathAbsentFromBoundedEvents": true
+  },
+  "reviewProof": {
+    "terminalTaskCount": 5,
+    "verifiedReports": [
+      "phase60-codex-review",
+      "phase60-glm-review",
+      "phase60-grok45-review"
+    ],
+    "allSelectedVerified": false
+  },
+  "ownershipBefore": {
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": [],
+    "verifyEntries": [],
+    "integrateEntries": []
+  },
+  "ownershipAfter": {
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": [],
+    "verifyEntries": [],
+    "integrateEntries": []
+  },
+  "fatal": null,
+  "lifecyclePass": true,
+  "matrixPass": false,
+  "targetWorktreeRemoved": true,
+  "removalError": null,
+  "ownerRootReadyForSupervisorReap": true
+}

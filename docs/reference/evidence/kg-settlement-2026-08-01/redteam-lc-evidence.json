@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-01T23:07:41.474Z",
+  "members": [
+    "lifecycle-attacker"
+  ],
+  "outcomes": [
+    {
+      "role": "lifecycle-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "94a9d0e81c4b5401906ce041b4a047cb72352c5c"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "lifecycle-attacker",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "lifecycle-attacker",
+      "requestId": "pause:baton-e2830087277a6cbab502125e-work:114",
+      "at": "2026-08-01T23:16:12.451Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "lifecycle-attacker",
+      "requestId": "pause:baton-e2830087277a6cbab502125e-work:160",
+      "at": "2026-08-01T23:18:07.772Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-01T00:09:19.378Z",
+  "members": [
+    "recipes-implementer-glm"
+  ],
+  "outcomes": [
+    {
+      "role": "recipes-implementer-glm",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "548e0c30a64119a9a9fc379df0d95c130f0c8b6d"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "recipes-implementer-glm",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "recipes-implementer-glm",
+      "requestId": "pause:baton-6fdac1892e79a17a73064da5-work:264",
+      "at": "2026-08-01T00:56:08.101Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "recipes-implementer-glm",
+      "requestId": "pause:baton-6fdac1892e79a17a73064da5-work:292",
+      "at": "2026-08-01T00:59:08.758Z",
+      "code": "worktree_cleanup_failed"
+    }
+  ],
+  "salt": null
+}

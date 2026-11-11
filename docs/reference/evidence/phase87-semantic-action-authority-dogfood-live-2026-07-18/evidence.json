@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "route": {
+    "harness": "glm",
+    "model": "glm-5.2",
+    "effort": "xhigh",
+    "state": "ready"
+  },
+  "group": {
+    "schemaVersion": 1,
+    "state": "ready",
+    "counts": {
+      "total": 1,
+      "active": 0,
+      "waiting": 0,
+      "ready": 1,
+      "completed": 0,
+      "failed": 0,
+      "stopped": 0,
+      "terminal": 0,
+      "attention": 0,
+      "cleanupIncomplete": 0,
+      "byPhase": {
+        "work_completed": 1
+      }
+    },
+    "members": [
+      {
+        "runId": "run-4e3e3318734c6ba943673ef3bdc479b6",
+        "objective": "Adversarially review Phase 87 semantic run.act authority as a bounded Baton worker. Inspect only spec/phase87-semantic-action-authority.md, the relevant action registry and act/authorizeReplay sections in impl/src/application-semantics.mjs and impl/src/application.mjs, the run.act admission/replay/context paths in impl/src/web-northbound.mjs and impl/src/mcp-northbound.mjs, the preflight bridge in impl/src/mcp-web-bridge.mjs and impl/src/application-cli.mjs, and impl/test/phase87-semantic-action-authority.test.mjs. Use no more than twelve repository reads. Do not run the full suite. Look specifically for a confused-deputy path, quota/admission before denial, forged transport authority, capability downgrade replay, disappeared-action replay failure, session mixing, or a preflight/admission race. Separate concrete defects from follow-up test gaps. Do not invoke nested Baton. Use rtk for every shell operation, exactly one command per call, with no pipes, &&, semicolons, or unwrapped shell commands. Do not mutate home state, credentials, toolchains, shims, caches, global configuration, runtime paths, or main checkout. Write only docs/reference/evidence/phase87-semantic-action-authority-dogfood-live-2026-07-18/glm-review.md, then finish immediately. Do not change any other path.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "glm-5.2",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "c86a9034bd68fc1ab6177745415a945dcecfa886c5d3726d5021b74b8c052886"
+      }
+    ]
+  },
+  "materialized": {
+    "path": "docs/reference/evidence/phase87-semantic-action-authority-dogfood-live-2026-07-18/glm-review.md",
+    "sha": "92c7eb1c7668075ea3d1516e5d5c089bcf608323"
+  },
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-4e3e3318734c6ba943673ef3bdc479b6",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

@@ -1,0 +1,220 @@
+{
+  "source": "7c32ff45edc3c0d23f4317745115f01617fa98ad",
+  "tree": "8348b5f7ef178464935f4b55d7ae395698104292",
+  "freeze": {
+    "path": ".scratch/native-recovery-and-git-preparation-7c32ff45/direct-omp/freeze.json",
+    "bytes": 3834,
+    "sha256": "f9b892a807f7ecbeef9c0ba8ac2365f208bc782637c6ae2957462cd904fe8e75"
+  },
+  "coordinator_sha256": "e9374848831ccdb233839215c84ab6d1f1ee84a39a8fd2a601d2758f55987da8",
+  "evidence": {
+    "path": ".scratch/native-direct-omp-recovery-run-7c32ff45/evidence.json",
+    "bytes": 228941,
+    "sha256": "ffbe39bec9e8de2fdabe07c7cd73ddee4120f00220d8238aa9849ec973af9811"
+  },
+  "observer_exit": 0,
+  "observer_started_unix": 1790953534.4146419,
+  "observer_ended_unix": 1790953543.6129012,
+  "observer_seconds": 9.198259353637695,
+  "requested_model": "deepseek/deepseek-flash",
+  "requested_effort": "low",
+  "usage": {
+    "observed_states": [
+      {
+        "native_id": "01a0fd26-370f-7000-8829-8d70d8295340",
+        "observed_model": "deepseek/deepseek-flash",
+        "observed_effort": "low"
+      },
+      {
+        "native_id": "01a0fd26-3e19-7000-9f02-42cd499ecf75",
+        "observed_model": "deepseek/deepseek-flash",
+        "observed_effort": "low"
+      }
+    ],
+    "per_native_id": [
+      {
+        "native_id": "01a0fd26-370f-7000-8829-8d70d8295340",
+        "completed_assistant_messages": 0,
+        "usage_present": 0,
+        "tokens": {
+          "input": {
+            "present": 0,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": null
+          },
+          "output": {
+            "present": 0,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": null
+          },
+          "cacheRead": {
+            "present": 0,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": null
+          },
+          "cacheWrite": {
+            "present": 0,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": null
+          },
+          "totalTokens": {
+            "present": 0,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": null
+          },
+          "reasoningTokens": {
+            "present": 0,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": null
+          }
+        },
+        "cost_total": {
+          "present": 0,
+          "sum_emitted_decimal": null
+        }
+      },
+      {
+        "native_id": "01a0fd26-3e19-7000-9f02-42cd499ecf75",
+        "completed_assistant_messages": 4,
+        "usage_present": 4,
+        "tokens": {
+          "input": {
+            "present": 4,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": 929
+          },
+          "output": {
+            "present": 4,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": 446
+          },
+          "cacheRead": {
+            "present": 4,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": 104960
+          },
+          "cacheWrite": {
+            "present": 4,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": 0
+          },
+          "totalTokens": {
+            "present": 4,
+            "missing_from_completed_assistants": 0,
+            "sum_emitted": 106335
+          },
+          "reasoningTokens": {
+            "present": 3,
+            "missing_from_completed_assistants": 1,
+            "sum_emitted": 126
+          }
+        },
+        "cost_total": {
+          "present": 4,
+          "sum_emitted_decimal": "0.001443660"
+        }
+      }
+    ],
+    "method": "Each emitted assistant message_end usage contributes once under the current get_state native identity. Cumulative snapshots, terminal message copies and session history are excluded.",
+    "incomplete_attempt_usage": "The killed initial attempt and refused resume can incur work without a completed assistant usage record. Absence of such a record leaves their usage unknown.",
+    "cost_boundary": "cost.total is the emitted estimate; actual billing and currency are not independently established."
+  },
+  "closure": {
+    "path": ".scratch/native-direct-omp-recovery-run-7c32ff45/operator-process-closure.json",
+    "bytes": 821,
+    "sha256": "4be94a49f12c705bea8ee9d365e8d220a5666e182fd23e79070fa446f4421ba6"
+  },
+  "fresh_recorded_pid_absence": {
+    "observed_unix": 1790953811.094972,
+    "recorded_pids": [
+      10595,
+      10606,
+      10636,
+      10638,
+      10640,
+      10648,
+      10649,
+      10653
+    ],
+    "ps_exit": 1,
+    "matching_rows": []
+  },
+  "status": "passed",
+  "launches": [
+    {
+      "pid": 10638,
+      "ppid": 10636,
+      "unix": 1790953534.782441,
+      "native_ended_unix": null,
+      "native_wait_status": null,
+      "requested_resume": null
+    },
+    {
+      "pid": 10649,
+      "ppid": 10648,
+      "unix": 1790953536.243619,
+      "native_ended_unix": null,
+      "native_wait_status": null,
+      "requested_resume": "01a0fd26-370f-7000-8829-8d70d8295340"
+    },
+    {
+      "pid": 10653,
+      "ppid": 10648,
+      "unix": 1790953536.658091,
+      "native_ended_unix": null,
+      "native_wait_status": null,
+      "requested_resume": null
+    }
+  ],
+  "native_identity": {
+    "before": "01a0fd26-370f-7000-8829-8d70d8295340",
+    "after": "01a0fd26-3e19-7000-9f02-42cd499ecf75"
+  },
+  "initial_coordinator_wait_statuses": {
+    "ompsession": -9
+  },
+  "resumed_coordinator_wait_status": 0,
+  "initial_killed_processes": [
+    {
+      "pid": 10640,
+      "ppid": 10638
+    },
+    {
+      "pid": 10638,
+      "ppid": 10636
+    },
+    {
+      "pid": 10636,
+      "ppid": 10606
+    }
+  ],
+  "captured_initial_processes_absent_before_resume": true,
+  "recovery_messages": [
+    {
+      "id": "ompsession-turn-1:recovery",
+      "sender": "ompsession",
+      "recipient": "root",
+      "kind": "report",
+      "body_bytes": 132,
+      "body_sha256": "5998b09921b98c491444e1550b0b7886f1cf1d42d8cd9dffd00b890035135a55"
+    }
+  ],
+  "turn_event": "agent_end",
+  "journal": {
+    "before_restart_bytes": 0,
+    "final_bytes": 77,
+    "final_line_count": 3,
+    "final_sha256": "c20767560c5af795d67da8eb21a5543f8d0a3dff02d550315550a393c783fe22",
+    "preserved_existing_prefix": true
+  },
+  "changed_files": [
+    "?? journal.txt"
+  ],
+  "limits": [
+    "Manual direct-turn recovery after captured initial coordinator/native process loss. OMP refused the saved conversation; the coordinator recorded recovery and started a fresh identity.",
+    "The journal before restart was empty. Final exact three-line task completion does not prove preservation of partly written journal content.",
+    "Initial coordinator SIGKILL and resumed coordinator exit0 are captured. Individual native wait statuses and native end times are unknown; captured PID absence does not supply them.",
+    "Completed assistant usage records cover the fresh successful conversation. Usage of the killed or refused attempt remains unknown when no record was emitted.",
+    "The extraction makes no retained-keeper, host-reboot, hierarchy, landing, installation, network publication, universal latency or billing claim."
+  ]
+}

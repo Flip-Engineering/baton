@@ -1,0 +1,88 @@
+{
+  "purpose": "One production status usability read; no comparable latency benchmark.",
+  "source_head": "47f5f82119fe56497d99a19bb2ce977e5c33b3f7",
+  "binary_sha256": "8aa2ac152783febdf6d3193b5caa432adc84f66a2f0131ef70dbd69e22e8c83a",
+  "command_argv": [
+    "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/bend2/baton2",
+    "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/comparison-20261001/run-f6237ys2/bend2.db",
+    "status"
+  ],
+  "command_shell": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/bend2/baton2 /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/comparison-20261001/run-f6237ys2/bend2.db status",
+  "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/comparison-20261001/run-f6237ys2",
+  "exit_code": 0,
+  "stdout_bytes": 4000,
+  "stdout_sha256": "4e515ca7c760f59f5f43c215e5131bee3a13aa0815b710feb124e562076dda1b",
+  "stderr_bytes": 0,
+  "database_before": {
+    "file_sha256": "f9af82aeaa96dce09dec6cb7fea1b4871c0b80aeaa04c6938778a533614b9408",
+    "file_bytes": 581632,
+    "schema_sha256": "a893bd50f2c22cab75db94d3230e618427af4017d207f1ae6fb210c5ca5865f9",
+    "table_counts": {
+      "executions": 0,
+      "messages": 114,
+      "session_stops": 0,
+      "sessions": 10,
+      "sqlite_sequence": 1,
+      "turns": 0
+    },
+    "logical_rows_sha256": "1f888e17be915f287fddf334532e2b4b5569b89805506e4e849dc91cfb7c7886"
+  },
+  "database_after": {
+    "file_sha256": "f9af82aeaa96dce09dec6cb7fea1b4871c0b80aeaa04c6938778a533614b9408",
+    "file_bytes": 581632,
+    "schema_sha256": "a893bd50f2c22cab75db94d3230e618427af4017d207f1ae6fb210c5ca5865f9",
+    "table_counts": {
+      "executions": 0,
+      "messages": 114,
+      "session_stops": 0,
+      "sessions": 10,
+      "sqlite_sequence": 1,
+      "turns": 0
+    },
+    "logical_rows_sha256": "1f888e17be915f287fddf334532e2b4b5569b89805506e4e849dc91cfb7c7886"
+  },
+  "fields": [
+    "id",
+    "parent",
+    "harness",
+    "model",
+    "effort",
+    "native",
+    "observedHarness",
+    "observedModel",
+    "observedEffort",
+    "endpoint",
+    "workspace",
+    "branch",
+    "base",
+    "pending"
+  ],
+  "session_count": 10,
+  "worker_count": 9,
+  "pending_by_session": {
+    "root": 86,
+    "worker-0": 3,
+    "worker-1": 3,
+    "worker-2": 3,
+    "worker-3": 3,
+    "worker-4": 4,
+    "worker-5": 3,
+    "worker-6": 3,
+    "worker-7": 3,
+    "worker-8": 3
+  },
+  "assertions": [
+    "every recorded session identity and parent preserved",
+    "requested and observed route fields match saved records",
+    "native/workspace/branch/base/endpoint match saved records",
+    "all pending counts equal unacknowledged messages",
+    "no latestReport body field",
+    "database bytes schema row counts and complete logical rows unchanged"
+  ],
+  "limits": [
+    "Stored presence does not prove a live process.",
+    "status includes roots and endpoints and omits latestReportId and lastTurn fields.",
+    "Timing was not recorded for this single read.",
+    "Full latest reports remain available through the existing workers view and delivery ID."
+  ]
+}

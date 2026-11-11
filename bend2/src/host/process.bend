@@ -1,0 +1,107 @@
+import Base
+
+# argv contains each argument followed by NUL, including the executable.
+# stderr is retained in a file so a child cannot block on an unread error pipe.
+def ProcessChild.spawn(argv: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./process-spawn.c"
+
+type RetainedStart is Data:
+  Retained{handle: U32}
+  Unstarted{error: String}
+
+
+# The prepared file input variant. The host creates the attempt directory, writes
+# and flushes one private artifact of exactly these bytes inside it before any
+# child is spawned, binds the artifact's name and the digest of its bytes into
+# the admission identity, and leaves the caller's argv to name
+# directory ++ "/" ++ artifact_name. `initial_stdin` is the only initial input.
+def ProcessChild.retain_with_file(directory: String, argv: String, cwd: String, stderr: String, artifact_name: String, artifact_bytes: String, initial_stdin: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,RetainedStart>):
+  import "./process-spawn.c"
+
+def ProcessChild.retain_start(directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
+  import "./process-spawn.c"
+
+
+def retained_start(result: Result<&1,&1,U32 & String,Maybe<U32> & String>) -> Result<&1,&1,U32 & String,RetainedStart>:
+  match result:
+    case Fail{error}: Fail{error}
+    case Done{(handle,error)}:
+      match handle:
+        case Some{value}: Done{Retained{value}}
+        case None{}: Done{Unstarted{error}}
+
+# A keeper retains native input, output and process ownership across observer loss.
+def ProcessChild.retain(directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String) -> IO(Result<&1,&1,U32 & String,RetainedStart>):
+  do IO<Result<&1,&1,U32 & String,RetainedStart>>:
+    result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- ProcessChild.retain_start(directory,argv,cwd,stderr,initial,keep_stdin,lock,recovery_argv)
+    IO.pure(Result<&1,&1,U32 & String,RetainedStart>,retained_start(result))
+
+def ProcessChild.attach(directory: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./process-spawn.c"
+
+# A newly acquired session guard remains held while a dead keeper's attempt is observed.
+def ProcessChild.attach_owned(directory: String, lock: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./process-spawn.c"
+
+# An unreleased launched attempt returns its original recovery invocation.
+def ProcessChild.recovery_argv(directory: String) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
+  import "./process-spawn.c"
+
+# Selected observer recovery also reads released custody awaiting acknowledgement.
+def ProcessChild.observer_recovery_argv(directory: String) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
+  import "./process-spawn.c"
+
+# These commands address the retained attempt without replacing its observer.
+# A write succeeds after all bytes enter stdin; native acceptance is separate.
+def ProcessChild.control_write(directory: String, data: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+# Success records the signal syscall. Actual exit remains a separate observation.
+def ProcessChild.control_signal(directory: String, sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+def ProcessChild.release(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+def ProcessChild.acknowledge(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+# Internal entry point; retain passes the lock descriptor through posix_spawn.
+def ProcessChild.keeper(directory: String, lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+def ProcessChild.write(handle: U32, data: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+def ProcessChild.close_stdin(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+def ProcessChild.read_line(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
+  import "./process-spawn.c"
+
+# Returns complete text lines, including their actual final LF when present.
+def ProcessChild.read_text_line(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
+  import "./process-spawn.c"
+
+# A retained read returns a native line or an owner notice. Notice-only reads
+# return None with notice text; a native empty line returns Some{""}.
+# The final field is 1 while the subscription remains usable.
+def ProcessChild.read_awake(read: U32, sub: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String> & (String & U32)>):
+  import "./process-spawn.c"
+
+def ProcessChild.wait(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
+def ProcessChild.signal(handle: U32, sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+def ProcessChild.input_closed(handle: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./process-spawn.c"
+
+def ProcessChild.pid(handle: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./process-spawn.c"
+
+def argv(args: List<String>) -> String:
+  match args:
+    case Nil{}: ""
+    case arg <> rest: arg ++ SCon{Char.from_u32(0),SNil{}} ++ argv(rest)

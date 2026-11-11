@@ -1,0 +1,61 @@
+{
+  "attempt": "2026-08-13T02:48:17.194Z",
+  "salt": "t220260813024817",
+  "role": "rethread-67",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-cb42c7890c97540f82f875f93b159ada"
+        ]
+      }
+    },
+    {
+      "step": "terminal:rethread-67",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "rethread-67": {
+      "pin": "b1059b63320742dfe7493a4fb9a8a233938c13cc",
+      "paths": [
+        "impl/test/board-workerhalf-red.test.mjs",
+        "impl/test/briefing-pack-red.test.mjs",
+        "impl/test/harvest-accessor-red.test.mjs",
+        "impl/test/nested-orchestration-red.test.mjs",
+        "impl/test/orchestrator-wake-red.test.mjs",
+        "impl/test/phase11-acceptance-integration.test.mjs",
+        "impl/test/phase11-concurrent-grok-reap.test.mjs",
+        "impl/test/phase11-coordination-store.test.mjs",
+        "impl/test/phase11-governance.test.mjs",
+        "impl/test/phase12-web-northbound.test.mjs",
+        "impl/test/phase26-structured-merge.test.mjs",
+        "impl/test/phase50-cairn-scratch-correction.test.mjs",
+        "impl/test/phase56-drain-and-close.test.mjs",
+        "impl/test/phase57-adversarial-governance.test.mjs",
+        "impl/test/phase57-provider-callback-integrity.test.mjs",
+        "impl/test/phase57-provider-governance.test.mjs",
+        "impl/test/phase57-provider-turn-release.test.mjs",
+        "impl/test/phase58-driver-sparse-projection.test.mjs",
+        "impl/test/phase75-task-topology.test.mjs",
+        "impl/test/phase91-semantic-interrupt-preservation-red.test.mjs",
+        "impl/test/reflex2-boards-red.test.mjs",
+        "impl/test/reply-chains-red.test.mjs",
+        "impl/test/tight-cell-red.test.mjs",
+        "impl/test/workflow-surface-red.test.mjs",
+        "docs/reference/evidence/stall-watchdog-2026-08-07/rethread-67-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 436,
+  "verdict": "RETHREAD-67-OK"
+}

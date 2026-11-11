@@ -1,0 +1,36 @@
+{
+  "attempt": "2026-08-06T22:35:29.818Z",
+  "salt": "f320260806223529",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-5ba8b6169ba1122332001a23cf14e195"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-103",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-103": {
+      "pin": "5fae1901ad6e08559255ba28d7fccd8988512e74",
+      "paths": [
+        "docs/reference/evidence/briefing-pack-2026-08-06/briefing-pack-contract.md",
+        "docs/reference/evidence/briefing-pack-2026-08-06/contract-fold.md"
+      ]
+    }
+  },
+  "verdict": "FOLD-103-OK"
+}

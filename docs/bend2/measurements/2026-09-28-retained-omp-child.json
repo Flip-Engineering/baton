@@ -1,0 +1,532 @@
+{
+  "schema": 1,
+  "run": "retained OMP child workflow",
+  "local_date": "2026-09-28",
+  "status": "passed with separate source review correction",
+  "source": {
+    "task_base": "a3cfa0039a86e39e781450d30f7dbcb2564a97a0",
+    "task_tree": "dcd2d9f04f93698feef8558f0a65d3e7c9854b62",
+    "runtime": "08ee671b62528888a2facd0d3a8ce2af34e5ef98",
+    "runtime_tree": "c06e2bb1d2be32c04c7e89d185c7a10f6723bfa2",
+    "runtime_files_equal": true,
+    "workflow_commit": "ed3889499778b9fc749fcc8d1d7e26c704475c05",
+    "runtime_manifest_sha256": "bc8a2a738cdf022c01d3815478a7e5c8055f36c71bc24da54e4b9a370cdb5181"
+  },
+  "coordinator": {
+    "sha256_before": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+    "sha256_after_original_run": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+    "sha256_after_review": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+    "bytes": 2413864,
+    "compiler": {
+      "path": "/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend",
+      "sha256": "3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c",
+      "version": {
+        "exit_code": 0,
+        "stdout": "bend 2.0.25",
+        "stderr": ""
+      }
+    },
+    "prior_gate_validation": {
+      "laws": {
+        "laws": 223,
+        "mutations": 2,
+        "compiles": 226,
+        "failures": 0
+      },
+      "native": {
+        "python_tests": 128,
+        "python_suites": [
+          {
+            "file": "bend2/test/check-unittest.py",
+            "tests": 13,
+            "seconds": 2.546
+          },
+          {
+            "file": "bend2/test/codex-root.py",
+            "tests": 10,
+            "seconds": 8.99
+          },
+          {
+            "file": "bend2/test/coordinator.py",
+            "tests": 19,
+            "seconds": 7.583
+          },
+          {
+            "file": "bend2/test/end-to-end.py",
+            "tests": 1,
+            "seconds": 0.672
+          },
+          {
+            "file": "bend2/test/land.py",
+            "tests": 19,
+            "seconds": 22.327
+          },
+          {
+            "file": "bend2/test/mcp-root.py",
+            "tests": 9,
+            "seconds": 5.208
+          },
+          {
+            "file": "bend2/test/omp-root.py",
+            "tests": 11,
+            "seconds": 9.488
+          },
+          {
+            "file": "bend2/test/process.py",
+            "tests": 6,
+            "seconds": 0.531
+          },
+          {
+            "file": "bend2/test/receive.py",
+            "tests": 22,
+            "seconds": 30.721
+          },
+          {
+            "file": "bend2/test/recruit.py",
+            "tests": 4,
+            "seconds": 1.591
+          },
+          {
+            "file": "bend2/test/turn.py",
+            "tests": 14,
+            "seconds": 12.798
+          }
+        ],
+        "bend_results": [
+          "git-lane checks: all green",
+          "land checks: all green"
+        ]
+      }
+    }
+  },
+  "route": {
+    "harness": "omp",
+    "model": "deepseek/deepseek-flash",
+    "observed_provider": "deepseek",
+    "observed_model": "deepseek-flash",
+    "executable": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+    "executable_sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba",
+    "configuration": "Existing OMP configuration; no credential reads or configuration changes.",
+    "requested_effort": "low"
+  },
+  "workflow": {
+    "recruitment": {
+      "id": "worker",
+      "parent": "root",
+      "harness": "omp",
+      "model": "deepseek/deepseek-flash",
+      "effort": "low",
+      "native": "",
+      "observedHarness": "",
+      "observedModel": "",
+      "observedEffort": "",
+      "endpoint": "",
+      "workspace": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/worker",
+      "branch": "accept-retained-worker",
+      "base": "a3cfa0039a86e39e781450d30f7dbcb2564a97a0"
+    },
+    "session": {
+      "id": "worker",
+      "parent": "root",
+      "harness": "omp",
+      "model": "deepseek/deepseek-flash",
+      "effort": "low",
+      "native": "",
+      "observedHarness": "",
+      "observedModel": "",
+      "observedEffort": "",
+      "endpoint": "",
+      "workspace": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/worker",
+      "branch": "accept-retained-worker",
+      "base": "a3cfa0039a86e39e781450d30f7dbcb2564a97a0"
+    },
+    "endpoint_argv": [
+      "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/baton2",
+      "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db",
+      "receive",
+      "worker",
+      "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/recorded-omp",
+      "",
+      "",
+      "",
+      "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/native.jsonl"
+    ],
+    "initial_message_argv": [
+      "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/baton2",
+      "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db",
+      "message-file",
+      "recovery-initial",
+      "root",
+      "worker",
+      "task",
+      "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/initial.md"
+    ],
+    "task": "Work only in your recruited worktree: /Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/worker.\nIt starts at a3cfa0039a86e39e781450d30f7dbcb2564a97a0. This is a real retained OMP child workflow acceptance.\nRead AGENTS.md. Change only docs/bend2/target-architecture.md. Do not alter runtime source, run full\nsuites, build, recruit agents, install tools, change authentication or global\nconfiguration, or push. Use the existing Git identity. Do not send a report\ncommand: receive forwards your final assistant text. Acknowledge only the task\nassigned in this turn, using the coordinator CLI provided in the receive prompt.\nEnd the turn after your task and report. Preserve the existing document content\noutside the factual corrections warranted by the assigned source review.\nFinding filed before this run: https://github.com/Flip-Engineering/baton/issues/539#issuecomment-5881193208\nMissing session stop/cancel is tracked as #639. No runtime change is assigned.\n\nYour first tool command must be exactly:\n/opt/homebrew/opt/python@3.14/bin/python3.14 /Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/control.py checkpoint\nThis local tool completes the driver's observer-loss injection and returns.\nAfter it returns, source-check docs/bend2/target-architecture.md against the actual\ncoordinator command/parser/dispatch, harness arguments and canonical architecture.\nCorrect its current claims that the parent can explicitly stop the worker and that\nadapters observe/answer native questions or approval requests. Describe supported\nexplicit ask/ask-file routing, OMP guidance and current native interaction/stop\nboundaries precisely. The public CLI has no stop/cancel command; killing a receive\nobserver preserves the retained native work and is not an operator stop procedure.\nDo not add capabilities or design a new stop/approval implementation. Inspect the\nsource yourself and cite relevant source paths where useful for contributors.\nRun git diff --check and source-check the changed factual claims. Commit this\none document with a clear commit message, acknowledge recovery-initial, then return a\nfinal response beginning RECOVERY_INITIAL_DONE with the full commit hash, sources\nchecked, validation and limits. Leave later input for its next native turn.\n",
+    "queued_correction": "Work only in your recruited worktree: /Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/worker.\nIt starts at a3cfa0039a86e39e781450d30f7dbcb2564a97a0. This is a real retained OMP child workflow acceptance.\nRead AGENTS.md. Change only docs/bend2/target-architecture.md. Do not alter runtime source, run full\nsuites, build, recruit agents, install tools, change authentication or global\nconfiguration, or push. Use the existing Git identity. Do not send a report\ncommand: receive forwards your final assistant text. Acknowledge only the task\nassigned in this turn, using the coordinator CLI provided in the receive prompt.\nEnd the turn after your task and report. Preserve the existing document content\noutside the factual corrections warranted by the assigned source review.\nFinding filed before this run: https://github.com/Flip-Engineering/baton/issues/539#issuecomment-5881193208\nMissing session stop/cancel is tracked as #639. No runtime change is assigned.\n\nContinue the same conversation in the same worktree after your initial commit.\nReview the existing acceptance paragraph in docs/bend2/target-architecture.md. It currently says a\nreceipt records native acceptance alone but also suggests a receipt body can\nestablish review or landing. Source-check ack, report and land-checked behavior.\nClarify exactly that an acceptance receipt establishes message acceptance, while\nparent review is a separate action and actual Git/check results establish landing.\nChange only the existing wording warranted by that distinction; avoid another\ninstruction document or generic filler. Do not redo the initial stop/approval task.\nAlso source-check the claim that only turn and receive are long operations.\nRoot.after and Process.run synchronously wait for configured recipient endpoints\nfor message-file, message, report and ask. Clarify that wait in the existing\ncommand section and reference the documented background dispatch pattern, so a\ncaller does not mistake normal endpoint work for failure or retry unnecessarily.\nRun git diff --check and source-check the changed claims. Commit the correction,\nacknowledge recovery-followup, then return a final response beginning\nRECOVERY_FOLLOWUP_DONE with the initial and correction full commit hashes,\nvalidation and limits. Do not repeat the checkpoint tool.\n",
+    "findings": [
+      "https://github.com/Flip-Engineering/baton/issues/539#issuecomment-5881193208",
+      "https://github.com/Flip-Engineering/baton/issues/539#issuecomment-5881233363"
+    ],
+    "stop_issue": 639
+  },
+  "ownership": {
+    "original_message_writer_pid": 93545,
+    "original_observer_pid": 93588,
+    "original_observer_started": "Mon Sep 28 17:24:11 2026",
+    "original_keeper_pid": 93627,
+    "original_native_pid": 93673,
+    "original_native_started": "Mon Sep 28 17:24:12 2026",
+    "observer_wait_status": 9,
+    "observer_exit": -9,
+    "retry_answer": {
+      "session": "worker",
+      "status": "queued"
+    },
+    "native_launches_before_retry": 1,
+    "native_session": "01a0ea8c-3acc-7000-ac0f-61881e909a94",
+    "session_ids_observed": [
+      "01a0ea8c-3acc-7000-ac0f-61881e909a94",
+      "01a0ea8c-3acc-7000-ac0f-61881e909a94",
+      "01a0ea8c-3acc-7000-ac0f-61881e909a94",
+      "01a0ea8c-3acc-7000-ac0f-61881e909a94"
+    ],
+    "launches": [
+      {
+        "kind": "launch",
+        "pid": 93673,
+        "ppid": 93627,
+        "unix": 1790641452.191811,
+        "argv": [
+          "--mode",
+          "rpc",
+          "--model",
+          "deepseek/deepseek-flash",
+          "--thinking",
+          "low",
+          "--approval-mode",
+          "yolo",
+          "--session-dir",
+          "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db.session-776f726b6572"
+        ],
+        "resume": "",
+        "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/worker"
+      },
+      {
+        "kind": "launch",
+        "pid": 5802,
+        "ppid": 5791,
+        "unix": 1790641525.6409569,
+        "argv": [
+          "--mode",
+          "rpc",
+          "--model",
+          "deepseek/deepseek-flash",
+          "--thinking",
+          "low",
+          "--approval-mode",
+          "yolo",
+          "--session-dir",
+          "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db.session-776f726b6572",
+          "--resume",
+          "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db.session-776f726b6572/2026-09-29T00-24-13-772Z_01a0ea8c-3acc-7000-ac0f-61881e909a94.jsonl"
+        ],
+        "resume": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db.session-776f726b6572/2026-09-29T00-24-13-772Z_01a0ea8c-3acc-7000-ac0f-61881e909a94.jsonl",
+        "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/worker"
+      },
+      {
+        "kind": "launch",
+        "pid": 79421,
+        "ppid": 79392,
+        "unix": 1790641589.919351,
+        "argv": [
+          "--mode",
+          "rpc",
+          "--model",
+          "deepseek/deepseek-flash",
+          "--thinking",
+          "low",
+          "--approval-mode",
+          "yolo",
+          "--session-dir",
+          "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db.session-776f726b6572",
+          "--resume",
+          "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db.session-776f726b6572/2026-09-29T00-24-13-772Z_01a0ea8c-3acc-7000-ac0f-61881e909a94.jsonl"
+        ],
+        "resume": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db.session-776f726b6572/2026-09-29T00-24-13-772Z_01a0ea8c-3acc-7000-ac0f-61881e909a94.jsonl",
+        "cwd": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/worker"
+      }
+    ],
+    "first_native_absent_before_second_launch": true,
+    "second_native_absent_before_third_launch": true,
+    "original_checkpoint_count": 1,
+    "remaining_owned_processes_at_original_completion": [],
+    "remaining_owned_processes_after_review": [],
+    "initial_task_occurrences_in_persisted_conversation": 1
+  },
+  "timing": {
+    "original_workflow": {
+      "started_unix": 1790641448.071723,
+      "ended_unix": 1790641584.136755,
+      "elapsed_seconds": 136.06503295898438,
+      "evidence_sha256": "45c85a08cf84d9798e4801a55e6722f2a5543ab38c15da69fddd5d7ce757a857",
+      "native_log_prefix_sha256": "251dbe340cf48de1a525114b3b1461342d06c50ed0694c09592a1f551cfe163b"
+    },
+    "source_review": {
+      "guidance_started_unix": 1790641589.7601972,
+      "guidance_ended_unix": 1790641638.341953,
+      "elapsed_seconds": 48.58175587654114,
+      "third_native_started_unix": 1790641589.919351,
+      "third_report_unix": 1790641638.287617,
+      "guidance_receipt": "{\"id\":\"source-review-guidance\",\"type\":\"response\",\"command\":\"steer\",\"success\":true}",
+      "timing": "Sent after original two-task acceptance completed; started a third receive invocation."
+    },
+    "boundary": "Original elapsed time starts after private clone and executable copy and includes recruitment, native work, local report acceptance and process exits. It excludes build and final source review."
+  },
+  "messages": [
+    {
+      "id": "recovery-initial",
+      "seq": 1,
+      "sender": "root",
+      "recipient": "worker",
+      "kind": "task",
+      "body_sha256": "ddf38f7d50bc4ca55881b33682b95582c3f6a6278b7e2a8c2cde7eea6c58b84e",
+      "body_characters": 2418,
+      "receipt": "accepted: docs/bend2/target-architecture.md corrected and committed baa94e47252f1c6e125eeda0f14286144e376ccb"
+    },
+    {
+      "id": "recovery-followup",
+      "seq": 2,
+      "sender": "root",
+      "recipient": "worker",
+      "kind": "task",
+      "body_sha256": "90806453ffebd363ded4e05405824eccc2407e463d7ac8be6015aafe8d1cd7aa",
+      "body_characters": 2383,
+      "receipt": "accepted: receipt/long-operation correction committed 1e6259a603cb707ac9c04e7cd3de309acf105eb0"
+    },
+    {
+      "id": "receive:worker:1:18035144d8b8c51d3175f160ee52fc9b",
+      "seq": 3,
+      "sender": "worker",
+      "recipient": "root",
+      "kind": "report",
+      "body_sha256": "e23085286e31289a2a3c618413527b293879f587f9fce1f85a8f2fb71f52ca5e",
+      "body_characters": 4345,
+      "receipt": "parent received complete report receive:worker:1:18035144d8b8c51d3175f160ee52fc9b"
+    },
+    {
+      "id": "receive:worker:2:15c8dcd34f3dc22c9f04d11b5d93a0d2",
+      "seq": 4,
+      "sender": "worker",
+      "recipient": "root",
+      "kind": "report",
+      "body_sha256": "c9c5f19dfd3cff9b78580247c63cc70c3022731f3fd16bab1912501cfe3ab8e7",
+      "body_characters": 4896,
+      "receipt": "parent received complete report receive:worker:2:15c8dcd34f3dc22c9f04d11b5d93a0d2"
+    },
+    {
+      "id": "source-review-guidance",
+      "seq": 5,
+      "sender": "root",
+      "recipient": "worker",
+      "kind": "guidance",
+      "body_sha256": "db3cd85e67d3a0b48e70647536b2794c48f09b2c3d5382397312db6d525040cd",
+      "body_characters": 1014,
+      "receipt": "{\"id\":\"source-review-guidance\",\"type\":\"response\",\"command\":\"steer\",\"success\":true}"
+    },
+    {
+      "id": "receive:worker:5:792fc2efbd7691c90cc5c9c042047236",
+      "seq": 6,
+      "sender": "worker",
+      "recipient": "root",
+      "kind": "report",
+      "body_sha256": "157b30f40a7fedee6536063e6084d2127a411f9d3cf5387dc31e7da98caeacb6",
+      "body_characters": 5296,
+      "receipt": "parent received complete report receive:worker:5:792fc2efbd7691c90cc5c9c042047236"
+    }
+  ],
+  "parent_reports": [
+    {
+      "id": "receive:worker:1:18035144d8b8c51d3175f160ee52fc9b",
+      "accepted_unix": 1790641525.620401,
+      "receipt": "parent received complete report receive:worker:1:18035144d8b8c51d3175f160ee52fc9b",
+      "full_terminal_text_matches": true
+    },
+    {
+      "id": "receive:worker:2:15c8dcd34f3dc22c9f04d11b5d93a0d2",
+      "accepted_unix": 1790641583.808514,
+      "receipt": "parent received complete report receive:worker:2:15c8dcd34f3dc22c9f04d11b5d93a0d2",
+      "full_terminal_text_matches": true
+    },
+    {
+      "id": "receive:worker:5:792fc2efbd7691c90cc5c9c042047236",
+      "accepted_unix": 1790641638.287617,
+      "receipt": "parent received complete report receive:worker:5:792fc2efbd7691c90cc5c9c042047236",
+      "full_terminal_text_matches": true
+    }
+  ],
+  "usage": {
+    "source": "Native persistent OMP conversation: each unique assistant message ID counted once. Observer replay can repeat streamed frames.",
+    "assistant_messages": 47,
+    "totals": {
+      "input": 77565,
+      "output": 28393,
+      "cacheRead": 4105088,
+      "cacheWrite": 0,
+      "totalTokens": 4211046,
+      "reasoningTokens": 15763,
+      "cost": {
+        "input": 0.0232695,
+        "output": 0.0340716,
+        "cacheRead": 0.024630528,
+        "cacheWrite": 0,
+        "total": 0.081971628
+      }
+    },
+    "semantics": "OMP-reported usage and cost only. reasoningTokens is retained separately; totals use native totalTokens without adding it again."
+  },
+  "result": {
+    "native_commits": [
+      "baa94e47252f1c6e125eeda0f14286144e376ccb",
+      "1e6259a603cb707ac9c04e7cd3de309acf105eb0",
+      "1b99b4b286acbfd6f5a9dd92abf59e3eb66de288"
+    ],
+    "reviewer_commit": "27dab67b321dfdb45e3e451fd11071cb7a20486a",
+    "final_tree": "aae80d72b6b6a771472dccfbd4c7cdab8a88f597",
+    "changed_paths": [
+      "docs/bend2/target-architecture.md"
+    ],
+    "worktree_clean": true,
+    "worker_inbox_empty": true,
+    "parent_inbox_empty": true,
+    "report_text_matches": [
+      true,
+      true,
+      true
+    ],
+    "reviewer_cleanup": "Corrected incomplete inbox sentence, queued continuation wording, conditional background dispatch, harness source pointer and landing-result evidence. Candidate-pass versus unjudged-target policy unchanged.",
+    "checks": [
+      "Full report bodies match all three native terminal texts.",
+      "Every task, guidance and parent report has a receipt.",
+      "Root and worker inboxes are empty.",
+      "All launches use the recruited worker path and resume one native conversation.",
+      "No owned processes remain.",
+      "Only target-architecture.md changed; final worker worktree clean; git diff --check passes."
+    ],
+    "root_composition_and_gates": "Root owns separate composition and final gates. This run performs no landing or push."
+  },
+  "limitations": [
+    "One real OMP worker with a deterministic local parent acceptance endpoint.",
+    "No native root/lead review or checked landing is exercised.",
+    "Only the receive observer is killed; the keeper and original native child survive.",
+    "No keeper loss, host restart, direct-turn recovery, Muse receive or native approval/question reply mapping is exercised.",
+    "Review guidance starts a third turn after the two-task acceptance has completed; this does not prove steering during its second turn.",
+    "OMP usage and cost are native-reported counters, not a throughput comparison or billing statement."
+  ],
+  "raw_artifacts": {
+    "driver": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/accept-retained-omp-child.py",
+      "sha256": "94766c3b50ec63dff1a9d08b63d8cb238e31deb69bf0754a0f939448ac703ae5",
+      "bytes": 30206
+    },
+    "original_driver_log": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1-driver.log",
+      "sha256": "68616e8a76ea2f2c4b1cc7f3363f3affbafb62904f04cd49e85c280f2f077c14",
+      "bytes": 405
+    },
+    "original_evidence": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/evidence.json",
+      "sha256": "45c85a08cf84d9798e4801a55e6722f2a5543ab38c15da69fddd5d7ce757a857",
+      "bytes": 1697752
+    },
+    "final_review_evidence": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/post-review-evidence.json",
+      "sha256": "8c69113b3d2002992fdbe204bdd46c9923d63e7335eef64e9b1e57520ec10622",
+      "bytes": 1006250
+    },
+    "first_two_turns_native_log": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/native-through-workflow-completion.jsonl",
+      "sha256": "251dbe340cf48de1a525114b3b1461342d06c50ed0694c09592a1f551cfe163b",
+      "bytes": 3933652
+    },
+    "final_native_log": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/native.jsonl",
+      "sha256": "abae6e06d7719b21413022da6dc3f620e3779808c97d60f42877459c0318a2e0",
+      "bytes": 4804586
+    },
+    "native_conversation": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db.session-776f726b6572/2026-09-29T00-24-13-772Z_01a0ea8c-3acc-7000-ac0f-61881e909a94.jsonl",
+      "sha256": "9441374f76c060de4bbfdbd430caae377b56b218058eb3f37787b259f0ecd224",
+      "bytes": 958274
+    },
+    "launches": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/launches.jsonl",
+      "sha256": "36af1614ab66ebf9de15b87009474e51b521b3d905ecd8965ad6d2f58e0e2b85",
+      "bytes": 2536
+    },
+    "parent_receipts": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/parent-receipts.jsonl",
+      "sha256": "6814d75c95e6d8389931603edb01ce897a727abf873fa777708b555f0125dc1a",
+      "bytes": 15858
+    },
+    "initial_task": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/initial.md",
+      "sha256": "ddf38f7d50bc4ca55881b33682b95582c3f6a6278b7e2a8c2cde7eea6c58b84e",
+      "bytes": 2418
+    },
+    "queued_correction_task": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/followup.md",
+      "sha256": "90806453ffebd363ded4e05405824eccc2407e463d7ac8be6015aafe8d1cd7aa",
+      "bytes": 2383
+    },
+    "review_guidance": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/source-review-guidance.json",
+      "sha256": "6f5cae2ce0617ab6f00592966f9eb67dd9e57e7382cf50ee75300521469d7067",
+      "bytes": 2701
+    },
+    "process_timeline": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/timeline.json",
+      "sha256": "e97582294f98496957b9984848c6046508ab3140a9593ed8a6602b5ae6240f0e",
+      "bytes": 41579
+    },
+    "control_helper": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/control.py",
+      "sha256": "21975d128c74f2834b57ec15ac799973e15ca75b56016b6172956bac08038a32",
+      "bytes": 2022
+    },
+    "source_manifest": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/runtime-source-manifest.json",
+      "sha256": "bc8a2a738cdf022c01d3815478a7e5c8055f36c71bc24da54e4b9a370cdb5181",
+      "bytes": 5403
+    },
+    "database": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/state.db",
+      "sha256": "99a50fd440ecc8f600b0317ca71dfbde9dc9918becadc86062a250080b2cbe6f",
+      "bytes": 978944
+    },
+    "provider_free_preflight": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/preflight-2/evidence.json",
+      "sha256": "fff6dafec696d7d49735c4b2823162e92d8cc78665b69b13b48510ad6d45fd1a",
+      "bytes": 56184
+    },
+    "final_collector": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/collect-final.py",
+      "sha256": "7bd46e611001978f3f0d0892ebf2a8920950c4df3321938e8f9bbe4797e9576a",
+      "bytes": 5920
+    },
+    "prior_native_gate": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-20260928/.scratch/root-handoff-20260928/20260928T230149.267520Z/summary.json",
+      "sha256": "b26601d7e4c0918f703f089fba0fa148c68cb432c53734870daec4a8ed009b3d",
+      "bytes": 23094
+    },
+    "build_log": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/build.log",
+      "sha256": "b4c3ff1bf07b24889022a4ea62f164496cbf7059c7fedbbabee7055f72156182",
+      "bytes": 160
+    },
+    "tool_checkpoints": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-retained-child-workflow-20260928/.scratch/retained-child-acceptance/real-omp-1/tool-checkpoints.jsonl",
+      "sha256": "1a2e73e59c564800ce811cb8efd2f0423137a8c18fbf325812a0b1234942d1a3",
+      "bytes": 79
+    }
+  }
+}

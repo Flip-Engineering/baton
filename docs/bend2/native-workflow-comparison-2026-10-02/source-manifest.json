@@ -1,0 +1,164 @@
+{
+  "created_utc": "2026-10-02T07:48:51.100777+00:00",
+  "scope": "Read-only architecture outline; no runtime invocation, model call or performance result",
+  "outline_sha256": "bf35b56e84c19ca0307fc4255ca7a97b1a65c46d046e5c9c5216784bac1a53d8",
+  "source": {
+    "original": {
+      "repository": "/private/tmp/baton-native-workflow-preparation-20261002/old-source",
+      "commit": "6ccb2a6daf396fb9ce050cc91476ac49791b64c9",
+      "tree": "e23bccbbc7eebcdf0349450d881daad4c6ada471",
+      "files": [
+        {
+          "path": "impl/src/application.mjs",
+          "sha256": "cd4a8866b7dd3b5fdd3f092261094d98b70dfad9b66015e78ee7dfb8358de1bb",
+          "bytes": 289192
+        },
+        {
+          "path": "impl/src/application-deployment.mjs",
+          "sha256": "b648aedb0886aa8a27ccddd13b3066a740e5f6661545b6740a4d2ad9beb9e435",
+          "bytes": 294166
+        },
+        {
+          "path": "impl/src/swarm-native-bridge.mjs",
+          "sha256": "0dadd4418c8c4769d179736e017ed2ab2e407844d6e1261f131c1a06de2592a9",
+          "bytes": 45900
+        },
+        {
+          "path": "impl/src/swarm-runtime.mjs",
+          "sha256": "fcec92d218b3f9043e68236158a93b1f3af2baf9724ee413721a1d7f6796a218",
+          "bytes": 564272
+        },
+        {
+          "path": "impl/src/omp-rpc.mjs",
+          "sha256": "22d16fcd951dff3cfc6817c100adaa33f68ec8de51de5d80edeb98a99166823b",
+          "bytes": 76815
+        },
+        {
+          "path": "impl/src/web-northbound.mjs",
+          "sha256": "cbdb464aef3ee1030205192b90e73359de67bad939c1fa1ffbd1302e50e8f49f",
+          "bytes": 153980
+        },
+        {
+          "path": "impl/src/worktree.mjs",
+          "sha256": "c020691154764747405946ff6a42ea272847a92848d9bc992e1318b8021f9b4e",
+          "bytes": 239516
+        },
+        {
+          "path": "impl/src/coordination-ledger.mjs",
+          "sha256": "82fe4070cef50a566a8fd9f6e099fa8905cfbffa0dfebaf2651c22f2ccd13496",
+          "bytes": 388128
+        },
+        {
+          "path": "impl/src/cairn-run-scorecard.mjs",
+          "sha256": "17999b6433b588cc392b3a58bc226dde43f1896587c9afd26bb158f56e8f8b5d",
+          "bytes": 48167
+        }
+      ]
+    },
+    "bend2": {
+      "repository": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928",
+      "commit": "ec0e144d921ac98d9b4698923ef50f6df27db5de",
+      "tree": "bb789f7b5e9a8568ea7b543b9f49458174ccddfd",
+      "files": [
+        {
+          "path": "bend2/src/coordinator/main.bend",
+          "sha256": "4cd5f65f05a0e87307f0d476756231804cba11adb833f89e190fc38e54c50252",
+          "bytes": 8400
+        },
+        {
+          "path": "bend2/src/coordinator/laws.bend",
+          "sha256": "290b7e7b965429ab1163ef8ce84c9a5c2dc8a475e70cdf067c71fdbc8f357090",
+          "bytes": 47303
+        },
+        {
+          "path": "bend2/src/coordinator/commands.bend",
+          "sha256": "02cd566343fe2d1f688e28cf1617eea2e2a1c6bee1de397a169c14c44545ea4e",
+          "bytes": 28050
+        },
+        {
+          "path": "bend2/src/coordinator/receive.bend",
+          "sha256": "b9b3da9bcb4fe204bc5e5e5153d9991611fc79ac39027380fc4674657726721a",
+          "bytes": 20752
+        },
+        {
+          "path": "bend2/src/coordinator/turn.bend",
+          "sha256": "e16ebb3feb22ce53638a06c2f91ae33cf5b0cd730a0ff8333bf1b345225f929b",
+          "bytes": 31236
+        },
+        {
+          "path": "bend2/src/coordinator/root.bend",
+          "sha256": "e4791b20583d0142f06bb242073f911dec7b6d36edeb598de27062aa6c455cf3",
+          "bytes": 7206
+        },
+        {
+          "path": "bend2/src/coordinator/store.bend",
+          "sha256": "59f4199848dd590bcc9503e74fed185996719261af3638c823f5e61c9bad94af",
+          "bytes": 1629
+        },
+        {
+          "path": "bend2/src/coordinator/recruit.bend",
+          "sha256": "a134caf95839e01d74e2ab77698071151147c393b4c3729e701e97e3a2cb04e8",
+          "bytes": 4356
+        },
+        {
+          "path": "bend2/src/coordinator/land.bend",
+          "sha256": "09141027f7f56e5e4c00d4207a46732f8eb58eff953ef295863e4f153a7c637e",
+          "bytes": 4333
+        },
+        {
+          "path": "bend2/src/coordinator/knowledge.bend",
+          "sha256": "eb8d122b71d80024cb40fefcbaf29cebad0b6f603595f0f9bb14d0f064b81b26",
+          "bytes": 15514
+        },
+        {
+          "path": "bend2/src/git/land.bend",
+          "sha256": "770f9aecd321382b7d0f7a5bc3a5b2e1b8c4ec952e826441a1946ce4a008df30",
+          "bytes": 39638
+        },
+        {
+          "path": "bend2/src/host/session-lock.bend",
+          "sha256": "aac010773938d59c93fc3dfbd8d92650ab22e63e412e114fc58963eb1a6b525e",
+          "bytes": 887
+        },
+        {
+          "path": "bend2/src/host/session-lock.c",
+          "sha256": "9b8920b4a177fd4a4b4fce06265a5026a569cfaaa8f02ab408e12ef84a36076c",
+          "bytes": 4491
+        },
+        {
+          "path": "bend2/src/host/process-spawn.c",
+          "sha256": "30c8cbc4ef9b5907de02b1c763e6e14537b6f16b37995b9183b530bc2e5c695a",
+          "bytes": 50487
+        }
+      ]
+    }
+  },
+  "deployment_binding": {
+    "path": "/private/tmp/baton-native-workflow-preparation-20261002/current-workflow/deployment/binding.json",
+    "sha256": "6362320f7a33d8957ca78ee416a44a5953834052a7be14ca46fc1388c5755e26",
+    "value": {
+      "source": "ec0e144d921ac98d9b4698923ef50f6df27db5de",
+      "source_repository": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928",
+      "source_tree": "bb789f7b5e9a8568ea7b543b9f49458174ccddfd",
+      "published_remote": "https://github.com/Flip-Engineering/baton.git",
+      "advertisement": "ec0e144d921ac98d9b4698923ef50f6df27db5de\trefs/heads/bend2-rewrite",
+      "runtime_archive_sha256": "94bf406c86aadf3a93bfa18e3cdbaa391769a15602da3b1d3f27f3d1ab37f745",
+      "binary_sha256": "19f503a1bfc08f94a0f00492da1987347eae16aea99322710903dd17329b629a",
+      "gate_summary_source_path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/root-handoff-20260928/20261002T061515.823899Z/summary.json",
+      "gate_summary_sha256": "100621a6caf08e31439f660188c63dbca4545ad5124b472d8b2f687d8a8d07b2",
+      "source_paths": [
+        "bend2/src",
+        "bend2/scripts"
+      ],
+      "model_dispatch": false,
+      "compiler_execution": false,
+      "task_base": "2264ebc2055a5fd756f3b505d7bd7be6b5e65e3e",
+      "shared_clones_or_alternates_created": false
+    }
+  },
+  "references": [
+    "/private/tmp/baton-native-workflow-preparation-20261002/evidence/current-workflow-static-ec0e144d-final-20261002.json",
+    "/private/tmp/baton-native-workflow-preparation-20261002/evidence/original-workflow-muse-amendment-20261002.json",
+    "/private/tmp/baton-native-workflow-preparation-20261002/controls/evidence/control-repair-20261002T071119Z/receipt.json"
+  ]
+}

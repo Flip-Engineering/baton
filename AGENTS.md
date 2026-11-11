@@ -1,0 +1,138 @@
+# Rules for this project
+
+These rules apply to every agent and harness working on baton, not only Claude. The first section
+applies to code and design. The rest apply to prose.
+
+## Validation execution
+
+The operator's laptop hosts orchestration, source edits and evidence review.
+Compilation, compiler checks, build and test gates, and CI/CD execute on remote
+validation runners. Homelab runners provide Linux capacity; platform-specific
+acceptance uses a remote runner for that platform. Preserve exact source and
+toolchain identity, full output and completed process evidence for each run.
+
+A background validation process remains owned until its recorded completion.
+Continue through the existing execution handle when a tool returns a running
+job. Repeated requests for that active execution must retain its ownership and
+result. The observed duplicate fixture build and crash evidence are recorded
+in `docs/bend2/host-crash-2026-10-05.md`.
+
+# Banned runtime patterns
+
+## Database task storage
+
+Tasks are dispatches to Baton agents. Store complete task text, dispatch requests
+and setup outcomes in the database. Generated Markdown and task-source files are
+banned. The deliberate scratchpad tool supplies agent knowledge through its own
+operation. Native transcripts retain their existing runtime evidence role.
+Issue #716 owns the dispatch interface and database acceptance.
+
+## Implicit action and handling state
+
+Baton generates action identities and resolves the current session, assignment,
+coordinator, completion request and recipient-owned handling state from recorded
+context. Agents supply semantic actions and targets. Internal IDs and receipts
+must not require agent bookkeeping when Baton can derive them. Explicit IDs
+remain optional compatibility or intentional selection inputs. Issue #723 owns
+the command, MCP and native instruction acceptance.
+
+## Mechanisms need an observed failure
+
+Checks, gates, guards, recovery layers and accounting must serve a named real
+failed run. A hypothetical race, a constructed probe or property accounting
+does not justify adding a mechanism. Remove unused APIs, duplicate state and
+procedural requirements that obstruct ordinary work. Judge removals by whether
+the affected real work runs. Issue #598 records this requirement.
+
+State that can be derived from a durable source is derived again after a crash.
+A duplicate wake notice or a repeated operation is an acceptable crash result.
+Do not add a separate durable store to prevent that result.
+
+## No budget control flow
+
+Budgets must never control admission, continuation, completion, input acceptance,
+or validation. Do not require callers to estimate input size, task size, tokens,
+cost, duration, retries, turns, or output volume. Do not add budget checks, refusals,
+pauses, truncation, or configurable replacements for those controls. Provider
+usage observations report facts. Actual allocation, filesystem and provider
+failures retain their causes and the unfinished work.
+
+## No pausing, idling or truncating agents
+
+Baton never deliberately pauses, idles or truncates an agent's work. When an agent's turn ends,
+Baton wakes the agent's orchestrator (its parent seat, or the root) with the turn's report, and the
+orchestrator decides whether to nudge the agent on. The agent stops when it declares itself done or
+its orchestrator stops it. No runtime rule may leave live work waiting on a party that Baton does not
+wake. An existing instance is a `priority:high` bug to remove (#572). The first known instance is
+the turn-end park recorded under the actor `policy`, which waits for a claim or nudge and wakes no
+one.
+
+## No bookkeeping ledgers in place of function
+
+Do not require hand-maintained records to accompany functional changes. That means no checked-in
+list of expected test failures, no "converged" declarations, no census file, no test that pins
+counts or line numbers of other code, and no author-written declaration of a fact that tooling
+can derive. Tests assert independently specified behavior, including protocol constants and
+functional fixtures. Tooling derives inventories from their sources when it uses them. A count
+in a review record is a measurement at that commit. Known breakage lives in the issue tracker.
+
+Selected tests run on the target and candidate. A candidate failure blocks when the target has
+no failure with the same file, test and failure type. A new selected test failure blocks. An
+incomplete verdict cannot authorize landing. Every selected file must be accounted for.
+
+Runtime decisions about agent work derive from durable source and current state. Editing review
+records must not change check selection, admission, refusal, permissions or continuation. Status,
+census and completion declarations must not be prerequisites for continuing work.
+
+# Writing rules
+
+These rules apply to any prose written for or checked into this repository: README, CONTRIBUTING,
+`docs/*.md`, issue and PR bodies, commit messages, code comments, and anything else meant to be
+read by a person.
+
+## Plain technical English only
+
+Write in plain, simplified, standard technical English. No aphorism, no metaphor, no poetic
+description, no narrative flourish. A section heading names what the section covers; it is not a
+place for cleverness (write "Design documents", not "the swarm era"; cut lines like "the name: a
+conductor's baton directs an orchestra").
+
+## State facts directly, never by contrast to an absent alternative
+
+Never describe a mechanism by contrasting it with something the project does not do or does not
+have ("wakes instead of polling", "typed refusals instead of free-text errors", "verification is
+re-run, not trusted"). This pattern says what the thing is not rather than what it is, and it reads
+as marketing rhetoric, not a technical description. State directly what the thing does.
+
+- Wrong: "Wakes instead of polling."
+- Right: "`baton swarm watch --follow` prints one JSON frame per coordination row as it is written."
+
+If an entire section is organized around this contrast (a "why choose this" framing built on a list
+of things the project avoids), restructure or cut it — its real content usually already lives
+elsewhere once each fact is stated positively.
+
+## No gratuitous or generic commentary
+
+Cut any aside that states something true of any tool in the category, not specific to this
+project. ("directs workers, on your own repository" — of course a CLI run in a repository operates
+on that repository; this told the reader nothing about baton.) Every sentence should carry
+information a reader could not already assume.
+
+## No operational journaling in product-facing documentation
+
+A README, or any document meant to describe the product to someone encountering it, describes what
+the software is and does. It does not narrate the project's own development process, internal
+workflow, or history as a feature of the product ("every change since <date> has gone through our
+own X process" does not belong in a README). Facts about how the project itself is developed
+belong in CONTRIBUTING.md or a docs/ ledger such as docs/PROGRESS.md, written for the audience that
+is actually doing that work, not folded into the pitch for the software.
+
+## Audience-appropriate density
+
+`docs/*.md` design documents are written for contributors already working in this codebase and may
+cite issue numbers (`#441`) and internal mechanism names densely; that is the correct register for
+that audience. README.md, CONTRIBUTING.md's introduction, and anything else meant to introduce the
+project to someone new must not assume the reader has the issue tracker open, and should explain a
+mechanism rather than pointing at a bare issue number with no context.
+
+See the `writing-style` skill for the same rules with worked before/after examples.

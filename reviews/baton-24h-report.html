@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Baton — 24 Hours of Self-Orchestrated Development</title>
+<style>
+  :root {
+    --bg: #0b1020; --bg2: #101730; --panel: #141c3a; --panel2: #182147;
+    --ink: #e8ecf8; --dim: #9aa5c8; --faint: #5d6890;
+    --amber: #f5b942; --cyan: #4fd6e0; --green: #5fd68a; --red: #f2708a; --violet: #a98ef5;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: radial-gradient(1200px 600px at 80% -10%, #1a2450 0%, var(--bg) 55%) , var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.55; }
+  .layout { display: grid; grid-template-columns: 230px 1fr; max-width: 1280px; margin: 0 auto; }
+  nav { position: sticky; top: 0; height: 100vh; padding: 2rem 1.2rem; border-right: 1px solid #1e2850; }
+  nav .brand { font-family: var(--mono); font-size: 1.05rem; color: var(--amber); letter-spacing: .06em; margin-bottom: .2rem; }
+  nav .sub { font-size: .72rem; color: var(--faint); margin-bottom: 1.6rem; }
+  nav a { display: block; color: var(--dim); text-decoration: none; font-size: .8rem; padding: .34rem .5rem; border-radius: 6px; margin-bottom: 2px; }
+  nav a:hover { background: var(--panel); color: var(--cyan); }
+  nav a .n { font-family: var(--mono); color: var(--faint); margin-right: .45rem; font-size: .72rem; }
+  main { padding: 2.5rem 3rem 5rem; min-width: 0; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .4rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.25rem; margin: 3rem 0 1rem; padding-top: 1.2rem; border-top: 1px solid #1e2850; letter-spacing: -.01em; }
+  h2 .n { font-family: var(--mono); color: var(--amber); font-size: .95rem; margin-right: .5rem; }
+  h3 { font-size: 1rem; margin: 1.6rem 0 .5rem; color: var(--cyan); }
+  p { color: var(--dim); max-width: 72ch; }
+  p b, li b { color: var(--ink); font-weight: 600; }
+  .lede { font-size: 1.05rem; color: #c3cce8; max-width: 78ch; }
+  code, .h { font-family: var(--mono); font-size: .82em; background: #0d1430; border: 1px solid #223; padding: .08em .35em; border-radius: 5px; color: var(--amber); }
+  .hash { font-family: var(--mono); font-size: .78rem; color: var(--cyan); }
+  .grid { display: grid; gap: .9rem; }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  .card { background: linear-gradient(160deg, var(--panel) 0%, var(--panel2) 100%); border: 1px solid #22305e; border-radius: 12px; padding: 1rem 1.1rem; transition: transform .12s ease, border-color .12s ease; }
+  .card:hover { transform: translateY(-2px); border-color: #3550a0; }
+  .card .k { font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); margin-bottom: .3rem; }
+  .card .v { font-size: 1.7rem; font-family: var(--mono); color: var(--ink); }
+  .card .v small { font-size: .8rem; color: var(--dim); }
+  .card .d { font-size: .8rem; color: var(--dim); margin-top: .25rem; }
+  .cap { border-left: 3px solid var(--cyan); }
+  .cap h4 { margin: 0 0 .3rem; font-size: .95rem; }
+  .cap p { margin: 0; font-size: .83rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; margin: .6rem 0 1rem; }
+  th { text-align: left; color: var(--faint); font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; padding: .45rem .6rem; border-bottom: 1px solid #2a3a75; }
+  td { padding: .5rem .6rem; border-bottom: 1px solid #1a2450; color: var(--dim); vertical-align: top; }
+  td:first-child { color: var(--ink); }
+  tr:hover td { background: #121a3d; }
+  .tag { display: inline-block; font-family: var(--mono); font-size: .68rem; padding: .1em .5em; border-radius: 99px; border: 1px solid; }
+  .t-opus { color: var(--violet); border-color: var(--violet); }
+  .t-sonnet { color: var(--cyan); border-color: var(--cyan); }
+  .t-kimi { color: var(--green); border-color: var(--green); }
+  .t-ok { color: var(--green); border-color: var(--green); }
+  .t-fail { color: var(--red); border-color: var(--red); }
+  .t-warn { color: var(--amber); border-color: var(--amber); }
+  .tl { position: relative; margin: 1rem 0 0 0; padding-left: 1.4rem; }
+  .tl::before { content: ""; position: absolute; left: 5px; top: 6px; bottom: 6px; width: 2px; background: linear-gradient(#3550a0, #1a2450); }
+  .tl-item { position: relative; padding: 0 0 1.1rem .8rem; }
+  .tl-item::before { content: ""; position: absolute; left: -1.4rem; top: .38rem; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 3px solid var(--amber); }
+  .tl-item.c::before { border-color: var(--cyan); }
+  .tl-item.r::before { border-color: var(--red); }
+  .tl-item.g::before { border-color: var(--green); }
+  .tl-item .when { font-family: var(--mono); font-size: .72rem; color: var(--faint); }
+  .tl-item .what { font-size: .9rem; color: var(--ink); margin: .1rem 0; }
+  .tl-item .why { font-size: .8rem; color: var(--dim); }
+  .failrow td { border-bottom: 1px dashed #2a2445; }
+  .note { background: #131a3c; border: 1px solid #24346e; border-left: 3px solid var(--amber); border-radius: 8px; padding: .8rem 1rem; font-size: .85rem; color: var(--dim); margin: 1rem 0; }
+  .note b { color: var(--amber); }
+  .spark { background: var(--panel); border: 1px solid #22305e; border-radius: 12px; padding: 1.2rem; }
+  .footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #1e2850; font-size: .75rem; color: var(--faint); font-family: var(--mono); }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } nav { display: none; } .g4, .g3, .g2 { grid-template-columns: 1fr; } main { padding: 1.4rem; } }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="brand">▮ baton</div>
+  <div class="sub">24h report · 2026-07-21 → 07-23</div>
+  <a href="#cap"><span class="n">01</span>Capability arc</a>
+  <a href="#timeline"><span class="n">02</span>Timeline</a>
+  <a href="#waves"><span class="n">03</span>Waves</a>
+  <a href="#suite"><span class="n">04</span>Suite growth</a>
+  <a href="#issues"><span class="n">05</span>Issue ledger</a>
+  <a href="#dogfood"><span class="n">06</span>Dogfood record</a>
+  <a href="#frictions"><span class="n">07</span>Frictions</a>
+  <a href="#next"><span class="n">08</span>What's next</a>
+</nav>
+<main>
+
+<h1>24 hours of baton, built by baton</h1>
+<p class="lede">One long arc: from a wave primitive and a design doc to a reflexive orchestration substrate — decision channels, boards, packages, a closed REPL layer, three knowledge horizons, and an MCP reflex surface — nearly all of it implemented by claude-opus-4-8 and claude-sonnet-5 workers driving themselves through <b>baton waves</b>, red-teamed, and gated on a 2,698-test suite. This is the precise record, including the honest failures.</p>
+
+<div class="grid g4" style="margin-top:1.4rem">
+  <div class="card"><div class="k">Implementation commits</div><div class="v">12 <small>+14 docs/evidence</small></div><div class="d">c164532 → 0afe842, all pushed to master</div></div>
+  <div class="card"><div class="k">Tests added (net)</div><div class="v">+170</div><div class="d">2,528 → 2,698, every gate green at commit</div></div>
+  <div class="card"><div class="k">Waves run</div><div class="v">9 <small>+5 decision-live</small></div><div class="d">18 worker seats completed; 5 seat-failures, all diagnosed</div></div>
+  <div class="card"><div class="k">Issues</div><div class="v">15</div><div class="d">#16–#30: 13 cores landed, #20 closed, #28–30 tracked</div></div>
+</div>
+
+<h2 id="cap"><span class="n">01</span>What baton can do now that it couldn't</h2>
+<div class="grid g3">
+  <div class="card cap"><h4>Reflexive decisions (REFLEX-1)</h4><p>A worker poses a typed multi-choice decision with a free-response escape and <b>gates</b> until the orchestrator settles. Durable, single-consumer, deadline-cancellable, spoof-safe. <span class="hash">c164532</span></p></div>
+  <div class="card cap"><h4>Boards (REFLEX-2)</h4><p>Orchestrator-controlled shared task boards: immutable versioned items, claim migration, board-scoped replay-derivable fences, cached non-evented per-worker projections. <span class="hash">64e657d</span></p></div>
+  <div class="card cap"><h4>Packages (REFLEX-3)</h4><p>Knowledge/context hand-off with hub-derived ledger-event provenance, unique non-empty branches, validate-once admission, fenced O(1) attach, §93.5 resolve-time revalidation. <span class="hash">b683eb2</span></p></div>
+  <div class="card cap"><h4>Closed REPL layer (REPL-1..3)</h4><p>Run-scoped REPL sessions outside Workflows, named cell bindings with per-scope fences, and <code>cell:</code>-as-source composition — shared and per-worker objects passed by name. <span class="hash">a208c13 14f8e93</span></p></div>
+  <div class="card cap"><h4>Knowledge horizons (KG-1..4)</h4><p>Task/workflow/project read models over the existing bi-temporal Cairn KG, promotion with an orchestrator-admit gate, <b>ambient briefings at the moment of work</b>, contradiction-first ranking, auto-linking, MAD confidence. <span class="hash">de17276 818e904</span></p></div>
+  <div class="card cap"><h4>MCP reflex surface</h4><p>11 new tools on the primary agent surface: <code>baton_context_eval</code>, decision list/answer, board post/retitle/reorder/close/read, package admit/attach/read — closed 58-tool inventory. <span class="hash">016c485 34df673</span></p></div>
+</div>
+
+<h2 id="timeline"><span class="n">02</span>Timeline</h2>
+<div class="tl">
+  <div class="tl-item c"><div class="when">07-21 16:13</div><div class="what">Wave surface accepted (opus, three rounds) <span class="hash">e1df795</span></div><div class="why">First-class <code>baton.waves.start</code> lands — the driver pattern everything after this uses.</div></div>
+  <div class="tl-item"><div class="when">16:22 → 17:08</div><div class="what">doc 32 (reflexive orchestration) + issues #16–19; red-team F1–14 revision <span class="hash">978cf58 4cfafc2</span></div><div class="why">Spec-first, adversarially reviewed before any worker touched code.</div></div>
+  <div class="tl-item g"><div class="when">18:18</div><div class="what">REFLEX-1 decision channel + settlement integrity <span class="hash">c164532</span></div><div class="why">Sonnet-5 worker, red-first (34 tests). Also closed 4 pre-existing settlement bugs (#20).</div></div>
+  <div class="tl-item g"><div class="when">18:29</div><div class="what">REFLEX-4 <code>application.context_eval</code> <span class="hash">3671bfe</span></div><div class="why">Pure Bench evaluation without a Workflow — the REPL substrate's front door.</div></div>
+  <div class="tl-item g"><div class="when">19:11 / 19:17</div><div class="what">REFLEX-2 boards (opus) + REFLEX-3 packages (sonnet) <span class="hash">64e657d b683eb2</span></div><div class="why">2,576/2,576. Shared task lists and context hand-off are real.</div></div>
+  <div class="tl-item"><div class="when">19:17 → 19:39</div><div class="what">docs 33+34 (REPL layer, knowledge horizons) → red-team → v2 <span class="hash">3961cb1 b3094c0 7e02ec3</span></div><div class="why">3 P0s caught pre-implementation: manifest authority, session authority, evaluator purity.</div></div>
+  <div class="tl-item"><div class="when">20:23 → 21:12</div><div class="what">MCP contract v2 (11 findings folded) + REPL/KG contracts v1 → swarm red-team → revision wave → FINAL <span class="hash">de68345 90865d0 877c1e0 7dd5bb6</span></div><div class="why">Contract-grade inputs for every implementation seat; "report right on every finding, no rebuttals."</div></div>
+  <div class="tl-item r"><div class="when">21:14 → 22:14</div><div class="what">Impl wave A: two failed attempts <span class="hash">9ac638f c8e3aea 928be36</span></div><div class="why"><code>wire_frame_oversize</code> ×3 (1MiB cap) + a scope omission — fixed at the machinery: 8MiB ceiling, widened scope, issue #28.</div></div>
+  <div class="tl-item g"><div class="when">22:59</div><div class="what">REPL-1 ReplManifest + session authority (opus) <span class="hash">a208c13</span></div><div class="why">The authority-layer keystone: 5 Workflow-coupled sites opened coherently.</div></div>
+  <div class="tl-item g"><div class="when">23:45</div><div class="what">REPL-2/3 bindings + <code>cell:</code> composition (sonnet + orchestrator integration) <span class="hash">14f8e93</span></div><div class="why">2,627/2,627. Named shared objects and closed multi-step composition, live.</div></div>
+  <div class="tl-item g"><div class="when">07-22 00:22 / 00:26</div><div class="what">KG-1/2 (sonnet) + KG-3/4 (opus) <span class="hash">de17276 818e904</span></div><div class="why">2,659/2,659. Knowledge arrives at the moment of work — the project-manager lesson shipped for real.</div></div>
+  <div class="tl-item g"><div class="when">00:58 / 01:11</div><div class="what">MCP slice 1 + slice 2 <span class="hash">016c485 34df673</span></div><div class="why">Slice-2 seat killed mid-suite — work recovered intact from its checkpoint pin. 2,695/2,695.</div></div>
+  <div class="tl-item r"><div class="when">01:50 / 02:57</div><div class="what">Issue #30: the decision-live dogfood bites twice <span class="hash">8595e40 0afe842</span></div><div class="why">Gate-side: trust gate killed gated workers. Delivery-side: approvals:false refused every settlement. Both fixed red-first. 2,698/2,698.</div></div>
+  <div class="tl-item c"><div class="when">07-23 ~06:00</div><div class="what">Decision-live run 6 — full reflexive loop, in flight</div><div class="why">Worker gates → driver answers <code>{optionId:'detailed'}</code> → continuation turn → verdict → receipts.</div></div>
+</div>
+
+<h2 id="waves"><span class="n">03</span>The waves — baton orchestrating itself</h2>
+<p>Every substantive feature this cycle was implemented by a claude seat driving through <code>baton.waves</code> with scoped paths, pinned results, and settlement extraction. Model assignments: opus for the subtlest authority work, sonnet for volume implementation, kimi for adversarial review.</p>
+<table>
+  <tr><th>Wave</th><th>Seats</th><th>Models</th><th>Outcome</th><th>Evidence</th></tr>
+  <tr><td>Substantive REFLEX</td><td>3</td><td><span class="tag t-sonnet">sonnet-5 ×2</span> <span class="tag t-opus">opus ×1</span></td><td><span class="tag t-ok">all completed</span></td><td class="hash">5d1eabd4 · 7362bf17 · de92c723</td></tr>
+  <tr><td>REFLEX-2/3 impl</td><td>2</td><td><span class="tag t-opus">opus</span> <span class="tag t-sonnet">sonnet</span></td><td><span class="tag t-ok">all completed</span></td><td class="hash">29778edf · 418209fc</td></tr>
+  <tr><td>Contract drafting</td><td>4</td><td><span class="tag t-opus">opus ×2</span> <span class="tag t-sonnet">sonnet ×2</span></td><td><span class="tag t-warn">orphaned, harvested</span></td><td class="hash">worktree harvest; 90865d0</td></tr>
+  <tr><td>Contract revision</td><td>4</td><td><span class="tag t-opus">opus ×2</span> <span class="tag t-sonnet">sonnet ×2</span></td><td><span class="tag t-ok">all completed</span></td><td class="hash">7dd5bb6 (v2 FINAL)</td></tr>
+  <tr><td>REPL impl A ×3</td><td>2</td><td><span class="tag t-opus">opus</span> <span class="tag t-sonnet">sonnet</span></td><td><span class="tag t-fail">2 attempts lost</span> <span class="tag t-ok">attempt 3 ✓</span></td><td class="hash">c227c57e · 2348ac50</td></tr>
+  <tr><td>KG impl B</td><td>2</td><td><span class="tag t-sonnet">sonnet</span> <span class="tag t-opus">opus</span></td><td><span class="tag t-ok">all completed</span></td><td class="hash">4e2920ad · dd0bcb1e</td></tr>
+  <tr><td>MCP reflex ×2</td><td>2</td><td><span class="tag t-sonnet">sonnet ×2</span></td><td><span class="tag t-warn">1 killed, recovered</span></td><td class="hash">695d3a4b · pin b24dcb08</td></tr>
+  <tr><td>Decision-live ×6</td><td>1</td><td><span class="tag t-sonnet">sonnet</span></td><td><span class="tag t-fail">runs 1–5</span> <span class="tag t-ok">run 6 live</span></td><td class="hash">w-144 → w-145 → cred window</td></tr>
+</table>
+
+<h2 id="suite"><span class="n">04</span>Suite growth — every gate green at commit</h2>
+<div class="spark">
+<svg viewBox="0 0 760 180" width="100%" height="180" role="img" aria-label="test count over time">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4fd6e0" stop-opacity=".35"/><stop offset="1" stop-color="#4fd6e0" stop-opacity="0"/></linearGradient></defs>
+  <polyline fill="url(#g)" stroke="none" points="60,132 160,128 260,112 360,92 460,72 560,60 660,52 660,160 60,160"/>
+  <polyline fill="none" stroke="#4fd6e0" stroke-width="2.5" points="60,132 160,128 260,112 360,92 460,72 560,60 660,52"/>
+  <g font-family="Menlo,monospace" font-size="10" fill="#9aa5c8">
+    <circle cx="60" cy="132" r="4" fill="#f5b942"/><text x="60" y="148" text-anchor="middle">2528</text><text x="60" y="24" text-anchor="middle" fill="#5d6890">c164532</text>
+    <circle cx="160" cy="128" r="4" fill="#f5b942"/><text x="160" y="148" text-anchor="middle">2536</text><text x="160" y="24" text-anchor="middle" fill="#5d6890">3671bfe</text>
+    <circle cx="260" cy="112" r="4" fill="#f5b942"/><text x="260" y="128" text-anchor="middle">2576</text><text x="260" y="24" text-anchor="middle" fill="#5d6890">b683eb2</text>
+    <circle cx="360" cy="92" r="4" fill="#f5b942"/><text x="360" y="108" text-anchor="middle">2627</text><text x="360" y="24" text-anchor="middle" fill="#5d6890">14f8e93</text>
+    <circle cx="460" cy="72" r="4" fill="#f5b942"/><text x="460" y="88" text-anchor="middle">2659</text><text x="460" y="24" text-anchor="middle" fill="#5d6890">818e904</text>
+    <circle cx="560" cy="60" r="4" fill="#f5b942"/><text x="560" y="76" text-anchor="middle">2695</text><text x="560" y="24" text-anchor="middle" fill="#5d6890">34df673</text>
+    <circle cx="660" cy="52" r="4" fill="#f5b942"/><text x="660" y="68" text-anchor="middle">2698</text><text x="660" y="24" text-anchor="middle" fill="#5d6890">0afe842</text>
+  </g>
+  <text x="60" y="14" font-family="Menlo,monospace" font-size="11" fill="#e8ecf8">node impl/scripts/run-suite.mjs — pass/total at each implementation commit</text>
+</svg>
+</div>
+
+<h2 id="issues"><span class="n">05</span>Issue ledger</h2>
+<table>
+  <tr><th>Issue</th><th>What</th><th>State</th></tr>
+  <tr><td>#16–19</td><td>REFLEX-1..4 — decision channel, boards, packages, context_eval</td><td><span class="tag t-ok">cores landed</span> live-acceptance in flight</td></tr>
+  <tr><td>#20</td><td>Settlement-integrity bugs F1–F4 (red-team)</td><td><span class="tag t-ok">closed</span> c164532</td></tr>
+  <tr><td>#21–23</td><td>REPL-1..3 — ReplManifest, bindings, cell: composition</td><td><span class="tag t-ok">cores landed</span> a208c13 · 14f8e93</td></tr>
+  <tr><td>#24–27</td><td>KG-1..4 — horizons, promotion, activation, growth</td><td><span class="tag t-ok">cores landed</span> de17276 · 818e904</td></tr>
+  <tr><td>#28</td><td>wire_frame_oversize kills runs; 1MiB cap not configurable</td><td><span class="tag t-warn">stopgap shipped</span> 8MiB ceiling; graceful degradation open</td></tr>
+  <tr><td>#29</td><td>Remote control over Tailscale</td><td><span class="tag t-warn">backlog</span> low priority</td></tr>
+  <tr><td>#30</td><td>Gated worker killed by trust gate + settlement delivery refused</td><td><span class="tag t-ok">fixed</span> 8595e40 · 0afe842</td></tr>
+</table>
+
+<h2 id="dogfood"><span class="n">06</span>The honest dogfood record</h2>
+<p>Using baton to build baton cost five seat-failures and two machinery bugs. Every one produced a fix or an issue — this table is the argument for doing it.</p>
+<table>
+  <tr><th>Failure</th><th>Diagnosis</th><th>Fix / outcome</th></tr>
+  <tr class="failrow"><td><code>wire_frame_oversize</code> ×3 seats</td><td>Whole-file reads of 10–13k-line sources blew the 1MiB stream cap; runs killed mid-work</td><td>8MiB deployment ceiling (env-overridable) <span class="hash">928be36</span>; graceful degradation → #28</td></tr>
+  <tr class="failrow"><td>Scope violation (repl1)</td><td>Lease machinery legitimately needed <code>run-lineage.mjs</code>; my scope omitted it — trust-gate evidence named the file</td><td>Scope widened; attempt 3 succeeded</td></tr>
+  <tr class="failrow"><td>Orphaned contract drafters</td><td>My botched driver launch (&amp; + wait + 90s timeout) killed the driver; 4 seats kept working orphaned</td><td>Harvested worktrees; recovery machinery terminalized runs honestly (seq 34489–34500); lesson → wave durability 93B</td></tr>
+  <tr class="failrow"><td>MCP seat killed mid-suite</td><td>Governance killed the board-package seat while it waited on the full suite</td><td>Work recovered byte-intact from checkpoint pin <span class="hash">b24dcb08</span> — the durability story working as designed</td></tr>
+  <tr class="failrow"><td>w-144: gated worker killed</td><td>Trust gate evaluated a by-construction partial result (turn ends when a blocking decision is posed)</td><td>Gate defers while a record is pending <span class="hash">8595e40</span> (DG1/DG2 red-first)</td></tr>
+  <tr class="failrow"><td>w-145: settlement never delivered</td><td><code>approvals:false</code> early-return preceded the emulated decision branch — every live answer refused</td><td>Delivery before the gate <span class="hash">0afe842</span> (DG3 red-first)</td></tr>
+  <tr class="failrow"><td>kg12 test time-bomb</td><td>Worker's fixture: hardcoded 09:00Z lease expiry + real clock — green at commit, red 3h later</td><td>Fixed clock pinned; contract guidance updated</td></tr>
+  <tr class="failrow"><td>Cred rotation ×2</td><td>Claude OAuth revoked mid-campaign; static-ready ≠ provider-alive</td><td>Keychain re-extract ×2; durable fix = #11 setup-token projection</td></tr>
+</table>
+
+<h2 id="frictions"><span class="n">07</span>Frictions (feeding the AX program, issue #10)</h2>
+<div class="note"><b>Control-surface divergence.</b> <code>runs.start</code> records goal/plan and parks at <code>awaiting_plan_approval</code>; <code>waves.start</code> auto-approves and reports a third vocabulary (<code>stopped / start_failed / work_completed</code>) over the same machinery. Three phase vocabularies for one lifecycle — the case for one unified control surface, directly exhibited tonight.</div>
+<div class="note"><b>Readiness honesty.</b> Static-ready ≠ provider-alive, twice (401s found only at turn time). A bounded actual-inference readiness tier is owed.</div>
+<div class="note"><b>Worker fixture discipline.</b> One worker-authored time-bomb (real clock + fixed expiry) reached master green and failed three hours later. Contract text now mandates fixed clocks — worth a lint, not just guidance.</div>
+
+<h2 id="next"><span class="n">08</span>What's next</h2>
+<div class="grid g2">
+  <div class="card"><div class="k">Now</div><div class="d"><b>Decision-live run 6</b> — the full reflexive loop with receipts; closes #16's last acceptance item. Then the <b>opus acceptance review</b> over the whole landed bloc.</div></div>
+  <div class="card"><div class="k">Then</div><div class="d"><b>AX program</b>: unified control surfaces + terminal taxonomy (#10), readiness tier, run.result(), error quality. <b>#11</b> setup-token projection (kills the rotation fragility for good). <b>#28</b> graceful degradation.</div></div>
+  <div class="card"><div class="k">Later</div><div class="d">ATLAS/DIAG epics, wave durability (93B), nested orchestration (#12), remote control (#29), AX-report wave with the models filing their own experience reports.</div></div>
+  <div class="card"><div class="k">Standing rule</div><div class="d">Spec → adversarial red-team → red-first tests → baton-worker implementation → acceptance → commit. Baton builds baton; every failure becomes a fix or an issue.</div></div>
+</div>
+
+<div class="footer">baton 24h report · generated 2026-07-23 · repo: wahargis/baton @ b3ba0ab · suite 2698/2698 · all commits pushed to master</div>
+
+</main>
+</div>
+</body>
+</html>
