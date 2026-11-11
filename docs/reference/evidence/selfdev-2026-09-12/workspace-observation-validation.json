@@ -1,0 +1,40 @@
+{
+  "date": "2026-09-13",
+  "behavior": "Unobservable workspace authority remains unknown and cannot become a kill decision through repeated polling. Observed absence, unsafe ownership and malformed receipts still fail.",
+  "productionChanges": [
+    "Real filesystem and receipt errors preserve unknown observations across the workspace adapter and coordinator",
+    "Public worker view exposes the most recent worktreeObservation without performing reads",
+    "Repeated unknown observations do not invent authority loss"
+  ],
+  "regression": {
+    "base": "a966bba6267a9dbe7b17ce8c6409033f1801bd08",
+    "sameNewTestOnBase": {
+      "passed": 2,
+      "failed": 4,
+      "log": "/tmp/baton-workspace-observation-before.log"
+    },
+    "fixedIntegration": {
+      "passed": 6,
+      "failed": 0,
+      "log": "/tmp/baton-workspace-observation-final.log"
+    }
+  },
+  "adjacentChecks": {
+    "passed": 199,
+    "failed": 0,
+    "cancelled": 0,
+    "log": "/tmp/baton-workspace-observation-broad.log",
+    "scope": [
+      "coordinator",
+      "physical workspace ownership",
+      "capacity authority",
+      "plan replay",
+      "worktree lifecycle",
+      "workspace observation"
+    ]
+  },
+  "limits": [
+    "These observations are not positive authorization for capture, publication, session recovery or new provider work. Those operations retain their own authority checks.",
+    "Full-suite acceptance remains separately red."
+  ]
+}

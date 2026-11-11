@@ -1,0 +1,235 @@
+# CLAIM: the snapshot identity and applicability composition of the native
+# semantic context feature (docs/bend2/semantic-context-spec.md, "Input
+# identity and capture consistency" and "Results, classifications and
+# references").
+#
+# A source snapshot records a query-local snapshotId, the provider identity,
+# the effective options, worktree metadata and the actual read identities. The
+# snapshotId is the digest of the canonical identity text this module builds;
+# worktree metadata is recorded beside it and is never part of it, so a
+# worktree commit or branch change alone cannot make two different input sets
+# share an identity.
+#
+# Applicability is the pure comparison of the recorded identity with a fresh
+# revalidation: current when every recorded input still matches, stale with the
+# changed input paths named when one does not, unknown when a required safe
+# probe failed. A catalog snapshot identity carries the schema-level
+# fields only; the raw data version is reported separately and never makes a
+# schema stale.
+
+import Base
+import ../json/canonical.bend as J
+import ./engines.bend as Eng
+
+# --- captured input identities ----------------------------------------------
+# One captured input, as a provider supplies it. The kinds are the ones the
+# specification requires to represent invalidation: file bytes, a lookup that
+# resolved to nothing, directory membership, a resolved link and effective
+# configuration bytes.
+type Fp is Data:
+  FpFile{role: String, path: String, sha256: String}
+  FpAbsent{role: String, path: String}
+  FpDir{role: String, path: String, sha256: String}
+  FpLink{role: String, path: String, target: String}
+  FpConfig{role: String, path: String, sha256: String}
+  FpProjectPolicy{owner: String, worktree: String, path: String, sha256: String}
+  FpProjectPolicyAbsent{owner: String, worktree: String, path: String}
+
+type Fps is Data:
+  FpsNil{}
+  FpsCons{head: Fp, rest: Fps}
+
+def fp_role(f: Fp) -> String:
+  match f:
+    case FpFile{role, path, sha256}: role
+    case FpAbsent{role, path}: role
+    case FpDir{role, path, sha256}: role
+    case FpLink{role, path, target}: role
+    case FpConfig{role, path, sha256}: role
+    case FpProjectPolicy{owner, worktree, path, sha256}: "projectPolicy"
+    case FpProjectPolicyAbsent{owner, worktree, path}: "projectPolicy"
+
+def fp_path(f: Fp) -> String:
+  match f:
+    case FpFile{role, path, sha256}: path
+    case FpAbsent{role, path}: path
+    case FpDir{role, path, sha256}: path
+    case FpLink{role, path, target}: path
+    case FpConfig{role, path, sha256}: path
+    case FpProjectPolicy{owner, worktree, path, sha256}: path
+    case FpProjectPolicyAbsent{owner, worktree, path}: path
+
+# The digest-bearing component: the file digest, the resolved target, the
+# directory digest, the configuration digest, or the absent marker.
+def fp_marker(f: Fp) -> String:
+  match f:
+    case FpFile{role, path, sha256}: sha256
+    case FpAbsent{role, path}: "absent"
+    case FpDir{role, path, sha256}: sha256
+    case FpLink{role, path, target}: target
+    case FpConfig{role, path, sha256}: sha256
+    case FpProjectPolicy{owner, worktree, path, sha256}:
+      J.json_text(J.Jarr{J.Jstr{"baton2.context.project-policy.v1"},
+        J.Jarr{J.Jstr{owner}, J.Jarr{J.Jstr{worktree},
+        J.Jarr{J.Jstr{sha256}, J.Jnil{}}}}})
+    case FpProjectPolicyAbsent{owner, worktree, path}:
+      J.json_text(J.Jarr{J.Jstr{"baton2.context.project-policy.absent.v1"},
+        J.Jarr{J.Jstr{owner}, J.Jarr{J.Jstr{worktree}, J.Jnil{}}}})
+
+def fps_of_list(xs: List<Fp>) -> Fps:
+  match xs:
+    case Nil{}: FpsNil{}
+    case h <> t: FpsCons{h, fps_of_list(t)}
+
+def fps_to_list(xs: Fps) -> List<Fp>:
+  match xs:
+    case FpsNil{}: Nil{}
+    case FpsCons{h, r}: h <> fps_to_list(r)
+
+# --- canonical identity text -------------------------------------------------
+# Canonical JSON text of a string array; Jnil terminates the array chain, as
+# json/canonical.bend's own corpus builds it.
+def strs_tail(xs: List<String>) -> J.Json:
+  match xs:
+    case Nil{}: J.Jnil{}
+    case h <> t: J.Jarr{J.Jstr{h}, strs_tail(t)}
+
+def strs_array(xs: List<String>) -> J.Json:
+  match xs:
+    case Nil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
+    case h <> t: J.Jarr{J.Jstr{h}, strs_tail(t)}
+
+def bool_text(b: Bool) -> String:
+  match b:
+    case True{}: "true"
+    case False{}: "false"
+
+def fp_json(+f: Fp) -> J.Json:
+  J.Jarr{J.Jstr{fp_role(f)}, J.Jarr{J.Jstr{fp_path(f)}, J.Jarr{J.Jstr{fp_marker(f)}, J.Jnil{}}}}
+
+def fps_tail(xs: Fps) -> J.Json:
+  match xs:
+    case FpsNil{}: J.Jnil{}
+    case FpsCons{h, r}: J.Jarr{fp_json(h), fps_tail(r)}
+
+def fps_array(xs: Fps) -> J.Json:
+  match xs:
+    case FpsNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
+    case FpsCons{h, r}: J.Jarr{fp_json(h), fps_tail(r)}
+
+# The canonical identity text of one source snapshot. The provider identity,
+# the effective options and every captured input appear in order; worktree
+# metadata is deliberately absent. The provider supplies the digest of this
+# text as the query-local snapshotId.
+def identity_text(+provider: String, +version: String, options: List<String>, inputs: Fps) -> String:
+  J.json_text(J.Jarr{J.Jstr{"baton2.context.snapshot.v1"}, J.Jarr{J.Jstr{provider}, J.Jarr{J.Jstr{version}, J.Jarr{strs_array(options), J.Jarr{fps_array(inputs), J.Jnil{}}}}}})
+
+# The canonical identity text of one catalog snapshot. It carries the
+# schema-level identity only: the real path, the file identity, the schema
+# digest, schema_version, journal mode and the connection flags. The raw data
+# version is not an input, so a data-only write cannot make a schema stale.
+def catalog_identity_text(+engine: String, +version: String, +path: String, +file_identity: String, +schema_digest: String, +schema_version: String, +journal_mode: String, read_only: Bool, foreign_keys: Bool) -> String:
+  J.json_text(
+    J.Jarr{J.Jstr{"baton2.context.catalog.v1"},
+    J.Jarr{J.Jstr{engine},
+    J.Jarr{J.Jstr{version},
+    J.Jarr{J.Jstr{path},
+    J.Jarr{J.Jstr{file_identity},
+    J.Jarr{J.Jstr{schema_digest},
+    J.Jarr{J.Jstr{schema_version},
+    J.Jarr{J.Jstr{journal_mode},
+    J.Jarr{J.Jstr{bool_text(read_only)},
+    J.Jarr{J.Jstr{bool_text(foreign_keys)}, J.Jnil{}}}}}}}}}}})
+
+# --- applicability -----------------------------------------------------------
+type Revalidation is Data:
+  RvOk{current: Fps}
+  RvFailed{reason: String}
+
+type Applies is Data:
+  ACurrent{}
+  AStale{changed: Eng.SS}
+  AHistorical{reason: String}
+  AUnknown{reason: String}
+
+# The same role and path, and the same digest. A recorded input whose path is
+# absent from the revalidation is changed, and an added formerly absent module
+# changes the recorded absent entry's marker.
+def input_unchanged(+h: Fp, current: Fps) -> Bool:
+  match current:
+    case FpsNil{}: False{}
+    case FpsCons{+c, cs}:
+      Bool.pick(Bool, Bool.and(String.eq(fp_role(c), fp_role(h)), String.eq(fp_path(c), fp_path(h))), String.eq(fp_marker(c), fp_marker(h)), input_unchanged(h, cs))
+
+# The paths of the recorded inputs whose identity no longer matches, in the
+# recorded order. Also the result's changedInputs field and the capture
+# consistency check.
+def ss_rev_go(xs: Eng.SS, +acc: Eng.SS) -> Eng.SS:
+  match xs:
+    case Eng.SSNil{}: acc
+    case Eng.SSCons{h, r}: ss_rev_go(r, Eng.SSCons{h, acc})
+
+def ss_rev(xs: Eng.SS) -> Eng.SS:
+  ss_rev_go(xs, Eng.SSNil{})
+
+def changed_go(recorded: Fps, +current: Fps, +acc: Eng.SS) -> Eng.SS:
+  match recorded:
+    case FpsNil{}: acc
+    case FpsCons{+h, t}:
+      changed_go(t, current, Bool.pick(Eng.SS, input_unchanged(h, current), acc, Eng.SSCons{fp_path(h), acc}))
+
+def changed_inputs(recorded: Fps, current: Fps) -> Eng.SS:
+  ss_rev(changed_go(recorded, current, Eng.SSNil{}))
+
+def applies_decision(+changed: Eng.SS) -> Applies:
+  match changed:
+    case Eng.SSNil{}: ACurrent{}
+    case Eng.SSCons{h, r}: AStale{changed}
+
+def applies_ok(recorded: Fps, current: Fps) -> Applies:
+  applies_decision(changed_inputs(recorded, current))
+
+def applies(+recorded: Fps, revalidation: Revalidation) -> Applies:
+  match revalidation:
+    case RvFailed{reason}: AUnknown{reason}
+    case RvOk{current}: applies_ok(recorded, current)
+
+# The capture consistency check: the manifest verified after provider
+# consumption must equal the recorded manifest.
+type CaptureCheck is Data:
+  CCIntact{}
+  CCChanged{paths: Eng.SS}
+
+def capture_decision(+changed: Eng.SS) -> CaptureCheck:
+  match changed:
+    case Eng.SSNil{}: CCIntact{}
+    case Eng.SSCons{h, r}: CCChanged{changed}
+
+def capture_check(recorded: Fps, verified: Fps) -> CaptureCheck:
+  capture_decision(changed_inputs(recorded, verified))
+
+# A catalog comparison: equal schema identity is current, a different one is
+# stale with the database path named. The caller supplies the path; the raw
+# data version is not consulted.
+def applies_catalog(+path: String, +recorded_digest: String, +current_digest: String) -> Applies:
+  Bool.pick(Applies, String.eq(recorded_digest, current_digest), ACurrent{}, AStale{Eng.ss_one(path)})
+
+# --- connection binding ------------------------------------------------------
+# A catalog snapshot and its target plan share one live connection and read
+# transaction. A detached snapshot cannot authorize opening another planning
+# snapshot.
+type Binding is Data:
+  BShare{}
+  BRefused{reason: String}
+
+def plan_binding(+snapshot: String, +plan_snapshot: String) -> Binding:
+  Bool.pick(Binding, String.eq(snapshot, plan_snapshot), BShare{},
+    BRefused{"the target plan must use the recorded catalog connection and read transaction"})
+
+# A join that spans engines (the C combined query's analyzer and catalog sides,
+# the TypeScript or entity code-access join) requires identical shared source
+# identities on both sides and the same named database snapshot identity, so a
+# same-name or same-text selection from another snapshot cannot join.
+def join_binding(+source: String, +join_source: String, +catalog: String, +join_catalog: String) -> Binding:
+  Bool.pick(Binding, Bool.and(String.eq(source, join_source), String.eq(catalog, join_catalog)), BShare{},
+    BRefused{"a multi-engine join requires identical shared source identities and the named database snapshot"})

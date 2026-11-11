@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-01T00:23:17.899Z",
+  "members": [
+    "board-authority-implementer-codex"
+  ],
+  "outcomes": [
+    {
+      "role": "board-authority-implementer-codex",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "ef7814c480de5998a29dd7febaf9220feab2a158"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "board-authority-implementer-codex",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "board-authority-implementer-codex",
+      "requestId": "pause:baton-d705bf940c76825572c83fb0-work:310",
+      "at": "2026-08-01T00:46:24.722Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "board-authority-implementer-codex",
+      "requestId": "pause:baton-d705bf940c76825572c83fb0-work:429",
+      "at": "2026-08-01T00:59:47.301Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}

@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-03T00:31:32.494Z",
+  "members": [
+    "authority-attacker",
+    "lifecycle-attacker"
+  ],
+  "outcomes": [
+    {
+      "role": "authority-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "2d36a13a646d1b0b012f9be047d32986c04a2ce9"
+    },
+    {
+      "role": "lifecycle-attacker",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "c7c4d2c7c8c632755c46a6837a2c6b1afa440576"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "authority-attacker",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "lifecycle-attacker",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "lifecycle-attacker",
+      "requestId": "pause:baton-da6ac97fa4254913db5a5bec-work:530",
+      "at": "2026-08-03T00:40:29.507Z"
+    },
+    {
+      "role": "authority-attacker",
+      "requestId": "pause:baton-fefaec60a1761013785a3e3c-work:148",
+      "at": "2026-08-03T00:43:35.881Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "lifecycle-attacker",
+      "requestId": "pause:baton-da6ac97fa4254913db5a5bec-work:554",
+      "at": "2026-08-03T00:41:59.142Z",
+      "code": "claimed"
+    },
+    {
+      "role": "authority-attacker",
+      "requestId": "pause:baton-fefaec60a1761013785a3e3c-work:176",
+      "at": "2026-08-03T00:44:37.384Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 1,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  }
+}

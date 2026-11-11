@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="orchestra-api-base" content="">
+<title>Baton - a live score</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="knowledge.css">
+<link rel="stylesheet" href="ribbon.css">
+<link rel="stylesheet" href="selection.css">
+<link rel="stylesheet" href="attention.css">
+</head>
+<body>
+
+<a class="skip" href="#staves">Skip to Orchestra</a>
+
+<header class="plate">
+  <h1 class="plate-title">Baton</h1>
+  <p class="plate-sub">a live score</p>
+  <nav class="plate-nav" aria-label="Move to a section">
+    <a href="#staves">Orchestra <span class="plate-count" id="plate-staves"></span></a>
+    <a href="#map">Knowledge <span class="plate-count" id="plate-map"></span></a>
+    <a href="#record">Selected actor <span class="plate-count" id="plate-record"></span></a>
+    <a href="#project">Project <span class="plate-count" id="plate-project"></span></a>
+  </nav>
+  <p class="plate-state">
+    <span class="plate-mark" id="plate-mark"></span>
+  </p>
+  <p class="plate-facts" id="snapshot-line">No snapshot loaded.</p>
+</header>
+
+<div class="notice" id="notice" hidden></div>
+<div class="notice fixture" id="fixture-notice" hidden></div>
+
+<div class="rail" id="rail" hidden></div>
+
+<main class="sheet">
+
+  <!-- Recorded reporting hierarchy and actor details. -->
+  <section class="paper" id="staves" tabindex="-1" aria-labelledby="staves-title">
+    <div class="staves-col">
+      <div class="movement-row">
+        <h2 id="staves-title" class="movement">Orchestra and activity</h2><p class="doc-counts" id="doc-counts"></p>
+        <div class="doc-tools">
+          <label class="doc-find">
+            <span class="doc-find-label">Find an actor</span>
+            <input type="search" id="doc-find" autocomplete="off"
+              placeholder="name or role" aria-controls="attention-band">
+          </label>
+          <button type="button" id="doc-ended" aria-pressed="false">Show quiet seats</button>
+          <button type="button" id="reconnect">Reconnect</button>
+        </div>
+      </div>
+      <div id="orchestra-legend" class="lane-strip"></div>
+      <div class="pit" id="pit"><div id="ribbon" class="doc-ribbon"></div></div>
+      <div id="attention-band" class="lane-strip"></div>
+    </div>
+
+  <aside class="record-col" id="record" tabindex="-1" aria-labelledby="selection-title">
+    <h2 id="selection-title" class="movement">The actor you selected</h2>
+    <div id="selection" class="doc-selection"></div>
+  </aside>
+
+  </section>
+
+  <!-- Knowledge records and their recorded relations. -->
+  <section class="map" id="map" tabindex="-1" aria-labelledby="map-title">
+    <div class="movement-row">
+      <h2 id="map-title" class="movement">Knowledge</h2>
+    </div>
+    <div class="knowledge-scope-bar">
+      <div class="knowledge-tiers" role="group" aria-label="Knowledge tier">
+        <button type="button" data-knowledge-tier="universal" aria-pressed="true">Orchestra</button>
+        <button type="button" data-knowledge-tier="group" aria-pressed="false">Ensemble</button>
+        <button type="button" data-knowledge-tier="worker" aria-pressed="false">Individual</button>
+        <button type="button" id="map-scope-all" aria-pressed="false">All tiers</button>
+      </div>
+      <label class="knowledge-holder">Holder
+        <select id="map-scope-holder" aria-label="Knowledge holder"></select>
+      </label>
+      <span id="map-scope" class="knowledge-scope-state" role="status">Orchestra knowledge</span>
+    </div>
+    <div class="map-frame">
+      <div id="knowledge-whole" class="doc-whole-mount"></div>
+    </div>
+  </section>
+
+  <!-- Read prior sessions from the selected actor's recorded workspace. -->
+  <section class="project" id="project" tabindex="-1" aria-labelledby="project-title">
+    <div class="movement-row">
+      <h2 id="project-title" class="movement">Project</h2>
+      <p class="doc-scope" id="project-state" role="status"></p>
+      <button type="button" id="project-load" class="doc-scope-btn">Read the project</button>
+    </div>
+    <div id="project-body" class="project-body"></div>
+  </section>
+
+</main>
+
+<script src="order.js" defer></script>
+<script src="attention.js" defer></script>
+<script src="knowledge-json.js" defer></script>
+<script src="knowledge.js" defer></script>
+<script src="ribbon.js" defer></script>
+<script src="selection.js" defer></script>
+<script src="document.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+{
+  "at": "2026-07-12T02:47:54.292Z",
+  "path": "impl/src/mcp-northbound.mjs",
+  "policy": {
+    "path": "impl/src/mcp-northbound.mjs",
+    "sourceNames": [
+      "parse"
+    ],
+    "sinkNames": [
+      "handle"
+    ],
+    "depth": 16
+  },
+  "result": {
+    "status": "ok",
+    "summary": "1 configured source-to-sink paths",
+    "provenance": {
+      "sourceDigest": "86b644e7ebabef64c9a30547ad33f4f7d9513ee54d76ff3ef69f1937f6804ec5",
+      "graphDigest": "ca07d7c656246aedb5a6d4d2b9851b423c401227cbd0ac892637da5bed088676",
+      "resultDigest": "73c14c5cf25e617fef350b77dc2c5be69ffac5d7e10db39a26e579cb8d8ab5b2",
+      "policyDigest": "be57e355f048254f2a49070a61b9ff422d1094af2628c26616f0771238ba59aa",
+      "pathCount": 1,
+      "parseErrors": 0,
+      "deterministic": true,
+      "meaning": "lexical_value_graph_reachability_not_safety_proof"
+    }
+  },
+  "witness": {
+    "sourceName": "parse",
+    "sinkName": "handle",
+    "distance": 3,
+    "edgeTypes": [
+      "ASSIGNED_FROM",
+      "REACHING_DEF",
+      "ARGUMENT_TO"
+    ]
+  },
+  "checks": {
+    "noError": true,
+    "complete": true,
+    "witnessFound": true,
+    "exactNames": true,
+    "valueEdges": true,
+    "reverified": true,
+    "auditPairs": true
+  },
+  "fatal": null,
+  "pass": true
+}

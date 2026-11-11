@@ -1,0 +1,129 @@
+{
+  "base": "89661c1ffc7f1040717165b5d490910434ddd523",
+  "scope": "Integrated follow-on changes after stable full suite; focused validation, not full release acceptance.",
+  "checks": [
+    {
+      "name": "omp_transport",
+      "localLog": "/tmp/baton-omp-control-final.log",
+      "sha256": "44aeaa6942702888221293febf75b4f42a9c75536af2fad66ddfc092ff5f1a15",
+      "passedTests": 33,
+      "tail": [
+        "ok 33 - OMP-TURN-VERDICT: a terminal agent_end carries the turn verdict \u2014 status, summary, artifacts",
+        "  ---",
+        "  duration_ms: 660.269125",
+        "  type: 'test'",
+        "  ...",
+        "1..33",
+        "# tests 33",
+        "# suites 0",
+        "# pass 33",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 4766.999709"
+      ]
+    },
+    {
+      "name": "comparison_followup",
+      "localLog": "/tmp/baton-final-comparison-followup.log",
+      "sha256": "ec899bebce8c65c64ee12bb3895dc942c0743399720f74e94d5f2cf124bd324d",
+      "passedTests": 92,
+      "tail": [
+        "ok 92 - QV1/QV7: the public driver exposes external vet through the sole audited ACI plane",
+        "  ---",
+        "  duration_ms: 38.683958",
+        "  type: 'test'",
+        "  ...",
+        "1..92",
+        "# tests 92",
+        "# suites 0",
+        "# pass 92",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 4732.493666"
+      ]
+    },
+    {
+      "name": "persistent_sessions",
+      "localLog": "/tmp/baton-persistent-session-fixtures.log",
+      "sha256": "de02b0ee0580a9a157e5fd3b4d0e8a56250c31e42e9c5bb2c9faa74751df9e6e",
+      "passedTests": 9,
+      "tail": [
+        "ok 9 - PS1-PS5: Claude, Codex, and Grok each run two public turns on one native session then kill",
+        "  ---",
+        "  duration_ms: 250.79725",
+        "  type: 'test'",
+        "  ...",
+        "1..9",
+        "# tests 9",
+        "# suites 0",
+        "# pass 9",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 467.113"
+      ]
+    },
+    {
+      "name": "production_convergence",
+      "localLog": "/tmp/baton-final-production.log",
+      "sha256": "fabf9090ae51e53f199619935437d8f950018aa035bd67947959f71e1e94e3ec",
+      "passedTests": 24,
+      "tail": [
+        "ok 24 - workflow Web port adapter refuses undeclared, credential-shaped and mismatched fields before dispatch",
+        "  ---",
+        "  duration_ms: 0.184625",
+        "  type: 'test'",
+        "  ...",
+        "1..24",
+        "# tests 24",
+        "# suites 0",
+        "# pass 24",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 2542.131375"
+      ]
+    },
+    {
+      "name": "surface_audits",
+      "localLog": "/tmp/baton-final-surface-audits.log",
+      "sha256": "135ce6527c7faec65c566a814a74aaebf21ec6aa224745716aa9370deda1fd7f",
+      "passedTests": null,
+      "tail": [
+        "    ],",
+        "    \"unresolved\": []",
+        "  },",
+        "  \"completeCapabilityCount\": 116,",
+        "  \"metaNames\": [",
+        "    \"baton_surface_catalog\",",
+        "    \"baton_surface_describe\",",
+        "    \"baton_surface_invoke\",",
+        "    \"baton_surface_snapshot\",",
+        "    \"baton_surface_visualize\",",
+        "    \"baton_surface_watch\"",
+        "  ],",
+        "  \"cliMetaCases\": 7",
+        "}"
+      ]
+    },
+    {
+      "name": "package_smoke",
+      "localLog": "/tmp/baton-final-package.log",
+      "sha256": "3744389ec72485a12a1161ad35b10e67b4f6038b7b927868da66a3259bf76496",
+      "passedTests": null,
+      "tail": [
+        "",
+        "> baton@0.1.0 test:package",
+        "> node scripts/release-package-smoke.mjs",
+        "",
+        "{\"ok\":true,\"archive\":\"baton-0.1.0.tgz\",\"bins\":[\"baton\",\"baton-mcp\",\"baton-mcp-web\"],\"convergence\":true,\"unifiedCapabilities\":114,\"completeCapabilityNames\":612,\"notificationWatch\":true,\"connectedRunDebug\":true,\"workflowWebPorts\":8}"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-13T02:03:17.627Z",
+  "salt": "i620260813020317",
+  "role": "impl-67",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a6c21fc5f06d1e74e82351235c93a98c"
+        ]
+      }
+    },
+    {
+      "step": "terminal:impl-67",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "impl-67": {
+      "pin": "593586016a04fd61b58a3c5fe13ba4ce667bea96",
+      "paths": [
+        "impl/src",
+        "docs/reference/evidence/stall-watchdog-2026-08-07/impl-67-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 430,
+  "verdict": "IMPL-67-OK"
+}

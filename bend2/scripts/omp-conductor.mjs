@@ -1,0 +1,178 @@
+#!/usr/bin/env node
+// Bend2 OMP Conductor adapter.
+//
+// Bridges the Bend2 coordinator to a Principal or Associate Conductor.
+// One-shot and attached turns use the shared native RPC receiver.
+// --attach and stored message callbacks also register its receive endpoint.
+//
+// Usage: node bend2/scripts/omp-conductor.mjs <database-path> [coordinator-executable] [omp-executable]
+//
+// Environment:
+//   OMP_CONDUCTOR_MODEL    Model (default: stored model or zai/glm-5.3-flash)
+//   OMP_CONDUCTOR_THINKING Thinking level (default: stored effort or high)
+//   OMP_ROOT_MODEL and OMP_ROOT_THINKING are compatibility aliases.
+//   HOME              Must point to the user home for OMP credential discovery
+//
+// No npm dependencies; node stdlib only.
+
+import { spawnSync, execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(__dirname, '../..');
+
+function hasParent(session) {
+  return session?.parent !== null && session?.parent !== undefined;
+}
+
+const positional = [];
+let attach = false;
+let messageId = null;
+let sessionId = 'root';
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (arg === '--attach') attach = true;
+  else if (arg === '--once') continue;
+  else if (arg === '--session') {
+    sessionId = process.argv[++i];
+    if (sessionId === undefined) throw new Error('--session requires a registered session ID');
+  }
+  else if (arg === '--message') {
+    messageId = process.argv[++i];
+    if (!messageId) throw new Error('--message requires a committed message ID');
+  } else if (arg.startsWith('--')) throw new Error(`Unknown option: ${arg}`);
+  else positional.push(arg);
+}
+const dbPath = positional[0];
+const installed = resolve(ROOT, 'bin/baton2');
+const coordinatorExe = positional[1] || (existsSync(installed) ? installed : resolve(ROOT, '.scratch/bend2/baton2'));
+const ompExe = positional[2] || '/opt/homebrew/bin/omp';
+let ompModel = process.env.OMP_CONDUCTOR_MODEL || process.env.OMP_ROOT_MODEL;
+let ompThinking = process.env.OMP_CONDUCTOR_THINKING || process.env.OMP_ROOT_THINKING;
+
+if (!dbPath) {
+  process.stderr.write(
+    'usage: omp-conductor.mjs <database-path> [coordinator-executable] [omp-executable] [--session ID] [--attach | --once]\n' +
+    '\nEnvironment:\n' +
+    '  OMP_CONDUCTOR_MODEL    Model (default: stored model or zai/glm-5.3-flash)\n' +
+    '  OMP_CONDUCTOR_THINKING Thinking level (default: stored effort or high)\n' +
+    '  OMP_ROOT_MODEL and OMP_ROOT_THINKING are compatibility aliases.\n' +
+    '  HOME              Must point to the user home for OMP credential discovery\n',
+  );
+  process.exit(1);
+}
+
+const COORD = resolve(coordinatorExe);
+const DB = resolve(dbPath);
+
+// Database access (node:sqlite, Node 22+).
+let db = null;
+
+async function openDb() {
+  if (db) return db;
+  if (!existsSync(DB)) return null;
+  const { DatabaseSync } = await import('node:sqlite');
+  db = new DatabaseSync(DB, { open: true, readOnly: true });
+  return db;
+}
+
+function closeDb() {
+  if (db) { try { db.close(); } catch {} db = null; }
+}
+
+function selectedSession() {
+  if (!db) return null;
+  try {
+    return db.prepare("SELECT * FROM sessions WHERE id=? AND harness=?").get(sessionId, 'omp') || null;
+  } catch {
+    return null;
+  }
+}
+
+function selectRoute(session) {
+  ompModel ||= session?.model || 'zai/glm-5.3-flash';
+  ompThinking ||= session?.effort || 'high';
+}
+
+function pendingConductorMessages() {
+  if (!db) return [];
+  try {
+    return db.prepare(
+      `SELECT m.seq, m.id, m.sender, m.kind, m.body
+       FROM messages m
+       JOIN sessions s ON s.id = m.recipient
+       WHERE s.id = ? AND m.receipt IS NULL
+         AND (? IS NULL OR m.id = ?)
+       ORDER BY m.seq`,
+    ).all(sessionId, messageId, messageId);
+  } catch {
+    return [];
+  }
+}
+
+function resultText(value) {
+  if (value?.sender === sessionId && value?.kind === 'report') return value.body;
+  if (value?.session !== sessionId || !value.event) return null;
+  if (typeof value.event.result === 'string') return value.event.result;
+  const message = Array.isArray(value.event.messages)
+    ? value.event.messages.findLast(item => item?.role === 'assistant') : value.event.message;
+  const content = message?.content;
+  return Array.isArray(content)
+    ? content.filter(item => item.type === 'text').map(item => item.text).join('\n') : null;
+}
+
+// One invocation uses the shared receiver without changing the registered endpoint.
+async function runOnce() {
+  await openDb();
+  const messages = pendingConductorMessages();
+  if (messages.length === 0) {
+    process.stderr.write('omp-conductor: no pending messages\n');
+    closeDb();
+    return;
+  }
+  const session = selectedSession();
+  selectRoute(session);
+  const log = DB + '.conductor-' + Buffer.from(sessionId).toString('hex') + '.jsonl';
+  const args = [DB, 'receive', sessionId, ompExe, ompModel,
+    ompThinking, session?.workspace || ROOT, log, ''];
+  closeDb();
+  process.stderr.write(`omp-conductor: ${messages.length} pending message(s), starting OMP turn\n`);
+  const result = spawnSync(COORD, args, { encoding: 'utf8', maxBuffer: Infinity });
+  if (result.stdout) process.stderr.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) process.stderr.write(`omp-conductor: ${result.error.message}\n`);
+  if (result.signal) process.stderr.write(`omp-conductor: receiver ended by ${result.signal}\n`);
+  let text = null;
+  for (const line of (result.stdout || '').split('\n')) {
+    let value;
+    try { value = JSON.parse(line); } catch { continue; }
+    const body = resultText(value);
+    if (typeof body === 'string') text = body;
+  }
+  if (text !== null) process.stdout.write(text + '\n');
+  process.exitCode = result.status ?? 1;
+  process.stderr.write(`omp-conductor: turn completed (exit ${process.exitCode})\n`);
+}
+
+async function runAttached() {
+  await openDb();
+  const session = selectedSession();
+  selectRoute(session);
+  const native = session?.native || '';
+  const cwd = session?.workspace || ROOT;
+  const log = DB + '.conductor-' + Buffer.from(sessionId).toString('hex') + '.jsonl';
+  const receiver = [DB, 'receive', sessionId, ompExe, ompModel, ompThinking, cwd, log];
+  const endpoint = JSON.stringify([COORD, ...receiver]);
+  const command = hasParent(session)
+    ? [DB, 'connect', sessionId, native, endpoint]
+    : [DB, 'attach', sessionId, 'omp', native, endpoint];
+  execFileSync(COORD, command, { stdio: 'inherit' });
+  execFileSync(COORD, [DB, 'role', sessionId, hasParent(session) ? 'associate-conductor' : 'principal-conductor'], { stdio: 'inherit' });
+  closeDb();
+  execFileSync(COORD, [...receiver, messageId || ''], { stdio: 'inherit' });
+}
+
+if (attach || messageId !== null) await runAttached();
+else await runOnce();

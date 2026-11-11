@@ -1,0 +1,13 @@
+# arch-replay-stop.cases — the case inputs both halves read, one CASE record per line.
+#
+# CASE|<case-id>|<policy-basis>|<row-integrity>|<row-seq>|<row-target-tasks>|<reader-cursor>
+#
+# policy-basis is the run-lineage policy basis the replay supplies: `present` replays the frozen
+# ledger with the policy that authorized the recorded row, `missing` replays it without one.
+# row-integrity is the recorded row's own state: `intact` is the frozen row, `corrupt` is the same
+# row with one bound digest altered, which is what a damaged source byte looks like to the fold.
+# row-seq and row-target-tasks are the recorded row's own values; reader-cursor is a consumer that
+# has read through seq 1 and owes everything the fold admits past it.
+CASE|stop-policy-bearing|present|intact|3|2|1
+CASE|stop-missing-policy|missing|intact|3|2|1
+CASE|stop-corrupt-row|present|corrupt|3|2|1

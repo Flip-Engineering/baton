@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>baton — project update · 2026-08-14 (the no-clock law)</title>
+<style>
+  :root {
+    --bg:#0b0e14; --panel:#12161f; --panel2:#171c28; --ink:#dbe4f0; --dim:#8b98ad;
+    --acc:#7ee0c2; --acc2:#8fb8ff; --warn:#ffb86b; --bad:#ff7b8a; --line:#232b3b; --violet:#c9a7ff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.6 -apple-system,"SF Pro Text",Inter,sans-serif; }
+  code, .mono { font:12.5px/1.5 "SF Mono",Menlo,monospace; }
+  code { background:#0e131c; padding:1px 6px; border-radius:4px; color:var(--acc); }
+  nav { position:sticky; top:0; z-index:9; background:rgba(11,14,20,.93); backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line); padding:10px 26px; display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+  nav .brand { color:var(--acc); font-weight:700; }
+  nav a { color:var(--dim); text-decoration:none; font-size:12.5px; }
+  nav a:hover { color:var(--acc); }
+  main { max-width:1120px; margin:0 auto; padding:34px 28px 90px; }
+  h1 { font-size:29px; margin:16px 0 4px; }
+  h2 { font-size:21px; margin:46px 0 4px; padding-top:14px; border-top:1px solid var(--line); }
+  h2 .tick { color:var(--acc); margin-right:8px; }
+  h3 { font-size:15.5px; margin:24px 0 4px; color:var(--acc2); }
+  p { margin:8px 0; }
+  .sub { color:var(--dim); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin:18px 0; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:13px 15px; }
+  .card .big { font-size:24px; font-weight:700; color:var(--acc); }
+  .card .lbl { color:var(--dim); font-size:11.5px; text-transform:uppercase; letter-spacing:.7px; }
+  table { width:100%; border-collapse:collapse; margin:12px 0 20px; font-size:13px; }
+  th { text-align:left; color:var(--dim); font-weight:600; font-size:11.5px; text-transform:uppercase;
+    letter-spacing:.6px; padding:7px 9px; border-bottom:1px solid var(--line); }
+  td { padding:8px 9px; border-bottom:1px solid #1a2130; vertical-align:top; }
+  tr:hover td { background:#131927; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:20px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .live { background:#123528; color:var(--acc); } .land { background:#1b2a45; color:var(--acc2); }
+  .queue { background:#2c2416; color:var(--warn); } .gap { background:#33181e; color:var(--bad); }
+  .spec { background:#2a2038; color:var(--violet); }
+  .issue { color:var(--acc2); font-family:Menlo,monospace; font-size:12px; white-space:nowrap; }
+  .story { background:var(--panel); border-left:3px solid var(--acc); border-radius:0 10px 10px 0;
+    padding:13px 17px; margin:14px 0; }
+  .law { background:#1c1420; border-left:3px solid var(--violet); border-radius:0 10px 10px 0;
+    padding:13px 17px; margin:14px 0; }
+  ul { margin:6px 0; padding-left:20px; } li { margin:4px 0; }
+  .foot { margin-top:56px; color:var(--dim); font-size:12.5px; border-top:1px solid var(--line); padding-top:16px; }
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">✦(◕‿◕)◦ baton</span>
+  <a href="#headline">headline</a><a href="#six">last 6h</a><a href="#twelve">last 12h</a>
+  <a href="#forty-eight">last 48h</a><a href="#unlocks">unlocks</a><a href="#fleet">live fleet</a><a href="#frontier">frontier</a>
+</nav>
+<main>
+  <p class="sub">project update · 2026-08-14 · window: 48h with focus on the last 12h/6h · orchestrator: kimi · resident: v19</p>
+  <h1>The no-clock law, the detached bus, and the uncapped fleet.</h1>
+
+  <p>Forty-eight hours ago baton could not run two waves at once without wedging; twelve hours
+  ago it could not run a wave past three hours without murdering it; six hours ago the bus
+  answered launches on a 30–60-second delay when it answered at all. All three are gone, and
+  each was removed the same way: measured against live fleet behavior, ruled on by the
+  operator, ripped out at the mechanism, restaged in the suites, and re-proven by a flood of
+  real waves through the changed machinery. This report covers the window: <b>190 commits,
+  136 issues filed-to-date (#86–#221), five bootstrap kernel/surface laws landed, one full
+  DSL, and the first 15-pack concurrent flood.</b></p>
+
+  <h2 id="six"><span class="tick">▣</span>The last 6 hours — the operator-ruling era</h2>
+
+  <div class="law"><b>The law that reframed the era:</b> <i>"timeout/clock based control flows
+  are not appropriate for baton — that is an arbitrary cap/limit, just in general."</i> The
+  trigger was a murder receipt: the honesty-e wave (five members, 4.5h of live work) was
+  <code>stop_completed</code> in sequence at the interpreter's <code>hardCapMs</code> — the wave
+  settled all-failed, harvest all-miss, at the exact second its invisible clock expired. The
+  operator named the class; the mechanism died the same day.</div>
+
+  <table>
+    <tr><th>landing</th><th>what changed</th><th>why it matters (the unlock)</th></tr>
+    <tr><td><span class="pill land">#163 · 8ec52a6c</span></td>
+      <td><b>hardCap ripped out everywhere</b> — interpreter loop, wave-driver policy, recipes, production default. A numeric cap now refuses at admission naming the law; the null sentinel is the only accepted form.</td>
+      <td><b>Waves settle on evidence, never on a clock.</b> The replacement is quiescence-derived completion: the drive exits on terminality, an unrecoverable member, a handled-decision stuck roster, or a roster-wide silence past a window derived from the roster's <i>own observed cadence</i> (max(2×observed gap, 8 polls)) — never elapsed time. Long-running dynamic workflows are now physically possible; before this, every wave carried a hidden self-destruct.</td></tr>
+    <tr><td><span class="pill land">#221 · a3e96e8</span></td>
+      <td><b>The invented seat-ceiling pre-cap ripped out of dispatch.</b> The "1× concurrency" on the two cheapest models was a scaffolding fossil I had been planning around for days.</td>
+      <td><b>The fleet's real parallelism is the provider's, not ours.</b> The only queue left is provider-true typed backpressure (429/rate_limited, retried, ledgered). Massive cheap-model parallelism (the DSv4Flash swarms) is unthrottled by our own machinery.</td></tr>
+    <tr><td><span class="pill land">#173 · ac0f5bc</span></td>
+      <td><b>waves.run detaches at the bus.</b> Launch returns a synchronous acceptance receipt (waveId, manifest digest, roster); the drive runs as a continuation; settlement mints a wave.settled receipt into the store.</td>
+      <td><b>The bus survives launches.</b> Previously each launch held the serial command loop for the wave's whole life — two live drives wedged every other launch (measured: zero admissions in 43 attempts). Now admission is instant and the mesh moves at launch speed.</td></tr>
+    <tr><td><span class="pill land">WLS-1 · 8551955</span></td>
+      <td><b>Single-pass steering index</b> for waves.list/waves.progress — the per-member full-log rescans (162 log reads per page) became one index build (3 reads).</td>
+      <td><b>Oversight scales with the fleet.</b> The 87k-event furnace that 503'd the observability surface is dead; the control surface stays honest as the ledger grows.</td></tr>
+    <tr><td><span class="pill land">fix#4 · cda6355</span></td>
+      <td><b>Async base-commit + skip-if-clean</b> in the interpreter — a sync git add/commit blocked the event loop 30–60s per launch on a dirty tree.</td>
+      <td><b>Launches are non-blocking.</b> Measured: 15 of 16 flood launches timed out before their requests were even read. Clean-tree launches now pay one fast status probe.</td></tr>
+    <tr><td><span class="pill land">#210 · 49b42d3</span></td>
+      <td><b>Clone-free eventsView()</b> + 25 read-path switches — the loop-starvation P0.</td>
+      <td>The coordination store's read path stopped copying the world per call; the resident's command loop stays responsive under fleet load.</td></tr>
+  </table>
+
+  <div class="story"><b>The quiescence contract, honestly told.</b> The replacement wasn't
+  improvised: the #163 foundry had already contract→red-team→fold→suite'd the design (14-row
+  red-first suite). Landing it surfaced two contract-level defects the suites' authors couldn't
+  have measured: the phase-stuck terminalization threshold, as written, murdered any member
+  whose in-turn event gap outlived the quiet window (a 400ms in-turn edit died at 120ms —
+  the suite's own cadence rows exposed it), and the survivor-harvest row assumed finalization
+  inside the break poll. Both amendments are documented on the issue and in the suite; the
+  suite is 15/15 green, and the full interpreter/driver battery holds (every remaining failure
+  is a parked red-first row by design). <b>The methodology caught its own contract's bugs
+  before they ate a fleet.</b></div>
+
+  <h2 id="twelve"><span class="tick">▣</span>The last 12 hours — the DSL and the foundry engine</h2>
+
+  <table>
+    <tr><th>landing</th><th>what it is</th><th>the unlock</th></tr>
+    <tr><td><span class="pill land">#170 · 68163cf</span></td>
+      <td><b>The workflow DSL package</b> — a wave is a <code>.wavefile</code> (named members, exact routes, scopes, objectiveRef briefs, harvest targets), compiled closed, driven by the interpreter. Plus the waves.compile seam, steering cross-validation, and the red-first addendum suite.</td>
+      <td><b>The bespoke-driver era ended.</b> The campaign's central complaint — "every baton wave cost me a bespoke driver and hours of driver bugs" — is answered by workflow-as-data. This report's own flood (15 packs) is 15 DSL documents, not 15 scripts.</td></tr>
+    <tr><td><span class="pill land">foundries</span></td>
+      <td><b>Contract/suite/blue-team/fold foundries</b> ran as multi-agent waves across the honesty package (② #157–#160), lifecycle (③), durability (④), collab (⑤), and the #163/#165/#167/#146 fold-b set: 9 contracts folded, 14 red-first suites authored, every suite blue-teamed and folded.</td>
+      <td><b>The spec-engine pipeline is industrialized.</b> The full methodology loop — ground → contract → red-team → fold → suite → blue-team → fold → impl — now runs as baton waves themselves, with the orchestrator answering checkpoints instead of hand-driving phases.</td></tr>
+    <tr><td><span class="pill land">bf93263c</span></td>
+      <td><b>glm-5.3 route + GLM ceiling 1→4</b> (the other scaffolding fossil) and deepseek-v4-pro[1m] admitted.</td>
+      <td><b>Heterogeneous routing is real:</b> glm-5.2/5.3, deepseek-v4-flash/pro[1m], with per-run route.model flowing through the session dialect. The cheap-strong suborchestrator pattern (glm-5.3 coordinating DSv4Flash rows) is launchable.</td></tr>
+    <tr><td><span class="pill land">8f0c112</span></td>
+      <td><b>Re-seating law</b> — big waves moved onto glm seats after the measured spawn-budget finding (#218).</td>
+      <td>Route selection is now evidence-driven (measured ceilings, observed deaths), not habit.</td></tr>
+  </table>
+
+  <h2 id="forty-eight"><span class="tick">▣</span>The last 48 hours — substrate and proof</h2>
+
+  <ul>
+    <li><b>#74 — the worker-orchestrated swarm rung</b> (1519102): a wave member can itself orchestrate — truthful steering trail, read-authorization law, coordinator authority boundary, registry seat map. The recursive shape the whole campaign points at.</li>
+    <li><b>#79 shipped</b> (the earlier epic) and the <b>channel audit</b> (fcffc11f): the collaboration layer as actually exercised — the first honest map of which bidirectional lanes had ever fired (several had never been exercised; the lane-proof foundry then fired them: first live policy-answered DECISION_REQUEST and honest defer-park, proven on store evidence).</li>
+    <li><b>#169 kernel-honesty audit</b> (9966ea8d): five code-cited findings (silent stale-lease recovery, invisible TTLs, capacity refusals naming no numbers, waves.* verbs dispatching before the recursive gate, run.result materialization) — each now filed and several already fixed in this window.</li>
+    <li><b>PM + DSH comparison foundries</b> (94a0d35c, c14e2810): the project-manager and DeepSeek-Harness teardowns landed WAVE-OK with rubric-filtered adoption verdicts — activation-before-representation for the knowledge plane, typed contradiction edges (deterministic only), belief_status in / confidence scalar out, every clock vetoed or event-derived.</li>
+    <li><b>The campaign-state machinery</b>: the 24h report (780dce3), the PROGRESS checkpoint (bae5dab6 — gate 4054/3677 with a fully-accounted failure set), and the persistent launcher with admission grep — the operational shell around the fleet.</li>
+  </ul>
+
+  <h2 id="unlocks"><span class="tick">▣</span>What it qualitatively unlocks</h2>
+
+  <div class="grid">
+    <div class="card"><div class="big">∞</div><div class="lbl">wave lifetime</div>
+      <p class="sub">No clock kills work. A wave lives until its members settle, stall handled, or the orchestrator stops it by hand. Long-horizon campaigns are now a first-class shape.</p></div>
+    <div class="card"><div class="big">N</div><div class="lbl">fleet width</div>
+      <p class="lbl" style="text-transform:none">No invented concurrency ceilings. The fleet is as wide as the providers allow, with typed backpressure as the only queue.</p></div>
+    <div class="card"><div class="big">1 doc</div><div class="lbl">per workflow</div>
+      <p class="sub">A dynamic multi-agent workflow is a DSL document with named members, routes, scopes, briefs, and harvest — not a bespoke driver. The orchestrator authors, the interpreter drives.</p></div>
+    <div class="card"><div class="big">0 waits</div><div class="lbl">on the bus</div>
+      <p class="sub">Detached launches + the eventsView read path + the single-pass index: the command loop admits, answers, and settles without queueing behind a wave's life.</p></div>
+  </div>
+
+  <p>The composite shift: <b>baton moved from "waves are expensive, fragile, and clock-bombed"
+  to "waves are cheap, concurrent, and die only by evidence."</b> The remaining frontier is no
+  longer whether a fleet can run — it is how honestly the surface reports it, how well members
+  speak, and how the knowledge/plan planes become readable citizens.</p>
+
+  <h2 id="fleet"><span class="tick">▣</span>The live fleet (v19, fired at publish)</h2>
+
+  <table>
+    <tr><th>pack</th><th>payload</th><th>state</th></tr>
+    <tr><td>honesty-f</td><td>C5 honesty package impl (#157–#160 surfaces land on the product)</td><td><span class="pill live">fired</span></td></tr>
+    <tr><td>lc-rd4 · collab-rd3 · lch-rd2</td><td>lifecycle + collab contract rows (③/⑤ — wake/death/retry, member lanes, knowledge activation, context lanes)</td><td><span class="pill live">fired</span></td></tr>
+    <tr><td>telemetry-c</td><td>C4 oversight impl (#146 seat telemetry + readiness honesty)</td><td><span class="pill live">fired</span></td></tr>
+    <tr><td>eval-b</td><td>#107 — the first honest eval number (wave-a's STOP folded: keys exist; capacity model predated the #221 law)</td><td><span class="pill live">fired</span></td></tr>
+    <tr><td>gate-digest-b · accessor-b · readme-b</td><td>#149 gate digest · #99/#179 result accessor · README split</td><td><span class="pill live">fired</span></td></tr>
+    <tr><td>kg-activation-b</td><td>K plane — the knowledge graph's READ path (#24–#27/#186: write-only = non-functional)</td><td><span class="pill live">fired</span></td></tr>
+    <tr><td>audit-147 · contract-seeds</td><td>#147 conformance re-run · #150/151/152 contract seeds</td><td><span class="pill live">fired</span></td></tr>
+    <tr><td>pg-rd4</td><td>C3 phase grammar impl — the campaign-as-DSL north star (#9/#170 comment)</td><td><span class="pill live">fired</span></td></tr>
+    <tr><td>lsp-pool · plan-object</td><td colspan="2"><span class="pill land">LANDED WAVE-OK on v18</span> — #144 LSP pool and #161 orchestrator plan-object both settled clean with shas before the restart; gate verification rides the flood's QA.</td></tr>
+  </table>
+
+  <h2 id="frontier"><span class="tick">▣</span>The frontier, unchanged in shape, closer in reach</h2>
+
+  <ul>
+    <li><b>C1 communications</b> — the attention spine (#208/#205/#10/#181), member voice (#206/#174/#195), transport parity (#153/#156), tight-cell cross-comms (#102). The oversight/comms honesty packs are the next serialized impls behind the flood.</li>
+    <li><b>C2 durability</b> — the phantom cluster (#199/#200/#204/#207), durable retry (resume-not-drop), death certificates, lease recovery. Every one was lived this window.</li>
+    <li><b>#163 follow-ons</b> — the wave-driver's legacy stall-break is the last fate clock (kept this pass only because six legacy suites pin it; its event-derived replacement is filed and scoped on the issue).</li>
+    <li><b>C6 orchestration depth</b> — nested orchestration (#12), the coordinator seat (#74 remainder), tight cells (#102), mid-flight mutability — gated on the flood's landings.</li>
+    <li><b>K/P planes</b> — knowledge activation (in flight) and the orchestrator plan object as a baton citizen (#161 landed, gate pending).</li>
+    <li><b>D tier diagnostics</b> — LSP pool landed; symbol-anchored citations (#214) and atlas verbs (#123) next.</li>
+  </ul>
+
+  <div class="foot">Generated by the orchestrator from the commit ledger (190 commits / 48h), the
+  coordination store (wave.started/wave.settled receipts), and the issue tracker (#86–#221).
+  Cross-referenced from README.md. Prior reports: baton-campaign-state-2026-08-14.html (v2),
+  baton-foundry-day-2026-08-13.html, baton-24h-report.html.</div>
+</main>
+</body>
+</html>

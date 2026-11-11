@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-55 -20 110 40" role="img" aria-label="Soft navy and cream headset cups accessory">
+  <title>Soft navy and cream headset cups accessory</title>
+  <g id="headset-cups" data-anchor="headset" data-layer="front" style="--shell:#002F5B;--ink:#002F5B;--panel:#F7FAFC" stroke-linecap="round" stroke-linejoin="round">
+    <path id="left-shell" d="M-46.5 -10 Q-49.5 -8 -49.5 -3 V5 Q-49.5 10 -46.5 11 H-40.5 Q-37.5 10 -37.5 6 V-5 Q-37.5 -10 -40.5 -10 Z" fill="var(--shell)" stroke="var(--ink)" stroke-width="1.1"/>
+    <path id="right-shell" d="M40.5 -10 Q37.5 -10 37.5 -5 V6 Q37.5 10 40.5 11 H46.5 Q49.5 10 49.5 5 V-3 Q49.5 -8 46.5 -10 Z" fill="var(--shell)" stroke="var(--ink)" stroke-width="1.1"/>
+    <path id="left-panel" d="M-46.5 -6.5 Q-47.5 -5.5 -47.5 -2 V4 Q-47.5 7.5 -45.5 7.5 H-41.5 Q-39.5 7.5 -39.5 4 V-2 Q-39.5 -6.5 -41.5 -6.5 Z" fill="var(--panel)"/>
+    <path id="right-panel" d="M41.5 -6.5 Q39.5 -6.5 39.5 -2 V4 Q39.5 7.5 41.5 7.5 H45.5 Q47.5 7.5 47.5 4 V-2 Q47.5 -5.5 46.5 -6.5 Z" fill="var(--panel)"/>
+  </g>
+</svg>

@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-12T20:01:33.181Z",
+  "salt": "f020260812200133",
+  "role": "fold-72",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-c78ccc6efae801b8fc44344fb3322139"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-72",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-72": {
+      "pin": "32fea5c44e8e7a306274fd3be2c9b6acda82eaa3",
+      "paths": [
+        "docs/reference/evidence/prescriptive-doctor-2026-08-12/prescriptive-doctor-contract.md",
+        "docs/reference/evidence/prescriptive-doctor-2026-08-12/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 409,
+  "verdict": "FOLD-72-OK"
+}

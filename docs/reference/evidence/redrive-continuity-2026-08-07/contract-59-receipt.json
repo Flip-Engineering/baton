@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T06:49:11.740Z",
+  "salt": "ca20260807064911",
+  "role": "contract-59",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-e5654719e3512f0e8b3794edc5e2f377"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-59",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-59": {
+      "pin": "cf4683487fd4b9c24f3b4a611cd89b86d3b6b322",
+      "paths": [
+        "docs/reference/evidence/redrive-continuity-2026-08-07/redrive-continuity-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 374,
+  "verdict": "CONTRACT-59-OK"
+}

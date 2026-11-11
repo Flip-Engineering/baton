@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T08:46:39.883Z",
+  "salt": "bd20260807084639",
+  "role": "blue-71",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-3dcc88f744988bfe92f8737457b42b21"
+        ]
+      }
+    },
+    {
+      "step": "terminal:blue-71",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "blue-71": {
+      "pin": "2c4dc1343cd9fec258f5fab5e5eb783ddcf7c3d6",
+      "paths": [
+        "docs/reference/evidence/orchestrator-wake-2026-08-07/suite-blueteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 388,
+  "verdict": "BLUE-71-OK"
+}

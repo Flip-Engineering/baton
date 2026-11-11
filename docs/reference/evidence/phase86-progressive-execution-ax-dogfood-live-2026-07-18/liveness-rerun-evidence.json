@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "route": {
+    "harness": "glm",
+    "model": "glm-5.2",
+    "effort": "xhigh",
+    "state": "ready"
+  },
+  "group": {
+    "schemaVersion": 1,
+    "state": "ready",
+    "counts": {
+      "total": 1,
+      "active": 0,
+      "waiting": 0,
+      "ready": 1,
+      "completed": 0,
+      "failed": 0,
+      "stopped": 0,
+      "terminal": 0,
+      "attention": 0,
+      "cleanupIncomplete": 0,
+      "byPhase": {
+        "work_completed": 1
+      }
+    },
+    "members": [
+      {
+        "runId": "run-dbe275e23261e7b1ba5d9815bc2dcf4b",
+        "objective": "Perform a deliberately bounded independent review of only the active-worktree liveness fix. Read impl/src/index.mjs, the relevant worktree-authority methods in impl/src/coordinator.mjs, the single matching coordinator test, and the Phase 86 incident note. Use no more than eight repository reads and do not run the full suite. Decide whether loss is sticky, fails and kills once, rejects later non-terminal worker output, and still permits exact terminal close evidence. Distinguish fail-fast detection from OS containment and state any concrete defect concisely. Do not invoke nested Baton. Use rtk for every shell operation, one command per call, with no pipes, &&, semicolons, or unwrapped shell commands. Never mutate home state, credentials, toolchains, shims, caches, global configuration, runtime paths, or the main checkout. Write only docs/reference/evidence/phase86-progressive-execution-ax-dogfood-live-2026-07-18/glm-liveness-review.md, then finish immediately. Do not change any other path.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "glm-5.2",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "d442f38c0ce60c8e0e802360d4c72fe0cc82070dbdda099f03be8d7746ddf354"
+      }
+    ]
+  },
+  "materialized": {
+    "path": "docs/reference/evidence/phase86-progressive-execution-ax-dogfood-live-2026-07-18/glm-liveness-review.md",
+    "sha": "e5f4fd27469b6eed175103aea1d213fd81ccb6c8"
+  },
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-dbe275e23261e7b1ba5d9815bc2dcf4b",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}
