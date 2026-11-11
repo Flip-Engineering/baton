@@ -1,0 +1,223 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-role-catalog-pgYCUb",
+    "runId": "run-505b29729a108efc01579f16ea244672",
+    "outcome": "selection_required",
+    "readiness": [
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "state": "ready",
+        "code": null
+      }
+    ],
+    "selectedTeam": [
+      {
+        "role": "role-catalog-builder",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        }
+      },
+      {
+        "role": "role-catalog-adversary",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        }
+      }
+    ],
+    "phase": "selection_required",
+    "candidates": [
+      {
+        "role": "role-catalog-builder",
+        "route": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "candidateId": "candidate:e686bb32cd43f76a2bda93da31b499af59d243d7d1184ba808b39fcb7133c5a6",
+        "resultSha": "c9e3be80daf4f549722f50350d1038f66adfa51c",
+        "retainedResultRef": "refs/baton/results/c9e3be80daf4f549722f50350d1038f66adfa51c",
+        "changedPaths": [
+          "impl/src/application.mjs",
+          "impl/src/context-runtime.mjs",
+          "impl/src/coordination-store.mjs",
+          "impl/src/index.mjs",
+          "impl/src/workflow-definition.mjs"
+        ],
+        "patch": {
+          "name": "candidate-role-catalog-builder.patch",
+          "digest": "335570879866eac5fe34abd68d633196a71af8174839f5673c97a34ce5edf88b",
+          "bytes": 40366
+        }
+      }
+    ],
+    "attempts": [
+      {
+        "role": "role-catalog-adversary",
+        "state": "cancelled",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "not_observed_before_stop"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "not_observed_before_stop"
+            }
+          }
+        },
+        "taskId": "baton-e3ddb4827d393d3e3bc791ee-attempt-role-catalog-adversary",
+        "candidateId": null
+      },
+      {
+        "role": "role-catalog-builder",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "high",
+              "resolved": "high",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "taskId": "baton-c8bc95ffca3f727762bf92d2-attempt-role-catalog-builder",
+        "candidateId": "candidate:e686bb32cd43f76a2bda93da31b499af59d243d7d1184ba808b39fcb7133c5a6"
+      }
+    ]
+  },
+  "cleanup": {
+    "stopped": {
+      "state": "stopped",
+      "receipt": {
+        "schemaVersion": 1,
+        "state": "stopped",
+        "scope": "run_subtree",
+        "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+        "runId": "run-505b29729a108efc01579f16ea244672",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "targetDigest": "7581e53d9817c481d3096cfb62574896111d17d8320c5fe8acc530e624d03980",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 1,
+          "alreadyTerminal": 1,
+          "processesObserved": 2,
+          "processesClosed": 2
+        },
+        "checks": {
+          "dispatchClosed": true,
+          "interactionsResolved": true,
+          "runAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "receiptDigest": "3ba295841fe97975ee15a5456b1ce479acb2922cc45cb7895a0219c46c91e69c"
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}

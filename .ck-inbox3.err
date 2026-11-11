@@ -1,0 +1,22 @@
+Error:
+- expected : a defined name
+- observed : Input.settle_codex_result
+Context:
+- db        : String
+- session   : String
+- thread    : String
+- state     : State
+- turn      : String
+- turn_id   : String
+- status    : String
+- completed : String
+- id        : String
+- candidate : String
+- body      : String
+- saved     : String
+- logged    : Unit
+Location: terminal_report
+273 |       logged : Unit <- Proxy.record("{\"type\":\"codexInboxTurnReport\",\"id\":" ++ J.string_literal(id) ++ ",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"code\":0,\"signal\":null,\"output\":" ++ J.string_literal(saved) ++ "}")
+274>|       settled : Unit <- Input.settle_codex_result(db,session,thread,turn_id,status)
+275 |       kept : Unit <- Bool.pick(Outcome.Checked(Unit),String.eq(status,"completed"),Outcome.Checked.pure(Unit,Unit{}),turn_retained(session,thread,turn))
+bend 2.0.37 is available: run bend update

@@ -1,0 +1,25 @@
+All terms check, but 23 defs rely on unsafe or foreign code:
+- json
+- value
+- text
+- truth
+- queued
+- native_wait
+- notice_wait
+- arm_native
+- arm_notice
+- receive_event
+- receive_maybe
+- receive
+- rpc_checked
+- rpc_response
+- rpc_dispatch
+- rpc_wait
+- rpc_result
+- rpc
+- initialize_result
+- initialize
+- pop
+- next_selected
+- next
+cap-run peak_kb=2854844 status=0

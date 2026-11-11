@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "waveId": "wave:faf589efb664058980cc5b514d3207dd",
+  "idempotencyKey": "bd3-impl-2026-08-03",
+  "recipeDigest": "2e327807e9c8a9b5204ad047d44c5b82d25cbaa31412cc62360e04264162f367",
+  "salt": "c899ab34-7e41-42d6-9f00-84a688758a18",
+  "renderedMembers": [
+    {
+      "role": "implementer",
+      "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the BD3 collaboration-spine epic per docs/reference/evidence/bidirectional-v3-2026-08-02/ bidirectional-v3-decisions.md (v2.0 fold at the top — READ IT FULLY first) until impl/test/bidirectional-v3-red.test.mjs (READ IT FULLY second) is green with zero weakening edits. Anchors (verify each; some files contain NUL — grep -an + sed -n): (1) BD3-A: a CONTEXT_READ wire lane mirroring the SCRATCHPAD_WRITE shape (claude-session.mjs scanner :88 + assistant handler :1022 — a second scanner kind; coordinator.mjs admission beside the scratchpad.write case :10697 with worker identity stream-bound). Query kinds knowledge/board/scratchpad/finding; the horizon predicate runHorizon(runId) server-derived (the run's own nodes + promoted-under-run + evidence-cited + the ambient slice) intersected AFTER lookup; finding-by-id resolves then authorizes; board reads reuse the S-2 board→run binding check; scratchpad reads construct (runId, [shared]) server-side — the wire carries NO runId/scope fields. Responses through ONE closed renderer (bounded, UNTRUSTED framing on every model-authored leaf, digest citations for oversize) reaching the provider-bound frame. context.read audit events with ZERO promotion weight (never scratch.read family; minScratchReaders never counts them) AND the pre-existing self-read hole closed (a the fact author's task never counts toward minScratchReaders — the phase49-shaped A6b row is the oracle, coordination-store.mjs :14370-14384 region). Reads never answer the TG3 cycle. (2) BD3-B: context packs in coordination-store.mjs (mintContextPack/contextPack/contextPackHead/materializeContextPack) — server-owned predecessor + validityVersion chain, spawn/nudge live-head CAS (context_pack_stale), expiry distinct (context_pack_expired), brief contextPacks:[digest] materialized framed at spawn. (3) BD3-C: coordinator.sendMessage minting message:<digest> ids; worker message.send frames carry ONLY {inReplyTo, body} (target derived from parent, depth 1, caller-named to refused); receipts via coordinator.messageReceipt(id) {delivered, read, actedOn} — delivered at stream write, read on the the worker's next turn_started, null across process death, actedOn never. (4) BD3-D: coordinator.attentionFollow — scope authorized FIRST (constant attention_scope_forbidden, unknown and out-of-scope identical), candidacy_review gated on the review authority with count derived, coalescing {reason, count, perPhase, windowMs}, memberState terminal-at-mint epochs, cursor-chained. The wave driver's stall machinery is NOT consumed (D5 source pin must stay green). Verify: node --test impl/test/bidirectional-v3-red.test.mjs then adjacents: trust-gate-steering-red, decision-gate-trust-gate-red, kg-settlement-red, phase49-cairn-promotion, wave-driver-red — all from the repo root.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: c899ab34-7e41-42d6-9f00-84a688758a18 implementer]",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/**",
+        "docs/reference/evidence/bidirectional-v3-2026-08-02/**"
+      ]
+    }
+  ]
+}

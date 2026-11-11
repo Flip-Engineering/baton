@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "run-debug-implementer-sonnet",
+      "phase": "working",
+      "terminal": false,
+      "narrative": "1 worker(s) active.",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "run-debug-implementer-sonnet",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}

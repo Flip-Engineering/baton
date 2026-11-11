@@ -1,0 +1,15 @@
+Error:
+- expected : a defined name
+- observed : InitialInput.managed
+Context:
+- token      : String
+- rest       : List<&1, String>
+- executable : String
+- db         : String
+- session    : String
+- row        : codex-inbox-store.Snapshot
+Location: refreshed_fields
+116 |       +row : Inbox.Snapshot <- Inbox.row_fields(rest)
+117>|       prompt : String <- InitialInput.managed(db,session,Inbox.native(row),Inbox.input_seq(row),Inbox.pointer(executable,db,session,row))
+118 |       Outcome.Checked.pure(String & String,(token,prompt))
+bend 2.0.37 is available: run bend update

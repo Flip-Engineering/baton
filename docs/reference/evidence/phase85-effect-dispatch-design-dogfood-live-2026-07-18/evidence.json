@@ -1,0 +1,358 @@
+{
+  "schemaVersion": 1,
+  "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-effect-dispatch-design-mKbNgN",
+  "runId": "run-f00003ae3cd30f31edb2e0f0c70a599c",
+  "outcome": "provider_completion_stalled_then_recovered",
+  "runStatus": {
+    "phase": "failed",
+    "attempts": [
+      {
+        "role": "dispatch-design-adversary",
+        "nodeKey": "attempt:dispatch-design-adversary",
+        "taskId": "baton-49b56671fbd0cb4015a083f7-attempt-dispatch-design-adversary",
+        "state": "failed",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": null,
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "candidateId": null,
+        "memberStop": null,
+        "activity": {
+          "state": "idle",
+          "lastEventAt": "2026-07-19T00:42:35.580Z",
+          "lastEventSeq": 7,
+          "turnCount": 0,
+          "usage": {
+            "tokens": 0,
+            "usd": 0
+          },
+          "editedPaths": [],
+          "warnings": []
+        },
+        "verification": "failed",
+        "terminalCause": null
+      },
+      {
+        "role": "dispatch-design-architect",
+        "nodeKey": "attempt:dispatch-design-architect",
+        "taskId": "baton-fc3008a2752a18d74f92cb13-attempt-dispatch-design-architect",
+        "state": "failed",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "candidateId": null,
+        "memberStop": null,
+        "activity": {
+          "state": "idle",
+          "lastEventAt": "2026-07-19T00:42:35.570Z",
+          "lastEventSeq": 165,
+          "turnCount": 0,
+          "usage": {
+            "tokens": 0,
+            "usd": 0
+          },
+          "editedPaths": [],
+          "warnings": []
+        },
+        "verification": "failed",
+        "terminalCause": null
+      }
+    ],
+    "nodes": [
+      {
+        "key": "attempt:dispatch-design-adversary",
+        "deps": [],
+        "state": "failed",
+        "dispatchVersion": 1,
+        "taskId": "baton-49b56671fbd0cb4015a083f7-attempt-dispatch-design-adversary",
+        "terminalEvent": 17,
+        "terminalOutcome": {
+          "status": "failed",
+          "accepted": false,
+          "code": "recovery_terminalized"
+        },
+        "budget": {
+          "status": "pending",
+          "initial": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "reserved": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "consumed": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "released": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "held": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "overrun": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "availability": {
+            "tokens": "unavailable",
+            "usd": "unavailable",
+            "wallMin": "unavailable",
+            "providerTurns": "unavailable"
+          },
+          "settledEvent": null
+        }
+      },
+      {
+        "key": "attempt:dispatch-design-architect",
+        "deps": [],
+        "state": "failed",
+        "dispatchVersion": 1,
+        "taskId": "baton-fc3008a2752a18d74f92cb13-attempt-dispatch-design-architect",
+        "terminalEvent": 15,
+        "terminalOutcome": {
+          "status": "failed",
+          "accepted": false,
+          "code": "recovery_terminalized"
+        },
+        "budget": {
+          "status": "pending",
+          "initial": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "reserved": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "consumed": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "released": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "held": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "overrun": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "availability": {
+            "tokens": "unavailable",
+            "usd": "unavailable",
+            "wallMin": "unavailable",
+            "providerTurns": "unavailable"
+          },
+          "settledEvent": null
+        }
+      }
+    ],
+    "verification": {
+      "state": "failed",
+      "verdict": null
+    },
+    "attention": [],
+    "progress": {
+      "current": "selection",
+      "summary": "Candidate selection: Awaiting verified Candidates.",
+      "stages": [
+        {
+          "key": "intent",
+          "label": "Workflow intent",
+          "state": "complete",
+          "detail": "Workflow definition bound to exact Goal and Plan."
+        },
+        {
+          "key": "plan",
+          "label": "Workflow Plan",
+          "state": "complete",
+          "detail": "2 attributable isolated Attempts."
+        },
+        {
+          "key": "wave",
+          "label": "Parallel Wave",
+          "state": "complete",
+          "detail": "2/2 settled."
+        },
+        {
+          "key": "selection",
+          "label": "Candidate selection",
+          "state": "pending",
+          "detail": "Awaiting verified Candidates."
+        },
+        {
+          "key": "cleanup",
+          "label": "Owned-resource cleanup",
+          "state": "complete",
+          "detail": "Owned resources settled."
+        }
+      ]
+    }
+  },
+  "candidates": [],
+  "stopped": {
+    "beforePhase": "failed",
+    "afterPhase": "stopped",
+    "stop": {
+      "state": "stopped",
+      "admittedAt": "2026-07-19T00:42:35.860Z",
+      "completedAt": "2026-07-19T00:42:35.922Z",
+      "targetCount": 2,
+      "targetDigest": "9d806a1abb2ff70dc3b40b73eaf54b1ff6f7b6bb1383d1eba8b34a549db1411d",
+      "receipt": {
+        "schemaVersion": 1,
+        "state": "stopped",
+        "scope": "run_subtree",
+        "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+        "runId": "run-f00003ae3cd30f31edb2e0f0c70a599c",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "targetDigest": "9d806a1abb2ff70dc3b40b73eaf54b1ff6f7b6bb1383d1eba8b34a549db1411d",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 0,
+          "alreadyTerminal": 2,
+          "processesObserved": 2,
+          "processesClosed": 2
+        },
+        "checks": {
+          "dispatchClosed": true,
+          "interactionsResolved": true,
+          "runAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "receiptDigest": "eb86109a1a5b1575d4938aef3957030bac119d0b8116e2b248257dbde939614e"
+      }
+    },
+    "ownership": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": false
+    }
+  },
+  "closed": {
+    "workers": 0,
+    "workerIds": [],
+    "closed": true
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source_commit": "ca42f103d09a4f82e0ae3e6fd7d53ae13b9d108b",
+  "source_path": "/run/baton2-native-homelab/retained/baton2-compiler-741-20261015/postrelease-751-761-20261015-11/worktrees/luna-sqlite-projection-idempotent/bend2/src/host/sqlite.c",
+  "source_sha256": "02c18aa8b4d374d6f8ce777dc15b80680b23fdd7403882110d7bb32e826a7052",
+  "harness_path": "/var/tmp/baton-sqlite-projection-harness-boot644.c",
+  "harness_sha256": "a3ccc6d3406331c5c3ab03d177bbbe98191023bf9d67ca1e7c68b02283be6652",
+  "original_db_path": "/run/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z/orchestra.db",
+  "copy_db_path": "/var/tmp/baton-sqlite-projection-repro-no-pch-boot644/input-copy.db",
+  "copy_db_bytes": 21995520,
+  "copy_db_sha256": "8c6ae33f185fbae57f6d5c1842348eb29a660b234b836884334a9eb35a9ead16",
+  "copy_quick_check": "ok",
+  "copy_initial_schema_version": 1,
+  "exact_source_blocks_present_once": true,
+  "executable_sha256": "daaec2fefc62ab2cedfe0c94beb66bccb5b3df311784c4d908b72d90cb2fa86b",
+  "result": "schema_version_initial=1 stable_after_installs=1 changed_trigger_once=5 missing_trigger_once=7 rollback_code=1 projection_events=2 concurrent_failures=0",
+  "returncode": 0
+}

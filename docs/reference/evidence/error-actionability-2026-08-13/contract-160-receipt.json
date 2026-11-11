@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T06:56:10.746Z",
+  "salt": "x220260813065610",
+  "role": "contract-160",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-f41323ab8cac6523f95733fdde3b6c55"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-160",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-160": {
+      "pin": "b59f36ee71d407bc07e16d12cd9d0df9b045ca01",
+      "paths": [
+        "docs/reference/evidence/error-actionability-2026-08-13/error-actionability-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 460,
+  "verdict": "CONTRACT-160-OK"
+}

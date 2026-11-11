@@ -1,0 +1,305 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "runtimeHeadSha": "fa668c292e3cd5479dd0236a9b8a5b084d292a21",
+    "targetSha": "d6f8447a892357fbc64682411c79190ab8e1d0c6",
+    "runtimeDigest": "03470ce8519632a2036a0a9f35ee2cd4610f3d339dc18c8f80834b3b5de8bd92",
+    "targetRuntimeDigest": "03470ce8519632a2036a0a9f35ee2cd4610f3d339dc18c8f80834b3b5de8bd92"
+  },
+  "applicationCommands": [
+    "run.start",
+    "run.status",
+    "run.approve",
+    "run.wait",
+    "run.answer",
+    "run.steer",
+    "run.stop",
+    "application.shutdown"
+  ],
+  "routes": [
+    {
+      "name": "codex",
+      "runId": "phase64-codex",
+      "phase": "failed",
+      "requested": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "codex@codex-cli 0.144.3",
+        "model": "gpt-5.6-sol",
+        "effort": "low"
+      },
+      "observed": {
+        "harness": "codex@codex-cli 0.144.3",
+        "model": "gpt-5.6-sol",
+        "effort": null
+      },
+      "stop": null,
+      "ownership": {
+        "workers": 1,
+        "workerIds": [
+          "w-1"
+        ],
+        "closed": false
+      }
+    },
+    {
+      "name": "claude",
+      "runId": "phase64-claude",
+      "phase": "failed",
+      "requested": {
+        "harness": "claude",
+        "model": "claude-opus-4-6",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "claude-code@2.1.206",
+        "model": "claude-opus-4-6",
+        "effort": "low"
+      },
+      "observed": {
+        "harness": "claude-code@2.1.206",
+        "model": "claude-opus-4-6",
+        "effort": null
+      },
+      "stop": null,
+      "ownership": {
+        "workers": 1,
+        "workerIds": [
+          "w-2"
+        ],
+        "closed": false
+      }
+    },
+    {
+      "name": "glm",
+      "runId": "phase64-glm",
+      "phase": "work_completed",
+      "requested": {
+        "harness": "glm",
+        "model": "glm-4.7",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "model": "glm-4.7",
+        "effort": "low"
+      },
+      "observed": {
+        "harness": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "model": "glm-4.7",
+        "effort": null
+      },
+      "stop": null,
+      "ownership": {
+        "workers": 1,
+        "workerIds": [
+          "w-3"
+        ],
+        "closed": false
+      }
+    },
+    {
+      "name": "grok45",
+      "runId": "phase64-grok45",
+      "phase": "stopped",
+      "requested": {
+        "harness": "grok",
+        "model": "grok-4.5",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "grok@grok 0.2.99 (b1b49ccb71a7) [stable]",
+        "model": "grok-4.5",
+        "effort": "low"
+      },
+      "observed": null,
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-14T03:24:29.797Z",
+        "completedAt": "2026-07-14T03:24:30.512Z",
+        "targetCount": 1,
+        "targetDigest": "50aa73447c28f4c3af9054edc06b810f7035631ed3a7326bf726d67649f9d97b",
+        "receipt": {
+          "schemaVersion": 1,
+          "state": "stopped",
+          "scope": "run",
+          "repoId": "baton-phase64-dogfood",
+          "runId": "phase64-grok45",
+          "targetCount": 1,
+          "remainingCount": 0,
+          "targetDigest": "50aa73447c28f4c3af9054edc06b810f7035631ed3a7326bf726d67649f9d97b",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 1,
+            "alreadyTerminal": 0,
+            "processesObserved": 1,
+            "processesClosed": 1
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "receiptDigest": "7431264e6c24826323ea03ef99afdad63f95d78f65c550720ab9bb51ece5d213"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    {
+      "name": "grokbuild",
+      "runId": "phase64-grokbuild",
+      "phase": "stopped",
+      "requested": {
+        "harness": "grok",
+        "model": "grok-build",
+        "effort": "low"
+      },
+      "resolved": {
+        "harness": "grok@grok 0.2.99 (b1b49ccb71a7) [stable]",
+        "model": "grok-build",
+        "effort": "low"
+      },
+      "observed": null,
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-14T03:24:29.799Z",
+        "completedAt": "2026-07-14T03:24:30.186Z",
+        "targetCount": 1,
+        "targetDigest": "9f51699787906a5b4869a0755ecd8b07b44ce0c59dba8bf354cfab19ab290e7f",
+        "receipt": {
+          "schemaVersion": 1,
+          "state": "stopped",
+          "scope": "run",
+          "repoId": "baton-phase64-dogfood",
+          "runId": "phase64-grokbuild",
+          "targetCount": 1,
+          "remainingCount": 0,
+          "targetDigest": "9f51699787906a5b4869a0755ecd8b07b44ce0c59dba8bf354cfab19ab290e7f",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 1,
+            "alreadyTerminal": 0,
+            "processesObserved": 1,
+            "processesClosed": 1
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "receiptDigest": "fe58a410dcdb64bcd04a3ad67eed599edacf07760ebdd4da868006b9b11e7b6a"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    }
+  ],
+  "grok": {
+    "simultaneousLiveProcessesObserved": true,
+    "starts": [
+      {
+        "workerId": "w-4",
+        "kind": "lifecycle.process_started",
+        "generation": 1,
+        "pid": 64441,
+        "processGroupId": 64441
+      },
+      {
+        "workerId": "w-5",
+        "kind": "lifecycle.process_started",
+        "generation": 1,
+        "pid": 64445,
+        "processGroupId": 64445
+      }
+    ]
+  },
+  "exportedReviews": [
+    {
+      "route": "glm",
+      "source": "temporary-worktree-escape-until-run-evidence-ships",
+      "file": "glm-review.md",
+      "digest": "5f292c2b82939ee3e3e3a8fa0713fb127d03fc6098d7373a7916b202d31405fa",
+      "capturedSha": "af9437787380bfad4d16e290375fc8b4c1947819"
+    }
+  ],
+  "processes": {
+    "started": 5,
+    "closed": 5,
+    "reapUnconfirmed": [],
+    "unreaped": [],
+    "stillAlive": []
+  },
+  "preShutdownWorkers": 5,
+  "shutdown": {
+    "schemaVersion": 1,
+    "state": "closed",
+    "ownership": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "receipt": {
+      "schemaVersion": 1,
+      "state": "closed",
+      "fleet": {
+        "schemaVersion": 1,
+        "state": "drained",
+        "scope": "local-controller",
+        "repoId": "baton-phase64-dogfood",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "targetDigest": "5d3219cc113dacd0b04507858aab47afe2ba5b1e6d8acd0b33c92ef9dabd675c",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 2,
+          "alreadyTerminal": 0,
+          "processesObserved": 2,
+          "processesClosed": 2
+        },
+        "checks": {
+          "admissionClosed": true,
+          "authorityOpsDrained": true,
+          "stopWaitersDrained": true,
+          "cleanupDrained": true,
+          "localWorkerAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "receiptDigest": "b93e291076d4f3c880b79d9208ea72047ed0a094c5f72458d5de5279aa39b577"
+      },
+      "supervisors": {
+        "sessionRecovery": "absent",
+        "providerProcessing": "absent",
+        "providerPolling": "absent"
+      },
+      "authority": {
+        "coordinatorClosed": true,
+        "writerReleased": true
+      },
+      "receiptDigest": "56c6a0344f994325f116f5c114afee7bc6e9a5dc2340aa5b7d3401561e347dd1"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+All terms check, but 5 defs rely on unsafe or foreign code:
+- CodexProxy.open
+- CodexProxy.send
+- CodexProxy.next
+- CodexProxy.close
+- CodexProxy.cancel
+cap-run peak_kb=55560 status=0

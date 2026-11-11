@@ -1,0 +1,14 @@
+All terms check, but 12 defs rely on unsafe or foreign code:
+- query
+- explicit_environment
+- captured
+- endpoint_join
+- endpoint_known
+- endpoint_selected
+- endpoint
+- normalize
+- arguments
+- command
+- admission
+- follow
+cap-run peak_kb=3415480 status=0

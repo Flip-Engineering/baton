@@ -1,0 +1,7 @@
+Error:
+- message  : no such file: bend2/src/coordinator/agent-guidance.bend
+Location:
+6 | import ./agent-input.bend as Input
+7>| import ./agent-guidance.bend as Guidance
+8 | import ./native-initial-input.bend as InitialInput
+bend 2.0.37 is available: run bend update

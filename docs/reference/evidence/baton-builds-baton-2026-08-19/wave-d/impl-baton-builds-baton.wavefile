@@ -1,0 +1,35 @@
+wave bbb-2026-08-20-wave-d
+member row-visual-model
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/visual-model.mjs"
+  scope "impl/test/visual-model.test.mjs"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/row-visual-model-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/notes-row-visual-model.md"
+member row-visual-renderer
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/visual-renderer.mjs"
+  scope "impl/test/visual-renderer.test.mjs"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/row-visual-renderer-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/notes-row-visual-renderer.md"
+member row-visual-tui-mcp
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/baton-top.mjs"
+  scope "impl/src/production-mcp-convergence.mjs"
+  scope "impl/src/surface-capability-resolution.mjs"
+  scope "impl/src/application-cli.mjs"
+  scope "impl/scripts/baton.mjs"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/row-visual-tui-mcp-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/notes-row-visual-tui-mcp.md"
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. Your pins are RED at HEAD (MODULE_NOT_FOUND) — implement to GREEN. Sibling rows land in parallel: verify integration when their modules appear, record integration verdicts in your report. Your [attempt:] line verbatim in your report's first five lines."
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/notes-row-visual-model.md" mustContain "attempt:"
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/notes-row-visual-renderer.md" mustContain "attempt:"
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-d/notes-row-visual-tui-mcp.md" mustContain "attempt:"

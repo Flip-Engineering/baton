@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:35:02.907Z",
+  "salt": "z420260813073502",
+  "role": "fold-158",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-50a9fe494a3c014d236ba449d9328fa5"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-158",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-158": {
+      "pin": "fccdd0679fd5a668b6f386a3b0dbbd204958608f",
+      "paths": [
+        "docs/reference/evidence/scratchpad-write-2026-08-13/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 473,
+  "verdict": "FOLD-158-OK"
+}

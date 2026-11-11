@@ -1,0 +1,124 @@
+{
+  "schema": "cgen-clang-review-split-summary-v1",
+  "implementation": {
+    "branch": "baton/cgen-clang-parallel-20261017",
+    "head": "e39a8095a358203ce4ca2789ac9fd7ea9b2dadad",
+    "file": "tools/cgen-clang-parallel/shard_emitted_c.py",
+    "sha256": "58e638d41ce88eca493b7ca466bdeeeb1c6713e6d9489080527beeba2335a13d",
+    "bytes": 32460,
+    "committed": true
+  },
+  "input": {
+    "path": "/var/tmp/baton-live-observer-public-recovery-sqlite-5142-boot644/baton2.c",
+    "sha256": "e10d4c38ae230bb4ff6d40a2696a7944940a3fceb848c83f4ec0c1a8c43f7062",
+    "bytes": 60071815
+  },
+  "layout": {
+    "spins_line": 25895,
+    "work_line": 134637,
+    "segments_line": 134676,
+    "requests_line": 1326252
+  },
+  "counts": {
+    "segments": 23726,
+    "spins": 874,
+    "shards": 4
+  },
+  "segment_bytes": 43005662,
+  "segment_text_sha256": "a7f858b0731f7c7e93efd91d5a3a07cdc1432626c48d0327f715bb9b537cf07d",
+  "segment_text_preserved": true,
+  "regions": {
+    "prefix": {
+      "bytes": 2654223,
+      "sha256": "7733fa04a7906566da7f04faf0a8a68e87cec066d475b0aa244e3fdb418c2dc0"
+    },
+    "spins": {
+      "bytes": 13934800,
+      "sha256": "fb97688bbe23436d8b89eff7991787446d8471ef2b1f36652574fcea24ec797e"
+    },
+    "work": {
+      "bytes": 800,
+      "sha256": "61dd66c9770ee335c560215aed1fd05d2284a6a81ac4413eb97087dd9842751f"
+    },
+    "segment_fill": {
+      "bytes": 43005662,
+      "sha256": "a7f858b0731f7c7e93efd91d5a3a07cdc1432626c48d0327f715bb9b537cf07d"
+    },
+    "tail_template": {
+      "bytes": 42912,
+      "sha256": "0b9f5ae5a8af8ad026c6256da5aa5c992cf874f2c8950751524b797ae6290637"
+    },
+    "requests": {
+      "bytes": 409522,
+      "sha256": "15f6e41e852d81f2919efe39d32b131f464538371fa92d38d779601f4cd8df6c"
+    }
+  },
+  "dropped_split_declarations": [
+    "kernel void bend_dev(Corpus H [[buffer(0)]], constant u32& pass [[buffer(1)]],"
+  ],
+  "shards": [
+    {
+      "name": "shard_00.c",
+      "segments": 4307,
+      "bytes": 10642647,
+      "sha256": "b3d5630b844de66d423fd25870360297314181281c4d166ebc458461adc12748"
+    },
+    {
+      "name": "shard_01.c",
+      "segments": 5991,
+      "bytes": 10989943,
+      "sha256": "8ba9562a79abfa5fd3f8ec15f0ffc71ecafa9fa10b89a6cf2ba3477fd866615f"
+    },
+    {
+      "name": "shard_02.c",
+      "segments": 6404,
+      "bytes": 10752072,
+      "sha256": "e297ba321cd477a1f4e49b59944ee490d2619b4a86164cf91dd90976bb345bf5"
+    },
+    {
+      "name": "shard_03.c",
+      "segments": 7024,
+      "bytes": 10644998,
+      "sha256": "edf338a96de39ace40c167c554cecb8592e30d7862f073d9009a774765268a63"
+    }
+  ],
+  "files": {
+    "baton_prefix.h": {
+      "bytes": 2486836,
+      "sha256": "7830429726158cfecf6526db0e627d3466e446c208cb28f27685a200f75a06f8"
+    },
+    "baton_segments.h": {
+      "bytes": 662,
+      "sha256": "1a937b45d1061c4c11a3d000955780444a430c7baa4a148a7c2a2da561b0669b"
+    },
+    "baton_core.c": {
+      "bytes": 3103556,
+      "sha256": "e46a515e797cb7291ff2082933ddffdd4baa682dd3146750e43b7d9d2ad5eb77"
+    },
+    "baton_spins.c": {
+      "bytes": 13934865,
+      "sha256": "a5f9211f63c805f2f82a84dafd42d4f77083738626428d82a72cc27ff918ce21"
+    },
+    "shard_00.c": {
+      "bytes": 10642647,
+      "sha256": "b3d5630b844de66d423fd25870360297314181281c4d166ebc458461adc12748"
+    },
+    "shard_01.c": {
+      "bytes": 10989943,
+      "sha256": "8ba9562a79abfa5fd3f8ec15f0ffc71ecafa9fa10b89a6cf2ba3477fd866615f"
+    },
+    "shard_02.c": {
+      "bytes": 10752072,
+      "sha256": "e297ba321cd477a1f4e49b59944ee490d2619b4a86164cf91dd90976bb345bf5"
+    },
+    "shard_03.c": {
+      "bytes": 10644998,
+      "sha256": "edf338a96de39ace40c167c554cecb8592e30d7862f073d9009a774765268a63"
+    }
+  },
+  "split_measurement": {
+    "wall_s": 25.26,
+    "maxrss_kib": 527316,
+    "tool": "v11.py sha256 58e638d4"
+  }
+}

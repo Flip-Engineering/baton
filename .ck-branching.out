@@ -1,0 +1,31 @@
+All terms check, but 29 defs rely on unsafe or foreign code:
+- task
+- native_command
+- successful
+- child_field
+- prepare_candidates
+- configure_child
+- launch_child
+- existing_child
+- register_present
+- register_child
+- setup_child
+- setup_children
+- source_player
+- snapshot_locked
+- source_command
+- start
+- evaluation_result
+- evaluate_created
+- evaluate_owned
+- evaluate_child
+- evaluate_children
+- select
+- continue_selected
+- stop_children
+- recover
+- round_action
+- ensemble_action
+- dispatch
+- execute
+cap-run peak_kb=7672420 status=0

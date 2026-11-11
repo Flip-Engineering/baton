@@ -1,0 +1,469 @@
+{
+  "at": "2026-07-12T06:53:26.668Z",
+  "repoHead": "cdeb84f46d8f3d6e15b9249ccddd2d3d5c622e7c",
+  "reviewProfile": "capability-implementation",
+  "reviewTimeoutMs": 360000,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-capability-implementation-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-capability-implementation-45.md",
+      "stance": "authority",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"capability-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5518-536d-7482-b4a0-d1a25191057c",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-p29-clean.7ofava/.baton/wt/grok-capability-implementation-45",
+          "repoRoot": "/private/tmp/baton-p29-clean.7ofava",
+          "baseSha": "cdeb84f46d8f3d6e15b9249ccddd2d3d5c622e7c",
+          "branch": "baton/grok-capability-implementation-45",
+          "ownerTaskId": "grok-capability-implementation-45"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-p29-clean.7ofava/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-p29-clean.7ofava/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-p29-clean.7ofava/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-p29-clean.7ofava/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-capability-implementation-45",
+        "worktree": "/private/tmp/baton-p29-clean.7ofava/.baton/wt/grok-capability-implementation-45",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 82501,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T06:51:23.890Z"
+      },
+      "pid": 58044,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"capability-implementation-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 18
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "88f9a17f61193760083cfd4b28f59cec2e79a6b6",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"capability-implementation-review\"]"
+          }
+        },
+        "seq": 434,
+        "ts": "2026-07-12T06:53:26.223Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 18
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"capability-implementation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5518-536d-7482-b4a0-d1a25191057c",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-p29-clean.7ofava/.baton/wt/grok-capability-implementation-45",
+          "repoRoot": "/private/tmp/baton-p29-clean.7ofava",
+          "baseSha": "cdeb84f46d8f3d6e15b9249ccddd2d3d5c622e7c",
+          "branch": "baton/grok-capability-implementation-45",
+          "ownerTaskId": "grok-capability-implementation-45"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Adversarial review — Phase 29 CI1–CI8 @ cdeb84f\n\nReview target: committed Phase 29 capability invocation at `cdeb84f` (“Harden capability provenance authority”). Evidence from `spec/phase29/capability-invocation.md`, `impl/src/{capability-registry,coordinator,index,web-northbound,mcp-northbound}.mjs`, `impl/test/{phase29-capability-invocation,coordinator,phase12-web-northbound,phase16-mcp-northbound}.test.mjs`, `docs/28-exhaustive-capability-audit.md`, and `docs/11-capability-plane.md` ACI semantics. Homelab integration is out of scope. Findings require concrete assembly/dispatch paths, not export prose.\n\n## Decision\n\n**No actionable CI1–CI8 defect remains at cdeb84f.**\n\nPhase 29 **does** make **deployment-injected** Atlas (and other) capabilities reachable through Coordinator → web `capabilities` / `capability_invoke` and MCP `fleet_capabilities` / `fleet_capability_invoke`, **without** granting merge authority, verification authority, or a second fleet control plane:\n\n| Surface | Path | Trust boundary |\n|---|---|---|\n| Assembly | `createDriver` always builds **one** `CapabilityRegistry` from `opts.capabilities` + budgets/root/contexts; injects only into `Coordinator`; **does not** return a registry handle (`index.mjs` ~167–178, 224–256; cdeb84f removed `opts.capabilityRegistry` and `return … capabilities`) | Deployment owns closed set; empty registry valid |\n| Coordinator | `capabilityCards` / `invokeCapability` / `resumeCapability` / `reverifyCapability` call `_assertOperational()` then the single registry (`coordinator.mjs` ~415–426, 2434–2455) | Poisoned coordinator never touches registry |\n| Web | `capabilities` → cards; `capability_invoke` → invoke/resume/reverify with `actor: web:user:session` and client `budgetTokens` only (`web-northbound.mjs` ~317–324) | Scope/CSRF/quota/idempotency before dispatch |\n| MCP | `fleet_capabilities` / `fleet_capability_invoke` same coordinator methods with `actor: mcp:user:session` (`mcp-northbound.mjs` ~260–266) | Principal/repo/quota/idempotency before dispatch |\n| Authority | Registry rejects `provenance.mergeAuthority` / `verificationAuthority` unless explicitly `false` (`capability-registry.mjs` ~77–81); reverify forces `mergeAuthority: false, verificationAuthority: false` (~124) | ACI output cannot claim coordinator accept/merge |\n| Provenance | Non-empty registry requires record sink; sink failure sets sticky `capability_record_unavailable` and blocks cards + further ops (`capability-registry.mjs` ~33–34, 46–56, 87–100; cdeb84f) | Post-effect sink loss is not success/ordinary refusal |\n\n**Not defects (explicit boundaries):**\n\n1. **Atlas is not auto-registered** by `createDriver`. Modules remain constructible libraries until deployment injects them (`docs/28` still states the pre-Phase-29 library-only gap; Phase 29 closes the *path*, not auto-wiring). CI7 requires a closed injected registry; auto-discovery would be a new control plane. Empty registry is honest and visible.\n2. **Direct library calls** to `AtlasStructuralDelta` / `CapabilityRegistry` outside `createDriver` bypass northbounds by construction; that is not a fleet seam and is not CI6.\n3. **Side effects before envelope validation** can occur if a module mutates external state then returns a smuggled envelope; the registry still refuses delivery and audits `capability.op.refused`. Preventing pre-validation effects is a module containment concern, not CI4 registry ownership.\n4. **`resume(name, op, ref, cursor)` validates `op` against the card but does not pass `op` into `capability.resume`** (`capability-registry.mjs` ~109–115). Op/ref binding is the module’s job (ref digest must imply op). CI3’s explicit “cannot select op from mutable claim data” applies to **reverify**, which passes registry-validated `op` and ignores claim-selected ops (~117–124).\n\n**CI1–CI8 verdicts (evidence-backed):**\n\n- **CI1 one registry / no second plane — PASS.** Sole construction in `createDriver`; coordinator is the only public handle; cdeb84f deleted injectable alternate registry and driver-level registry export.\n- **CI2 bounded ACI — PASS.** Registered capability, advertised op, JSON args, deployment budget ceiling, envelope/payload ceilings, optional `signal`, result shape `op/status/summary/payload/refs/cost/provenance`.\n- **CI3 resume/reverify — PASS.** Public only when implemented; same budget/root/actor policy; reverify op is caller/registry-validated, not claim-authored.\n- **CI4 authority firewall — PASS.** Boolean/string smuggling of merge/verification authority rejected; northbounds map to non-success (`502 capability_refused` web; MCP error code).\n- **CI5 durable provenance — PASS.** Hub events are identity/action/status/digests only (no raw args/payloads); post-completed sink failure poisons before another effect or inventory read; not downgraded to ok.\n- **CI6 authenticated northbounds — PASS.** Observe vs control capability split; existing admit/quota/audit/idempotency reused; actors are principal-derived, not client-supplied.\n- **CI7 explicit assembly — PASS.** Capabilities, contexts, token/envelope ceilings, `repoRoot`, optional context resolvers; resolvers cannot override `actor`/`budgetTokens`/`root`/`signal`.\n- **CI8 acceptance reds — PASS.** Registry/driver/coordinator/web/MCP reds cover the contract surfaces listed in the phase spec (see tests below).\n\n## Proposed numbered contract\n\nThese are the load-bearing CI1–CI8 invariants as implemented (normative for residual risk gates, not a request for new work unless a future change breaks them):\n\n1. **Single assembly path.** `createDriver(opts)` constructs exactly one `CapabilityRegistry` from `opts.capabilities` (default `{}`), `opts.capabilityContexts`, deployment `maxCapabilityBudgetTokens` / `maxCapabilityEnvelopeBytes` (required when non-empty), and `root: opts.repoRoot`. No `capabilityRegistry` injection. Driver return value must not include a registry handle.\n2. **Single public ownership.** Northbounds and operators may call only `Coordinator.capabilityCards|invokeCapability|resumeCapability|reverifyCapability`. Each method begins with `_assertOperational()` (coordinator poison / tick). Missing registry methods fail construction; absent registry → empty cards and `capability_unavailable` on invoke family.\n3. **ACI invoke gate.** `invoke` requires known name, advertised op, JSON object args within envelope ceiling, `0 < budgetTokens ≤ maxBudgetTokens`, and non-aborted optional signal. Results must be JSON ACI envelopes with matching `op` and required fields; payload size ≤ `budgetTokens * 4` bytes; full envelope ≤ `maxEnvelopeBytes`.\n4. **Context resolvers are non-authoritative.** Deployment context values/functions may add multi-root fields from logical request data but any of `actor|budgetTokens|root|signal` in resolved context is `capability_context_forbidden`. Safe registry fields always win.\n5. **Resume / reverify.** Resume/reverify require implementation functions; share budget/cancellation/root policy; reverify’s operation argument is the sole op used for advertisement checks and module call—never derived from claim contents. Reverify wrapper sets `provenance.mergeAuthority` and `verificationAuthority` to `false`.\n6. **Authority firewall.** If `provenance` has `mergeAuthority` or `verificationAuthority` and the value is not strictly `false`, refuse with `capability_authority_forbidden` and never return the envelope to northbounds.\n7. **Provenance sink.** Non-empty registries require a record function. Every attempt emits bounded `capability.op.{started,completed,refused}` with actor, invocationId, action, capability, op, and on complete status + digest list only. Any sink throw sets sticky `recordFailure` (`capability_record_unavailable`); subsequent `cards`/`invoke`/`resume`/`reverify` throw that error without calling the capability. A post-effect completed-record failure must not return success.\n8. **Driver provenance wiring.** `createDriver` record sink appends to operational log worker `hub-capability` then `coordination.mapOperationalEvent` with key `evidence:hub-capability:<seq>`. Log append failures also trip coordinator operational-log poison on the wrapped `log.append`.\n9. **Web seam.** `capabilities` requires principal capability `observe`; `capability_invoke` requires `control`. Envelope validation enforces action-specific fields and rejects action-inapplicable fields before admission. Dispatch sets `capabilityCtx = { budgetTokens, actor: web:<user>:<session> }` only—no client actor/root/signal. Command quota treats `capability_invoke` like other control commands. Idempotency is `(userId, command, repoId, idempotencyKey)` with full semantic request digest conflict detection.\n10. **MCP seam.** `fleet_capabilities` → observe; `fleet_capability_invoke` → control and STATEFUL admit. Same action field discipline and principal-derived actor. Failure codes preserve capability error codes including `capability_record_unavailable` and authority refusals—not silent success.\n11. **Deployment injection is the Atlas fleet bridge.** Exporting Atlas classes from `index.mjs` does not fleet-enable them; only inclusion in `opts.capabilities` (and optional `capabilityContexts`) makes them coordinator/web/MCP reachable under the above gates.\n12. **Failure classification.** Policy/result refusals (`capability_authority_forbidden`, invalid/oversize result) are non-success and non-idempotent “ok”; provenance unavailability is unavailable/poison, not ordinary invalid_command success paths.\n\n## Red tests and proof\n\nConcrete sequences grounded in committed tests and source (reproducible without homelab):\n\n**R1 — One plane, durable hub evidence (CI1/CI5/CI7)**  \nSequence: `createDriver({ capabilities: { fixture }, maxCapabilityBudgetTokens, maxCapabilityEnvelopeBytes })` → `driver.capabilities === undefined` → `coordinator.invokeCapability(...)` → `log.read('hub-capability')` kinds `started` then `completed` without argument plaintext.  \nProof: `phase29-capability-invocation.test.mjs` “CI1/CI5/CI7: createDriver explicitly assembles…”.\n\n**R2 — Closed registration and budget/envelope fail-closed (CI2/CI7)**  \nSequence: construct registry without envelope ceiling; non-empty without record; bad card; unknown name; unadvertised op; budget 0 / over max; cyclic args; malformed/oversize results.  \nProof: same file “registration, cards, JSON inputs…”.\n\n**R3 — Context cannot steal root/actor/budget (CI7)**  \nSequence: context function supplies overlay fields → invoke sees trusted root + overlays; static `{ root: '/attacker-controlled' }` → `capability_context_forbidden`.  \nProof: “deployment context resolves multi-root…”.\n\n**R4 — Authority smuggling (CI4)**  \nSequence: module returns `provenance.mergeAuthority: true` or `'true'` → `capability_authority_forbidden` + audit `capability.op.refused`.  \nProof: “cancellation and coordinator-authority smuggling…”. Web maps same code to HTTP 502 `capability_refused` without module message leakage (`phase12-web-northbound.test.mjs` “CI4/CI6: rejected capability output…”).\n\n**R5 — Post-effect provenance poison (CI5)**  \nSequence: record throws on `completed` after module effect once → `capability_record_unavailable`; second invoke and `cards()` throw same; effect count stays 1.  \nProof: “provenance sink loss poisons…”. Spec CI5 post-effect rule holds.\n\n**R6 — Resume/reverify op policy (CI3)**  \nSequence: resume/reverify with trusted root; resume unadvertised op → `capability_op_unavailable`; bad ref/claim shapes refused.  \nProof: “resume and reverify share operation…”. Reverify implementation path forces non-authoritative provenance (`capability-registry.mjs` ~124).\n\n**R7 — Coordinator poison before registry (CI1)**  \nSequence: set `_fatalError`; `capabilityCards` / `invokeCapability` throw fatal; registry never touched.  \nProof: `coordinator.test.mjs` “capability commands observe coordinator poison…”.\n\n**R8 — Web authz + actor binding (CI6)**  \nSequence: observe-only principal may list cards but not invoke; control principal invoke forwards `actor: web:u:s` and budget only. Resume/reverify are durable control commands with admission events. Malformed action-ambiguous envelopes rejected pre-admission.  \nProof: `phase12-web-northbound.test.mjs` CI6/CI3 suites.\n\n**R9 — MCP tools + idempotent replay boundary (CI6)**  \nSequence: tools list includes fleet capability tools; invoke/resume/reverify forward coordinator calls with `mcp:operator-a:stdio-a`; replaying same idempotency key does not double-dispatch (admission replay). Observe-only cannot invoke; invalid action envelopes fail before dispatch.  \nProof: `phase16-mcp-northbound.test.mjs` CI6 tests.\n\n**R10 — Real Atlas multi-root through driver (CI7/CI8 + audit item 1)**  \nSequence: inject `AtlasStructuralDelta` as `'atlas-structural'` with `capabilityContexts` before/after roots → `invokeCapability('atlas-structural','diff.structural',…)` and `reverifyCapability` ok; cards list only that name.  \nProof: phase29 “real ast-grep Atlas multi-root operation traverses createDriver and reverify”. This is the existence proof that **injection** makes Atlas coordinator-reachable; it is not proof of default fleet registration.\n\n**R11 — Failure classification distinction (CI5/CI6)**  \n- Authority / bad ACI result: web 502 `capability_refused` (not 200); MCP returns specific error codes.  \n- Unknown capability: web 404; invalid budget/args: web 400.  \n- Unmapped / poison-class errors (including `capability_record_unavailable` on web): 503 `temporarily_unavailable`—not ok, not ordinary success. MCP preserves `capability_record_unavailable` explicitly (`mcp-northbound.mjs` `stateFailureCode`).\n\n**Adversarial sequences considered and closed (not residual defects):**\n\n| Attempt | Result |\n|---|---|\n| Inject prebuilt registry with custom authority | Blocked: `opts.capabilityRegistry` removed @ cdeb84f |\n| Read registry from `createDriver` return | `driver.capabilities` undefined |\n| Client-supplied `actor` / `root` via web/MCP | Not in dispatch ctx; only principal actor + registry root |\n| Claim-selected reverify op | Registry passes explicit `op`; claim is opaque JSON |\n| Context override of budget | `capability_context_forbidden` |\n| Treat post-effect sink loss as success | Throws poison; no return of validated result after failed completed record |\n| Empty deployment registry as “hidden tools” | Cards `[]`; invokes `capability_not_found` |\n\n## Risks and rejection criteria\n\n**Residual risks (not actionable CI1–CI8 bugs):**\n\n1. **Stale audit prose.** `docs/28-exhaustive-capability-audit.md` still says Atlas modules “cannot be invoked through Coordinator, web, or MCP.” After Phase 29 that is false **for injected** modules. Reject any plan that “fixes” this by auto-registering all Atlas classes inside `createDriver` without an explicit closed deployment list (would violate CI1/CI7).\n2. **Module side effects before validation.** A malicious or buggy capability can still perform I/O then return a bad envelope. Registry refuses the **claim**, not the past effect. Rejection criterion for *module* work: untrusted modules need sandboxing (later capability containment), not weakening CI4.\n3. **Resume op not passed to `capability.resume`.** Modules with multiple resumable ops must embed op identity in `ref` and self-check. Reject registry changes that trust client `op` without module verification of ref/op binding when multi-op resume ships.\n4. **Dual-write sink.** Driver record does `log.append` then `mapOperationalEvent` outside the coordinator mutator proxy. Log success + map failure still poisons the **capability** plane (good) but does not by itself set coordinator `_fatalError`. Operators must treat `capability_record_unavailable` as restart/reconcile, not “retry until success.” Reject any change that swallows map/append errors or returns the ACI result after a sink throw.\n5. **Web classification coarseness.** `capability_record_unavailable` / context errors fall through web `dispatchFailure` to generic 503, while MCP preserves codes. Acceptable fail-closed; reject any mapping of poison/authority failures to HTTP 200 or replayable “ok” outcomes.\n6. **Northbound cancellation.** Web/MCP do not currently plumb `AbortSignal` into capability ctx. Optional per CI2; reject claims that HTTP disconnect cancels in-flight capability work until a signal is wired.\n7. **Later modules.** Vantage, Evidence Ladder as fleet tools, Skill Forge, Cartographer, Cairn product surfaces remain `docs/28` later work—outside CI1–CI8 invocation substrate.\n\n**Reject a future change if it:**\n\n- Reintroduces a driver-level or northbound-held registry handle separate from Coordinator.\n- Allows `createDriver` to accept a pre-poisoned or caller-built registry that skips the hub record sink.\n- Returns capability results when provenance recording of `completed` failed, or clears `recordFailure` without process restart/reconcile.\n- Accepts `mergeAuthority` / `verificationAuthority` other than strict `false`, or lets reverify omit forced false authorities.\n- Lets web/MCP callers supply `actor`, `root`, or skip observe/control scope checks for capability commands.\n- Treats deployment-empty registry as an error, or silently registers Atlas modules without explicit injection.\n- Softens idempotency so distinct request digests share a success outcome under one key.\n\n**Bottom line:** At `cdeb84f`, CI1–CI8 are met. Deployment-injected Atlas capabilities are coordinator/web/MCP reachable under one control plane, with authority firewall and sticky provenance poison, without merge/verification trust. Remaining Atlas “not default fleet tools” and non-invocation module work are deployment or later-phase scope—not open Phase 29 defects."
+    },
+    {
+      "taskId": "grok-capability-implementation-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-capability-implementation-composer.md",
+      "stance": "boundary",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"capability-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5518-53a2-79f2-959f-3480db535c9f",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-p29-clean.7ofava/.baton/wt/grok-capability-implementation-composer",
+          "repoRoot": "/private/tmp/baton-p29-clean.7ofava",
+          "baseSha": "cdeb84f46d8f3d6e15b9249ccddd2d3d5c622e7c",
+          "branch": "baton/grok-capability-implementation-composer",
+          "ownerTaskId": "grok-capability-implementation-composer"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-p29-clean.7ofava/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-p29-clean.7ofava/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-p29-clean.7ofava/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-p29-clean.7ofava/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-capability-implementation-composer",
+        "worktree": "/private/tmp/baton-p29-clean.7ofava/.baton/wt/grok-capability-implementation-composer",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 56088,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T06:51:23.922Z"
+      },
+      "pid": 58048,
+      "verify": {
+        "worker": "w-2",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"capability-implementation-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 22
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "b3a981ccc187cdb8251ce0d44accb6629e825e4f",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"capability-implementation-review\"]"
+          }
+        },
+        "seq": 426,
+        "ts": "2026-07-12T06:52:34.190Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 22
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"capability-implementation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f5518-53a2-79f2-959f-3480db535c9f",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-p29-clean.7ofava/.baton/wt/grok-capability-implementation-composer",
+          "repoRoot": "/private/tmp/baton-p29-clean.7ofava",
+          "baseSha": "cdeb84f46d8f3d6e15b9249ccddd2d3d5c622e7c",
+          "branch": "baton/grok-capability-implementation-composer",
+          "ownerTaskId": "grok-capability-implementation-composer"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Phase 29 CI1–CI8 adversarial review (cdeb84f)\n\nAdversarial review of committed Phase 29 coordinator-owned capability invocation. Evidence is grounded in assembly (`createDriver`), dispatch (`Coordinator` → `CapabilityRegistry`), and northbound seams (`WebNorthbound._dispatch`, `McpFleetServer._dispatch`), not export lists or prose alone.\n\n---\n\n## Decision\n\n**No actionable CI1–CI8 defect remains** in the committed Phase 29 substrate at `cdeb84f`.\n\nPhase 29 **does** make deployment-injected Atlas (and any other registered) capabilities reachable through `createDriver` → `Coordinator` → authenticated web (`capabilities`, `capability_invoke`) and MCP (`fleet_capabilities`, `fleet_capability_invoke`) **without granting merge or verification authority** to capability output. Authority stays with the coordinator, coordination store, and northbound admission layers; capabilities receive bounded JSON arguments, deployment-derived budgets and envelope ceilings, optional trusted `root`, and optional per-capability context that cannot override registry authority fields.\n\nResidual gaps are **explicit deployment injection** (register modules, set `maxCapabilityBudgetTokens` / `maxCapabilityEnvelopeBytes`, inject `capabilityContexts` for multi-root Atlas), **northbound feature incompleteness** (no `AbortSignal` on web/MCP), or **later capability-module behavior** (payload content, honest `card()` advertisement). None are fixable CI1–CI8 substrate defects.\n\n| CI | Verdict | One-line evidence |\n|----|---------|-------------------|\n| CI1 | Pass | Single `CapabilityRegistry` in `createDriver`; only `Coordinator` holds it; `driver.capabilities === undefined` (test line 135). |\n| CI2 | Pass | Registry `_ctx`, `_validate`, `jsonValue`, envelope/payload bounds; hostile shapes rejected before or at dispatch. |\n| CI3 | Pass | `reverify` passes registry-validated `op` explicitly (`capability-registry.mjs:122`); resume gated on `typeof resume === 'function'`. |\n| CI4 | Pass | `_validate` rejects truthy `mergeAuthority` / `verificationAuthority` (`:79–81`); string smuggling covered in tests. |\n| CI5 | Pass | `_record` poisons on sink failure; audit events omit args/payload; post-effect failure not downgraded. |\n| CI6 | Pass | Web/MCP scope, quota, idempotency, audit; observe vs control separation for inventory vs invoke. |\n| CI7 | Pass | Closed registry, deployment ceilings, `repoRoot`, contexts with forbidden override keys; empty registry valid. |\n| CI8 | Pass | Reds in `phase29-capability-invocation.test.mjs`, web/MCP northbound tests, Atlas end-to-end test. |\n\n---\n\n## Proposed numbered contract\n\nThese tighten operational expectations without changing the committed CI1–CI8 verdict.\n\n1. **CI1 — Single registry handle.** `createDriver()` constructs exactly one `CapabilityRegistry`, passes it only to `Coordinator` (`index.mjs:172–234`), and returns `{ coordinator, story, router, log, coordination }` with no registry field (`index.mjs:256`). Coordinator constructor requires `cards|invoke|resume|reverify` when a registry is present (`coordinator.mjs:266–272`). Northbounds call `coordinator.capabilityCards|invokeCapability|resumeCapability|reverifyCapability` only (`web-northbound.mjs:317–324`, `mcp-northbound.mjs:260–266`).\n\n2. **CI2 — Bounded ACI invoke.** Invoke requires registered name, advertised op (`_op`), plain JSON `args` with byte ceiling, positive `budgetTokens ≤ maxBudgetTokens`, optional `signal`, and returns frozen envelope with required fields (`capability-registry.mjs:64–86`, `102–107`). Malformed/cyclic args → `capability_args_invalid`; bad envelope → `capability_result_invalid`; oversize → `capability_result_oversize`.\n\n3. **CI3 — Resume/reverify integrity.** Resume requires implemented `resume`, bounded `ref` and non-empty `cursor`. Reverify requires implemented `reverify`, bounded `claim` and `args`, and calls `capability.reverify(claim, op, args, ctx)` with **request-selected `op`**, then wraps a synthetic ACI result with `provenance.mergeAuthority: false` and `verificationAuthority: false` (`capability-registry.mjs:109–125`). Mutable claim cannot select a different advertised op.\n\n4. **CI4 — Authority firewall.** Any `provenance.mergeAuthority` or `provenance.verificationAuthority` that is present and not strictly `false` → `capability_authority_forbidden` (`capability-registry.mjs:79–81`).\n\n5. **CI5 — Durable provenance poisoning.** Every started/completed/refused path goes through `_record`; sink throw sets `recordFailure` and blocks further `cards()` / invokes (`capability-registry.mjs:46–55`, `87–100`). Audit carries `invocationId`, `action`, `capability`, `op`, `status` or `code`, and bounded digests—never raw `args` or payloads (test lines 53–56, 139–141).\n\n6. **CI6 — Authenticated northbounds.** Web: `capabilities` → observe; `capability_invoke` → control (`web-northbound.mjs:9–11`, `211–221`, `317–324`). MCP: `fleet_capabilities` → observe; `fleet_capability_invoke` → control with idempotent admission (`mcp-northbound.mjs:4–8`, `156–162`, `213–244`, `261–266`). Capability error codes map to stable HTTP/tool errors (`web-northbound.mjs:43–57`, `mcp-northbound.mjs:38–47`).\n\n7. **CI7 — Explicit assembly.** Non-empty registry requires deployment `maxCapabilityBudgetTokens` and `maxCapabilityEnvelopeBytes` (`index.mjs:168–170`). Registry `root` is `opts.repoRoot`. Context resolvers/functions cannot set `actor`, `budgetTokens`, `root`, or `signal` (`capability-registry.mjs:70–75`). Atlas multi-root needs injected `capabilityContexts` (test lines 154–156); module enforces `beforeRoot`/`afterRoot` and `safePath` (`atlas-structural.mjs:110–113`).\n\n8. **CI8 — Acceptance reds.** Registry, driver wiring, Atlas traverse, web/MCP validation and dispatch are covered by committed tests cited in § Red tests.\n\n9. **Non-CI — Northbound cancellation.** Registry honors `ctx.signal?.aborted` (`capability-registry.mjs:66`); web/MCP do not forward cancellation. Document as northbound limitation unless a later phase adds it.\n\n10. **Non-CI — MCP schema vs runtime.** `fleet_capability_invoke` JSON Schema lists `args|ref|cursor|claim` as optional properties without action-conditional `required`; runtime `validateArguments` (`mcp-northbound.mjs:115–122`) is authoritative. Clients must not trust schema alone.\n\n---\n\n## Red tests and proof\n\n### CI1 — One registry, no bypass\n\n**Assembly trace:** `createDriver` → `new CapabilityRegistry({...})` → `new Coordinator({ capabilities, ... })` → return without exposing registry.\n\n**Failure sequence (bypass attempt):**\n1. `const d = createDriver({ repoRoot, logDir, adapters: {}, capabilities: { fixture }, maxCapabilityBudgetTokens: 1000, maxCapabilityEnvelopeBytes: 65536 })`\n2. `assert.equal(d.capabilities, undefined)` — no driver-level registry handle.\n3. Direct `new CapabilityRegistry(...)` remains possible for tests (`index.mjs:52` export) but is not constructed by `createDriver`; mis-wiring is deployment error, not dual control plane in the driver path.\n\n**Proof:** `phase29-capability-invocation.test.mjs:126–135`.\n\n### CI2 — Hostile JSON, budgets, envelopes\n\n**Failure sequences:**\n\n| Attack | Steps | Expected code | Locus |\n|--------|-------|---------------|-------|\n| Unknown capability | `invoke('missing', 'op', {}, {budgetTokens:10})` | `capability_not_found` | `_entry` `:57` |\n| Unadvertised op | `invoke('fixture', 'fixture.write', ...)` | `capability_op_unavailable` | `_op` `:58` |\n| Budget 0 / over max | `budgetTokens: 0` or `1001` with max 1000 | `capability_budget_invalid` | `_ctx` `:65` |\n| Cyclic args | `cyclic.self = cyclic` | `capability_args_invalid` | `:105` |\n| Malformed ACI | invoke returns `{op, status:'ok'}` only | `capability_result_invalid` | `_validate` `:78` |\n| Payload vs budget | payload bytes > `budgetTokens * 4` | `capability_result_oversize` | `:84` |\n| Envelope vs ceiling | summary blows `maxEnvelopeBytes` | `capability_result_oversize` | `:83` |\n\n**Northbound pre-filter (before coordinator):** Web rejects non-object `args`, zero budget, bad action, action-inapplicable fields (`web-northbound.mjs:104–121`); MCP mirrors (`mcp-northbound.mjs:115–122`). Deeper bounds enforced at registry on dispatch.\n\n**Proof:** `phase29-capability-invocation.test.mjs:59–77`; web `phase12-web-northbound.test.mjs:148–167`; MCP `phase16-mcp-northbound.test.mjs:78–94`.\n\n### CI3 — Resume/reverify op binding\n\n**Failure sequence (op smuggle via claim):**\n1. Register fixture with `reverify(claim, op, args, ctx)` recording `op` from second parameter.\n2. `reverify('fixture', 'fixture.read', { op: 'fixture.write', digest: 'x' }, { digest: 'x' }, ctx)` — registry still validates `fixture.read` via `_op` before call (`:119`).\n3. If implementation ignores passed `op` and uses `claim.op`, that is **module** dishonesty; registry contract is satisfied.\n\n**Resume without implementation:** delete `resume` from module → `capability_resume_unavailable` (`:112`).\n\n**Proof:** `phase29-capability-invocation.test.mjs:115–124`; web `:124–145`; MCP `:65–66`.\n\n### CI4 — Authority smuggling\n\n**Failure sequences:**\n1. Capability returns `provenance: { mergeAuthority: true }` → `capability_authority_forbidden`, audited refused (`capability-registry.mjs:79–81`, test lines 96–101).\n2. String truthy `mergeAuthority: 'true'` → same (`test:98–99`).\n3. Reverify wrapper hard-codes `mergeAuthority: false, verificationAuthority: false` on synthetic result (`capability-registry.mjs:124`).\n\n**Northbound mapping:** Web 502 `capability_refused`; MCP `capability_authority_forbidden` in structured error (`web-northbound.mjs:52–53`, `mcp-northbound.mjs:41`).\n\n**Proof:** `phase29-capability-invocation.test.mjs:93–101`; `phase12-web-northbound.test.mjs:170+`.\n\n### CI5 — Provenance sink poisoning\n\n**Failure sequence:**\n1. `record` throws on `capability.op.completed`.\n2. First invoke: effect runs once, throws `capability_record_unavailable`.\n3. Second invoke and `cards()` both throw same code; no additional capability effects (`test:104–112`).\n\n**Argument leakage check:** invoke with `{ query: 'TOP-SECRET-ARGUMENT' }`; `JSON.stringify(events)` does not contain secret (`test:55`).\n\n**Proof:** `phase29-capability-invocation.test.mjs:43–57`, `104–112`, `139–141`.\n\n### CI6 — Web/MCP authenticated dispatch\n\n**Web failure sequences:**\n1. Principal with only `observe` sends `capability_invoke` → 403 before coordinator (`phase12-web-northbound.test.mjs:106–111`).\n2. Principal with `control` invokes → `coordinator.invokeCapability` with `actor: 'web:user-1:session-1'` (`web-northbound.mjs:320–322`, test `:113–121`).\n3. Malformed envelopes → 400, zero coordinator calls, no `web.command_admitted` (`test:148–167`).\n4. `args` containing `password` key → `credential-bearing command fields are forbidden` (`web-northbound.mjs:27–28`, `89`).\n\n**MCP failure sequences:**\n1. Principal `observe`-only → `forbidden` before dispatch (`phase16-mcp-northbound.test.mjs:90–93`).\n2. `fleet_capability_invoke` with `budgetTokens: 0` or action/field mismatch → `invalid_capability_invocation` (`:80–88`).\n3. Successful invoke idempotency replay returns identical structured content (`:67–69`).\n4. MCP forbids `userId|sessionId|capabilities|repoIds` in tool arguments (`mcp-northbound.mjs:14`, `84`) — stricter than web FORBIDDEN_KEY set; intentional channel hardening, not a registry leak.\n\n**Proof:** `phase12-web-northbound.test.mjs:98–167`; `phase16-mcp-northbound.test.mjs:58–94`.\n\n### CI7 — Root confinement and context firewall\n\n**Failure sequences:**\n1. Static context `{ root: '/attacker-controlled' }` → `capability_context_forbidden` (`capability-registry.mjs:74`, test `:87–88`).\n2. Context resolver returning `{ value: Infinity }` → `capability_context_invalid` (`:73`, test `:89–90`).\n3. Function context from frozen request merges under safe ctx; `root` remains deployment `repoRoot` (`test:79–86`).\n4. Atlas without `beforeRoot`/`afterRoot` in ctx → module `TypeError` at invoke (deployment must inject contexts per test `:154–156`); registry records refused, northbound maps `TypeError` to client error.\n\n**Atlas traverse (real module):**\n1. `createDriver` with `capabilities: { 'atlas-structural': atlas }`, `capabilityContexts: { 'atlas-structural': { beforeRoot, afterRoot } }`.\n2. `invokeCapability('atlas-structural', 'diff.structural', { beforePath, afterPath }, ctx)` → `status: 'ok'` with structural diff payload.\n3. `reverifyCapability(..., result, args, ctx)` → `status: 'ok'`, `payload[0].ok === true` (`test:145–163`).\n\n**Proof:** `phase29-capability-invocation.test.mjs:79–91`, `145–163`; `atlas-structural.mjs:110–113`.\n\n### CI8 — Driver wiring and empty registry\n\n**Failure sequence (deployment bounds):**\n1. `createDriver({ capabilities: { fixture }, /* no max* */ })` → `TypeError` deployment-derived (`test:130`).\n2. `createDriver({ capabilities: {} })` — valid; `capabilityCards()` returns `[]` (`coordinator.mjs:2435–2437`).\n\n**Proof:** `phase29-capability-invocation.test.mjs:126–143`.\n\n### Closed-card honesty\n\nCards are frozen at registration from `capability.card()`; byte/size validated (`capability-registry.mjs:38–43`). Runtime refuses unadvertised ops. **Gap (not CI defect):** cards do not declare whether `resume` exists; `reverifiable` on an op is not enforced against `reverify` implementation—clients learn via `capability_resume_unavailable` / `capability_reverify_unavailable`. That is module/card honesty, not registry dishonesty.\n\n### Credential leakage via success path\n\nRegistry and audit never log raw args/payloads. A **malicious deployed capability** could still place secrets in `payload` returned through web 200 / MCP tool result—northbounds do not scrub ACI payloads. Mitigation: trust boundary at deployment registration (CI7), not CI6 output filtering. Web/MCP block credential-like **input** keys before dispatch.\n\n---\n\n## Risks and rejection criteria\n\n### Reject Phase 29 CI1–CI8 if any of the following appear in substrate (none observed at `cdeb84f`)\n\n1. **Second live control plane** — `createDriver` or coordinator exposes a registry handle bypassing `Coordinator` public methods.\n2. **Authority grant via ACI** — capability result with truthy merge/verification authority reaches northbound clients without `capability_authority_forbidden`.\n3. **Sink failure downgrade** — post-invoke provenance loss allows further invokes or inventory reads as ordinary success/refusal.\n4. **Reverify op injection** — registry calls `reverify` without validated `op`, or uses `claim.op` as authority.\n5. **Context override** — resolver supplies `actor`, `budgetTokens`, `root`, or `signal` that replace registry safe context.\n6. **Unauthenticated invoke** — web/MCP reach `invokeCapability` without scope/quota/idempotency/admission path.\n7. **Raw secret audit** — hub capability events contain invoke arguments or full payloads.\n\n### Accepted risks (deployment or later work)\n\n| Risk | Classification | Notes |\n|------|----------------|-------|\n| Atlas needs `capabilityContexts` for multi-root | Deployment injection (CI7) | `repoRoot` alone insufficient for `AtlasStructuralDelta`; operator must inject `beforeRoot`/`afterRoot`. |\n| No web/MCP cancellation | Northbound limitation | CI2 registry supports `signal`; northbounds omit it. |\n| MCP JSON Schema over-permissive | Schema/documentation ambiguity | Runtime validation is strict; reject client generators that trust schema only. |\n| `CapabilityRegistry` export | Deployment discipline | Test/direct use only; not part of `createDriver` assembly. |\n| Payload may contain sensitive observations | Trusted capability module | ACI design assumes bounded, shareable observations; scrubbing is module responsibility. |\n| Card `reverifiable` not enforced | Later capability module | Registry does not cross-check card flags vs `reverify` implementation. |\n| Homelab / live fleet integration | Out of scope | Not required for CI1–CI8 verdict per brief. |\n\n### Hostile sequences that fail closed correctly (sanity)\n\n1. **Web invoke with nested `api_key` in `args`** → `validateEnvelope` → `credential-bearing command fields are forbidden` (`web-northbound.mjs:89`); coordinator never called (`phase12-web-northbound.test.mjs:166` admission guard).\n2. **MCP invoke `budgetTokens: 1_000_000` with deployment max 10_000** → admitted if idempotent path valid, dispatch → `capability_budget_invalid` → MCP `capability_budget_invalid` / web `invalid_command` (`capability-registry.mjs:65`, `web-northbound.mjs:48–50`).\n3. **Provenance sink dies after successful Atlas diff** → registry poisoned; subsequent homelab-less invoke attempts throw `capability_record_unavailable`; no silent success.\n\n### Final answers\n\n- **Actionable CI1–CI8 defect remaining?** **No.**\n- **Phase 29 reachability without trust/merge authority?** **Yes** — deployment-injected capabilities are coordinator-dispatched, northbound-gated, ACI-bounded, audit-provenanced, and authority-sanitized; merge and verification remain coordinator-owned."
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-capability-implementation-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-capability-implementation-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "expectedReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": true,
+    "reportsCaptured": true,
+    "allKillsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}
