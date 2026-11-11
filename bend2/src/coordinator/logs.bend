@@ -119,15 +119,10 @@ def first_failure(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U
 def tab() -> Char:
   Char.from_u32(9)
 
-def first_field(fields: List<String>) -> String:
-  match fields:
-    case Nil{}: ""
-    case Con{head, rest}: head
-
-def second_field(fields: List<String>) -> String:
-  match fields:
-    case Nil{}: ""
-    case Con{head, rest}: first_field(rest)
+def before_tab(+s: String) -> String:
+  match s:
+    case SNil{}: ""
+    case SCon{c, +rest}: Bool.pick(String,Char.is_eq(c,tab()),"",SCon{c,SNil{}} ++ before_tab(rest))
 
 def after_tab(+s: String) -> String:
   match s:
@@ -135,10 +130,10 @@ def after_tab(+s: String) -> String:
     case SCon{c, +rest}: Bool.pick(String,Char.is_eq(c,tab()),rest,after_tab(rest))
 
 def entry_kind(entry: String) -> String:
-  first_field(Tx.split_tabs(entry))
+  before_tab(entry)
 
 def entry_id(entry: String) -> String:
-  second_field(Tx.split_tabs(entry))
+  before_tab(after_tab(entry))
 
 def entry_line(entry: String) -> String:
   after_tab(after_tab(entry))
@@ -150,12 +145,12 @@ def entry_matches(+entry: String, +kind: String, +id: String) -> Bool:
   Bool.and(String.eq(entry_kind(entry),kind),String.eq(entry_id(entry),id))
 
 # The entries that stay when the ones this kind and identity name leave.
-def keep_pair(matched: Bool, +entry: String, rest_result: List<String>) -> List<String>:
+def keep_pair(matched: Bool, +entry: String, rest_result: List<&2,String>) -> List<&2,String>:
   match matched:
     case True{}: rest_result
     case False{}: Con{entry, rest_result}
 
-def keep_walk(entries: List<String>, +kind: String, +id: String) -> List<String>:
+def keep_walk(entries: List<&2,String>, +kind: String, +id: String) -> List<&2,String>:
   match entries:
     case Nil{}: Nil{}
     case Con{+entry, rest}: keep_pair(entry_matches(entry,kind,id),entry,keep_walk(rest,kind,id))
@@ -166,27 +161,98 @@ def taken_pair(matched: Bool, +entry: String, rest_result: List<String>) -> List
     case True{}: Con{entry_line(entry), rest_result}
     case False{}: rest_result
 
-def take_walk(entries: List<String>, +kind: String, +id: String) -> List<String>:
+def take_walk(entries: List<&2,String>, +kind: String, +id: String) -> List<String>:
   match entries:
     case Nil{}: Nil{}
     case Con{+entry, rest}: taken_pair(entry_matches(entry,kind,id),entry,take_walk(rest,kind,id))
 
-def all_walk(entries: List<String>) -> List<String>:
+def all_walk(entries: List<&2,String>) -> List<String>:
   match entries:
     case Nil{}: Nil{}
     case Con{entry, rest}: Con{entry_line(entry), all_walk(rest)}
 
-def held_put(held: String, +kind: String, +id: String, +line: String) -> String:
-  Tx.join("\n",Con{entry_of(kind,id,line), keep_walk(Tx.split_lines(held),kind,id)})
+def shared_rows(entries: List<String>) -> List<&2,String>:
+  match entries:
+    case Nil{}: Nil{}
+    case Con{head,rest}: Con{head,shared_rows(rest)}
 
-def held_drop(held: String, +kind: String, +id: String) -> String:
-  Tx.join("\n",keep_walk(Tx.split_lines(held),kind,id))
+def affine_rows(entries: List<&2,String>) -> List<String>:
+  match entries:
+    case Nil{}: Nil{}
+    case Con{head,rest}: Con{head,affine_rows(rest)}
 
-def held_lines(held: String, +kind: String, +id: String) -> List<String>:
-  take_walk(Tx.split_lines(held),kind,id)
+def held_rows(+held: String) -> List<&2,String>:
+  shared_rows(Tx.split_lines(held))
 
-def held_all(held: String) -> List<String>:
-  all_walk(Tx.split_lines(held))
+def held_text(entries: List<&2,String>) -> String:
+  Tx.join("\n",affine_rows(entries))
+
+def held_after_checkpoint(enabled: Bool, +materialized: String, pending: List<&2,String>, result: Result<&1,&1,U32 & String,Unit>) -> List<&2,String>:
+  match result:
+    case Fail{error}: pending
+    case Done{unit}: Bool.pick(List<&2,String>,enabled,held_rows(materialized),pending)
+
+def held_put(held: List<&2,String>, +kind: String, +id: String, +line: String) -> List<&2,String>:
+  Con{entry_of(kind,id,line), keep_walk(held,kind,id)}
+
+def drop_pair_found(+entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
+  (kept,changed)=result
+  (kept,True{})
+
+def drop_pair_missed(+entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
+  (kept,changed)=result
+  (Con{entry,kept},changed)
+
+def drop_pair(found: Bool, +entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
+  match found:
+    case True{}: drop_pair_found(entry,result)
+    case False{}: drop_pair_missed(entry,result)
+
+def drop_walk(entries: List<&2,String>, +kind: String, +id: String) -> List<&2,String> & Bool:
+  match entries:
+    case Nil{}: (Nil{},False{})
+    case Con{+entry, rest}: drop_pair(entry_matches(entry,kind,id),entry,drop_walk(rest,kind,id))
+
+def held_drop(held: List<&2,String>, +kind: String, +id: String) -> List<&2,String> & Bool:
+  drop_walk(held,kind,id)
+
+def take_keep_pair(found: Bool, +entry: String, taken: List<String>, kept: List<&2,String>, changed: Bool) -> List<String> & List<&2,String> & Bool:
+  match found:
+    case True{}: (Con{entry_line(entry),taken},kept,True{})
+    case False{}: (taken,Con{entry,kept},changed)
+
+def take_keep_cons(+entry: String, +kind: String, +id: String, result: List<String> & List<&2,String> & Bool) -> List<String> & List<&2,String> & Bool:
+  (taken,kept,changed)=result
+  take_keep_pair(entry_matches(entry,kind,id),entry,taken,kept,changed)
+
+def take_and_keep(entries: List<&2,String>, +kind: String, +id: String) -> List<String> & List<&2,String> & Bool:
+  match entries:
+    case Nil{}: (Nil{},Nil{},False{})
+    case Con{+entry, rest}: take_keep_cons(entry,kind,id,take_and_keep(rest,kind,id))
+
+def message_entry_found(+entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
+  (kept,changed)=result
+  (kept,True{})
+
+def message_entry_missed(+entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
+  (kept,changed)=result
+  (Con{entry,kept},changed)
+
+def message_entry(found: Bool, +entry: String, result: List<&2,String> & Bool) -> List<&2,String> & Bool:
+  match found:
+    case True{}: message_entry_found(entry,result)
+    case False{}: message_entry_missed(entry,result)
+
+def held_drop_message(entries: List<&2,String>, +id: String) -> List<&2,String> & Bool:
+  match entries:
+    case Nil{}: (Nil{},False{})
+    case Con{+entry, rest}: message_entry(Bool.and(String.eq(entry_id(entry),id),Bool.or(String.eq(entry_kind(entry),"message_start"),String.eq(entry_kind(entry),"message_update"))),entry,held_drop_message(rest,id))
+
+def held_lines(held: List<&2,String>, +kind: String, +id: String) -> List<String>:
+  take_walk(held,kind,id)
+
+def held_all(held: List<&2,String>) -> List<String>:
+  all_walk(held)
 
 def reverse_held_rows(rows: List<String>, tail: List<String>) -> List<String>:
   match rows:
@@ -228,7 +294,7 @@ def frame_id_span_sql() -> String:
 def frame_id_decoded(db: String, decoded: Frame.FrameDecoded) -> IO(String):
   match decoded:
     case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,frame_id_sql(line)))
-    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,frame_id_span_sql()))
+    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span_memory(spool,offset,length,frame_id_span_sql()))
     case Frame.InvalidFrame{line}: IO.pure(String,"")
 
 def frame_id(db: String, decoded: Frame.FrameDecoded, omp: Bool) -> IO(String):
@@ -412,76 +478,84 @@ def retained_from(compact: Bool, db: String, +line: String, event: String, +log:
     case True{}: terminal_compact(db,line,event,log)
     case False{}: IO.pure(String,line)
 
-def quiet_keep(keep: Bool, +line: String, held: String) -> List<String> & String:
+def quiet_keep(keep: Bool, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match keep:
-    case True{}: (Con{line,Nil{}},held)
-    case False{}: (Nil{},held)
+    case True{}: (Con{line,Nil{}},held,False{})
+    case False{}: (Nil{},held,False{})
 
-def step_quiet(+kind: String, +line: String, held: String) -> List<String> & String:
+def step_quiet(+kind: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   quiet_keep(Bool.or(terminal_kind(kind),String.is_empty(kind)),line,held)
 
-def step_message_end(end: Bool, +kind: String, +id: String, +line: String, +held: String) -> List<String> & String:
-  match end:
-    case True{}: (Con{line,Nil{}}, held_drop(held_drop(held,"message_start",id),"message_update",id))
-    case False{}: (Con{line,Nil{}}, held)
+def finish_held_change(+line: String, result: List<&2,String> & Bool) -> List<String> & List<&2,String> & Bool:
+  (kept,changed)=result
+  (Con{line,Nil{}},kept,changed)
 
-def step_tool_end(end: Bool, +kind: String, +id: String, +line: String, +held: String) -> List<String> & String:
+def step_message_end(end: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match end:
-    case True{}: (List.append(&1,String,held_lines(held,"tool_execution_update",id),Con{line,Nil{}}), held_drop(held,"tool_execution_update",id))
+    case True{}: finish_held_change(line,held_drop_message(held,id))
+    case False{}: (Con{line,Nil{}},held,False{})
+
+def finish_tool_end(+line: String, result: List<String> & List<&2,String> & Bool) -> List<String> & List<&2,String> & Bool:
+  (taken,kept,changed)=result
+  (List.append(&1,String,taken,Con{line,Nil{}}),kept,changed)
+
+def step_tool_end(end: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
+  match end:
+    case True{}: finish_tool_end(line,take_and_keep(held,"tool_execution_update",id))
     case False{}: step_message_end(String.eq(kind,"message_end"),kind,id,line,held)
 
-def step_prefix(identified: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def step_prefix(identified: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match identified:
-    case True{}: (Nil{},held_put(held,kind,id,line))
-    case False{}: (Con{line,Nil{}},held)
+    case True{}: (Nil{},held_put(held,kind,id,line),True{})
+    case False{}: (Con{line,Nil{}},held,False{})
 
 # A message_update carries the running view of a message the provider resends;
 # the newest one is held like any other prefix frame, so an assistant stream
 # that dies before its message_end still leaves the text it had produced.
-def step_snapshot(snapshot: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def step_snapshot(snapshot: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match snapshot:
     case True{}: step_prefix(Bool.not(String.is_empty(id)),"message_update",id,line,held)
     case False{}: step_tool_end(String.eq(kind,"tool_execution_end"),kind,id,line,held)
 
-def step_start(start: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def step_start(start: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match start:
     case True{}: step_prefix(Bool.not(String.is_empty(id)),"message_start",id,line,held)
     case False{}: step_snapshot(String.eq(kind,"message_update"),kind,id,line,held)
 
-def step_update(update: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def step_update(update: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match update:
     case True{}: step_prefix(Bool.not(String.is_empty(id)),"tool_execution_update",id,line,held)
     case False{}: step_start(String.eq(kind,"message_start"),kind,id,line,held)
 
 # The lines a frame contributes at the default level.
-def step_default(+kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def step_default(+kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   step_update(String.eq(kind,"tool_execution_update"),kind,id,line,held)
 
-def step_quiet_or_default(quiet: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def step_quiet_or_default(quiet: Bool, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match quiet:
     case True{}: step_quiet(kind,line,held)
     case False{}: step_default(kind,id,line,held)
 
-def step_codex_start(start: Bool, +level: String, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def step_codex_start(start: Bool, +level: String, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match start:
     case True{}: step_prefix(Bool.not(String.is_empty(id)),"codex_command_start",id,line,held)
     case False{}: step_quiet_or_default(String.eq(level,"quiet"),kind,id,line,held)
 
 # The completed command is written immediately. Its held start is removed;
 # unfinished starts remain available to flush and checkpoint restoration.
-def step_codex_end(end: Bool, +level: String, +kind: String, +id: String, +line: String, +held: String) -> List<String> & String:
+def step_codex_end(end: Bool, +level: String, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match end:
-    case True{}: (Con{line,Nil{}},held_drop(held,"codex_command_start",id))
+    case True{}: finish_held_change(line,held_drop(held,"codex_command_start",id))
     case False{}: step_codex_start(String.eq(kind,"codex_command_start"),level,kind,id,line,held)
 
-def step_choose_step(diagnostic: Bool, +level: String, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def step_choose_step(diagnostic: Bool, +level: String, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match diagnostic:
-    case True{}: (Con{line,Nil{}},held)
+    case True{}: (Con{line,Nil{}},held,False{})
     case False{}: step_codex_end(String.eq(kind,"codex_command_end"),level,kind,id,line,held)
 
 # The lines one frame contributes to the live log and the prefix frames the turn
 # still holds.
-def frame_step(policy: Policy, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def frame_step(policy: Policy, +kind: String, +id: String, +line: String, held: List<&2,String>) -> List<String> & List<&2,String> & Bool:
   match policy:
     case Policy{+level}: step_choose_step(String.eq(level,"diagnostic"),level,kind,id,line,held)
 
@@ -495,28 +569,69 @@ def retained(db: String, policy: Policy, +kind: String, decoded: Frame.FrameDeco
     case Policy{+level}:
       retained_decoded(Bool.and(terminal_kind(kind),Bool.not(String.eq(level,"diagnostic"))),db,decoded,event,log)
 
-def step_lines(step: List<String> & String) -> List<String>:
-  (lines,held)=step
+def step_lines(step: List<String> & List<&2,String> & Bool) -> List<String>:
+  (lines,held,changed)=step
   lines
 
-def step_held(step: List<String> & String) -> String:
-  (lines,held)=step
+def step_held(step: List<String> & List<&2,String> & Bool) -> List<&2,String>:
+  (lines,held,changed)=step
   held
 
 # Everything still held when the turn ends without the frame that supersedes it.
-def flush(held: String) -> List<String>:
+def flush_rows(held: List<&2,String>) -> List<String>:
   held_all(held)
+
+def flush(held: String) -> List<String>:
+  flush_rows(held_rows(held))
 
 def entry_count(entries: List<String>) -> U32:
   match entries:
     case Nil{}: 0
     case Con{head, rest}: U32.add(1,entry_count(rest))
 
+def entries_empty(entries: List<String>) -> Bool:
+  match entries:
+    case Nil{}: True{}
+    case other: False{}
+
 # A turn that ends on a read failure writes what it held and names the episode,
 # so the partial output it kept is not lost with the process.
+def summary_cons(summary: Bool & U32) -> Bool & U32:
+  (empty,count)=summary
+  (False{},U32.add(1,count))
+
+def entry_summary(entries: List<&2,String>) -> Bool & U32:
+  match entries:
+    case Nil{}: (True{},0)
+    case Con{head,rest}: summary_cons(entry_summary(rest))
+
+def interrupted_summary(summary: Bool & U32) -> List<String>:
+  (empty,count)=summary
+  match empty:
+    case True{}: Nil{}
+    case False{}: Con{"{\"type\":\"baton_log_interrupted\",\"held\":" ++ U32.show(count) ++ "}",Nil{}}
+
+def flush_summary_cons(+entry: String, result: List<String> & (Bool & U32)) -> List<String> & (Bool & U32):
+  (lines,summary)=result
+  (Con{entry_line(entry),lines},summary_cons(summary))
+
+def flush_summary(entries: List<&2,String>) -> List<String> & (Bool & U32):
+  match entries:
+    case Nil{}: (Nil{},(True{},0))
+    case Con{+entry,rest}: flush_summary_cons(entry,flush_summary(rest))
+
+def flush_interrupted_parts(result: List<String> & (Bool & U32)) -> List<String> & List<String>:
+  (lines,summary)=result
+  (lines,interrupted_summary(summary))
+
+def flush_interrupted(held: List<&2,String>) -> List<String> & List<String>:
+  flush_interrupted_parts(flush_summary(held))
+
+def interrupted_rows(held: List<&2,String>) -> List<String>:
+  interrupted_summary(entry_summary(held))
+
 def interrupted(+held: String) -> List<String>:
-  Bool.pick(List<String>,String.is_empty(held),Nil{},
-    Con{"{\"type\":\"baton_log_interrupted\",\"held\":" ++ U32.show(entry_count(Tx.split_lines(held))) ++ "}",Nil{}})
+  interrupted_rows(held_rows(held))
 
 def failed_now(previous: Bool, written: Result<&1,&1,U32 & String,Unit>) -> Bool:
   match written:

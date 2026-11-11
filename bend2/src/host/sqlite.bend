@@ -9,6 +9,12 @@ def Sql.query(path: String, sql: String) -> IO(Result<&1, &1, U32 & String, Stri
 def Sql.query_span(path: String, spool: String, offset: String, length: String, sql: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./sqlite.c"
 
+# Runs frame SQL in an ephemeral SQLite memory database with the spool range
+# bound as parameter 1. The statement must be read-only and cannot access the
+# coordination database. Rows use the Sql.query format.
+def Sql.query_span_memory(spool: String, offset: String, length: String, sql: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./sqlite.c"
+
 # The same binding with `text` as parameter 2.
 def Sql.query_span_text(path: String, spool: String, offset: String, length: String, sql: String, text: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./sqlite.c"

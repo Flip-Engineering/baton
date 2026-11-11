@@ -176,7 +176,7 @@ static void __attribute__((constructor)) baton_sql_use(void) {
 }
 #endif
 
-#if defined(CID_SQL_QUERY_SPAN) || defined(CID_SQL_QUERY_SPAN_TEXT) || defined(CID_SQL_QUERY_SPAN_2TEXT)
+#if defined(CID_SQL_QUERY_SPAN) || defined(CID_SQL_QUERY_SPAN_TEXT) || defined(CID_SQL_QUERY_SPAN_2TEXT) || defined(CID_SQL_QUERY_SPAN_MEMORY)
 /* Runs caller SQL with a byte range of an immutable stdout spool bound once
    as parameter 1, plus optional caller text as parameters 2 and 3. The range
    is mapped read-only and bound with SQLITE_STATIC, so a large native frame
@@ -186,9 +186,40 @@ typedef struct {
   char *path, *spool, *sql, *text, *text2, *output, *error;
   size_t length, text_length, text2_length, map_length;
   uint64_t offset, span_length;
-  int code, params, spool_fd;
+  int code, params, spool_fd, ephemeral;
   void *map;
 } BatonSqlSpan;
+/* Frame-only SQLite work runs on the Bend I/O helper pool. Each helper keeps
+   its own empty memory database so repeated read-only frame selectors do not
+   reopen SQLite or reload its empty schema for every frame. */
+static int baton_sql_span_memory_authorizer(void *, int, const char *, const char *, const char *, const char *);
+static __thread sqlite3 *baton_sql_span_memory_db;
+static __thread pid_t baton_sql_span_memory_pid;
+
+static sqlite3 *baton_sql_span_memory_connection(int *code) {
+  pid_t pid = getpid();
+  if (baton_sql_span_memory_pid != pid) {
+    /* A forked child must never use its parent's SQLite connection. */
+    baton_sql_span_memory_db = NULL;
+    baton_sql_span_memory_pid = pid;
+  }
+  if (!baton_sql_span_memory_db) {
+    sqlite3 *db = NULL;
+    *code = sqlite3_open(":memory:", &db);
+    if (*code != SQLITE_OK) {
+      if (db) sqlite3_close(db);
+      return NULL;
+    }
+    *code = sqlite3_set_authorizer(db, baton_sql_span_memory_authorizer, NULL);
+    if (*code != SQLITE_OK) {
+      sqlite3_close(db);
+      return NULL;
+    }
+    baton_sql_span_memory_db = db;
+  }
+  *code = SQLITE_OK;
+  return baton_sql_span_memory_db;
+}
 
 static int baton_sql_span_parse_u64(const char *digits, uint64_t *value) {
   if (!digits || !*digits) return EINVAL;
@@ -217,6 +248,17 @@ static int baton_sql_span_row(BatonSqlSpan *call, sqlite3_stmt *statement) {
     next[call->length] = 0;
   }
   return 0;
+}
+
+static int baton_sql_span_memory_authorizer(void *context, int action, const char *first, const char *second, const char *database, const char *trigger) {
+  (void)context; (void)first; (void)second; (void)database; (void)trigger;
+  switch (action) {
+    case SQLITE_ATTACH: case SQLITE_DETACH: case SQLITE_PRAGMA:
+    case SQLITE_TRANSACTION: case SQLITE_SAVEPOINT:
+      return SQLITE_DENY;
+    default:
+      return SQLITE_OK;
+  }
 }
 
 static void baton_sql_span_call(IoWork *w) {
@@ -256,15 +298,21 @@ static void baton_sql_span_call(IoWork *w) {
       call->code = EILSEQ; call->error = strdup("stdout frame contains NUL"); return;
     }
   }
-  call->code = sqlite3_open(call->path, &db);
+  if (call->ephemeral) {
+    db = baton_sql_span_memory_connection(&call->code);
+  } else {
+    call->code = sqlite3_open(call->path, &db);
+    if (call->code == SQLITE_OK) sqlite3_busy_handler(db, baton_sql_busy, NULL);
+  }
   if (call->code != SQLITE_OK) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
-    sqlite3_busy_handler(db, baton_sql_busy, NULL);
     char *error = NULL;
-    call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
-    if (call->code == SQLITE_OK)
-      call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
+    if (!call->ephemeral) {
+      call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
+      if (call->code == SQLITE_OK)
+        call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
+    }
     const char *tail = call->sql;
     while (call->code == SQLITE_OK && tail && *tail) {
       sqlite3_stmt *statement = NULL;
@@ -272,6 +320,11 @@ static void baton_sql_span_call(IoWork *w) {
       call->code = sqlite3_prepare_v2(db, tail, -1, &statement, &next);
       if (call->code != SQLITE_OK) break;
       if (!statement) { tail = next; continue; }
+      if (call->ephemeral && !sqlite3_stmt_readonly(statement)) {
+        call->code = SQLITE_READONLY;
+        sqlite3_finalize(statement);
+        break;
+      }
       int parameter_count = sqlite3_bind_parameter_count(statement);
       if (parameter_count >= 1)
         call->code = sqlite3_bind_text64(statement, 1, bytes, (sqlite3_uint64)call->span_length, SQLITE_STATIC, SQLITE_UTF8);
@@ -295,7 +348,7 @@ static void baton_sql_span_call(IoWork *w) {
     }
     sqlite3_free(error);
   }
-  if (db) sqlite3_close(db);
+  if (db && !call->ephemeral) sqlite3_close(db);
 }
 
 static void baton_sql_span_release(BatonSqlSpan *call) {
@@ -315,21 +368,23 @@ static Term baton_sql_span_pack(Env e, IoWork *w) {
   return result;
 }
 
-static Term baton_sql_span_run(Env e, Term *f, IoWork *w, int params) {
+static Term baton_sql_span_run(Env e, Term *f, IoWork *w, int params, int ephemeral) {
   BatonSqlSpan *call = calloc(1, sizeof(*call));
   if (!call) return io_fail(e, ENOMEM, NULL);
   call->spool_fd = -1;
   call->params = params;
+  call->ephemeral = ephemeral;
   u64 path_n = 0, spool_n = 0, offset_n = 0, length_n = 0, sql_n = 0, text_n = 0, text2_n = 0;
-  call->path = io_cstr(e, f[0], &path_n);
-  call->spool = io_cstr(e, f[1], &spool_n);
-  char *offset_text = io_cstr(e, f[2], &offset_n);
-  char *length_text = io_cstr(e, f[3], &length_n);
-  call->sql = io_cstr(e, f[4], &sql_n);
-  if (params > 1) { call->text = io_cstr(e, f[5], &text_n); call->text_length = text_n; }
-  if (params > 2) { call->text2 = io_cstr(e, f[6], &text2_n); call->text2_length = text2_n; }
-  if (!call->path || !call->spool || !call->sql || !offset_text || !length_text ||
-      strlen(call->path) != path_n || strlen(call->spool) != spool_n || strlen(call->sql) != sql_n ||
+  int base = ephemeral ? 0 : 1;
+  call->path = ephemeral ? strdup(":memory:") : io_cstr(e, f[0], &path_n);
+  call->spool = io_cstr(e, f[base], &spool_n);
+  char *offset_text = io_cstr(e, f[base + 1], &offset_n);
+  char *length_text = io_cstr(e, f[base + 2], &length_n);
+  call->sql = io_cstr(e, f[base + 3], &sql_n);
+  if (params > 1) { call->text = io_cstr(e, f[base + 4], &text_n); call->text_length = text_n; }
+  if (params > 2) { call->text2 = io_cstr(e, f[base + 5], &text2_n); call->text2_length = text2_n; }
+  if ((!ephemeral && !call->path) || !call->spool || !call->sql || !offset_text || !length_text ||
+      (!ephemeral && strlen(call->path) != path_n) || strlen(call->spool) != spool_n || strlen(call->sql) != sql_n ||
       strlen(offset_text) != offset_n || strlen(length_text) != length_n) {
     call->code = EINVAL; call->error = strdup("database path, spool path or SQL contains NUL");
   } else {
@@ -345,21 +400,28 @@ static Term baton_sql_span_run(Env e, Term *f, IoWork *w, int params) {
 #endif
 
 #ifdef CID_SQL_QUERY_SPAN
-static Term baton_sql_query_span_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 1); }
+static Term baton_sql_query_span_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 1, 0); }
 static void __attribute__((constructor)) baton_sql_query_span_use(void) {
   io_eff(CID_SQL_QUERY_SPAN, baton_sql_query_span_run, 0);
 }
 #endif
 
+#ifdef CID_SQL_QUERY_SPAN_MEMORY
+static Term baton_sql_query_span_memory_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 1, 1); }
+static void __attribute__((constructor)) baton_sql_query_span_memory_use(void) {
+  io_eff(CID_SQL_QUERY_SPAN_MEMORY, baton_sql_query_span_memory_run, 0);
+}
+#endif
+
 #ifdef CID_SQL_QUERY_SPAN_TEXT
-static Term baton_sql_query_span_text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 2); }
+static Term baton_sql_query_span_text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 2, 0); }
 static void __attribute__((constructor)) baton_sql_query_span_text_use(void) {
   io_eff(CID_SQL_QUERY_SPAN_TEXT, baton_sql_query_span_text_run, 0);
 }
 #endif
 
 #ifdef CID_SQL_QUERY_SPAN_2TEXT
-static Term baton_sql_query_span_2text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 3); }
+static Term baton_sql_query_span_2text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 3, 0); }
 static void __attribute__((constructor)) baton_sql_query_span_2text_use(void) {
   io_eff(CID_SQL_QUERY_SPAN_2TEXT, baton_sql_query_span_2text_run, 0);
 }
