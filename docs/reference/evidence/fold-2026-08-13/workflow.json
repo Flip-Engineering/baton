@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "fold-foundry-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "row-fold155",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/cli-silent-start-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13/row-fold-155.md",
+      "report": "docs/reference/evidence/cli-silent-start-2026-08-13/fold-155.md"
+    },
+    {
+      "role": "row-fold156",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/mcp-profile-parity-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13/row-fold-156.md",
+      "report": "docs/reference/evidence/mcp-profile-parity-2026-08-13/fold-156.md"
+    },
+    {
+      "role": "row-fold161",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/orchestrator-plan-object-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13/row-fold-161.md",
+      "report": "docs/reference/evidence/orchestrator-plan-object-2026-08-13/fold-161.md"
+    },
+    {
+      "role": "row-fold164",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blind-waits-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13/row-fold-164.md",
+      "report": "docs/reference/evidence/blind-waits-2026-08-13/fold-164.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the fold — every blocker and every numbered QA instruction gets FOLDED/STRUCK/ESCALATED, no silent drops. Write the fold notes incrementally." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Your raw material: the contract, redteam-<issue>.md in the same dir as the contract, and the QA at docs/reference/evidence/review-foundry-2026-08-13/review-qa.md. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them in the fold notes." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/cli-silent-start-2026-08-13/fold-155.md", "mustContain": "#155" },
+      { "path": "docs/reference/evidence/mcp-profile-parity-2026-08-13/fold-156.md", "mustContain": "#156" },
+      { "path": "docs/reference/evidence/orchestrator-plan-object-2026-08-13/fold-161.md", "mustContain": "#161" },
+      { "path": "docs/reference/evidence/blind-waits-2026-08-13/fold-164.md", "mustContain": "#164" }
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "at": "2026-07-13T02:20:59.147Z",
+  "repoHead": "dc9694862e4e81ad66cfde2128a145b7747af936",
+  "runId": "phase43-ed-sequence-review",
+  "credentialPosture": {
+    "glm": "project-local ignored file loaded only by GlmSessionCli",
+    "codex": "explicit private runtime projection",
+    "claude": "subscription/keychain; no credential file projection"
+  },
+  "rows": [
+    {
+      "taskId": "phase43-glm-ed-sequence-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "target": "reviews/dogfood/phase43-glm-ed-sequence-review.md",
+      "workerId": "w-1",
+      "pid": 92538,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 75275,
+        "usd": 0.57712
+      },
+      "verifyAccept": true,
+      "reportCaptured": true
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase43-glm-ed-sequence-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "allHarnessesAdmitted": true,
+    "distinctNativePids": true,
+    "concurrentTurns": true,
+    "exactRoutes": true,
+    "freshVerified": true,
+    "reportsCaptured": true,
+    "killSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": true
+}

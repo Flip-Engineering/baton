@@ -1,0 +1,24 @@
+wave wls-remediation-2026-08-14-wave-a
+member coordinator
+  harness deepseek
+  model "deepseek-v4-pro[1m]"
+  effort high
+  scope "docs/reference/evidence/wls-remediation-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/wls-remediation-2026-08-14/coordinator-brief.md"
+  report "docs/reference/evidence/wls-remediation-2026-08-14/verify-notes.md"
+member row-fix
+  harness deepseek
+  model "deepseek-v4-pro[1m]"
+  effort high
+  scope "impl/src/application.mjs"
+  scope "docs/reference/evidence/wls-remediation-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/wls-remediation-2026-08-14/fix-brief.md"
+  report "docs/reference/evidence/wls-remediation-2026-08-14/fix-notes.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue the fix — the WLS-1 pin green, the four named adjacents unmoved, notes incremental."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first. The fix row: the single-pass index per invocation in application.mjs (NUL discipline — grep -an/sed -n only, never whole-file reads, don't disturb NUL bytes). The coordinator: verify per your brief, including the live baton waves list check if you can restart the resident. Your [attempt:] line verbatim in your notes' first five lines."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-fix result "The row settled (you are the remaining member — pinned #175 semantics). Verify on disk per the #174 law, then run the acceptance and write verify-notes.md per your brief."
+harvest "docs/reference/evidence/wls-remediation-2026-08-14/verify-notes.md" mustContain "WLS-VERIFY v1"
+harvest "docs/reference/evidence/wls-remediation-2026-08-14/fix-notes.md" mustContain "waves-list"

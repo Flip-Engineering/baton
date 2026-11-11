@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-02T01:56:07.507Z",
+  "members": [
+    "implementer"
+  ],
+  "outcomes": [
+    {
+      "role": "implementer",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "1 worker(s) active.",
+      "resultSha": null
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-626a0f8f6e92aec8fb888524-work:1064",
+      "at": "2026-08-02T03:49:57.908Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-626a0f8f6e92aec8fb888524-work:1078",
+      "at": "2026-08-02T03:50:43.784Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0
+  }
+}

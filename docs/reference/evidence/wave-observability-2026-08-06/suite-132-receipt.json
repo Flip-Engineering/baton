@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-06T23:53:54.974Z",
+  "salt": "s420260806235354",
+  "role": "suite-132",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-4f3f25a169b32a4b25042a932999ae4f"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-132",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-132": {
+      "pin": "df9ba2c0dc634569846a6be2c77cbcd8b1cf6b69",
+      "paths": [
+        "impl/test/wave-observability-red.test.mjs",
+        "docs/reference/evidence/wave-observability-2026-08-06/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 338,
+  "verdict": "SUITE-132-OK"
+}

@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T07:32:02.119Z",
+  "salt": "bc20260807073202",
+  "role": "blue-59",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a4148694d27419a8fbf8f2086c72eb98"
+        ]
+      }
+    },
+    {
+      "step": "terminal:blue-59",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "blue-59": {
+      "pin": "35bd78abcb77767d8d496651031f2a4ea2f6d60f",
+      "paths": [
+        "docs/reference/evidence/redrive-continuity-2026-08-07/suite-blueteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 383,
+  "verdict": "BLUE-59-OK"
+}

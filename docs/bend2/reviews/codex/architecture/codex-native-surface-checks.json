@@ -1,0 +1,42 @@
+[
+  {
+    "command": [
+      "bend",
+      "base",
+      "File"
+    ],
+    "exit_code": 0,
+    "stdout": "law File:\n  Type\n\ndef File.open(path: String, mode: String) ->\n  IO(Result<&1, &1, U32 & String, File>):\n  import \"./effs/file_open.c\"\n  import \"./effs/file_open.js\"\n\ndef File.read(file: File, max: U32) ->\n  IO(File & Result<&1, &1, U32 & String, String>):\n  import \"./effs/file_read.c\"\n  import \"./effs/file_read.js\"\n\ndef File.read_bytes(file: File, max: U32) ->\n  IO(File & Result<&1, &1, U32 & String, List<&2, U32>>):\n  import \"./effs/file_read.c\"\n  import \"./effs/file_read.js\"\n\ndef File.read_at(file: File, offset: U32, max: U32) ->\n  IO(File & Result<&1, &1, U32 & String, List<&2, U32>>):\n  import \"./effs/file_read.c\"\n  import \"./effs/file_read.js\"\n\ndef File.size(file: File) ->\n  IO(File & Result<&1, &1, U32 & String, U32>):\n  import \"./effs/file_size.c\"\n  import \"./effs/file_size.js\"\n\ndef File.write(file: File, data: String) ->\n  IO(File & Result<&1, &1, U32 & String, Unit>):\n  import \"./effs/file_write.c\"\n  import \"./effs/file_write.js\"\n\ndef File.write_bytes(file: File, data: List<&2, U32>) ->\n  IO(File & Result<&1, &1, U32 & String, Unit>):\n  import \"./effs/file_write.c\"\n  import \"./effs/file_write.js\"\n\ndef File.close(file: File) -> IO(Unit):\n  import \"./effs/file_close.c\"\n  import \"./effs/file_close.js\"\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "bend",
+      "base",
+      "File.fsync"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "bend: Base has no File.fsync (see bend --help)\n"
+  },
+  {
+    "command": [
+      "bend",
+      "base",
+      "File.rename"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "bend: Base has no File.rename (see bend --help)\n"
+  },
+  {
+    "command": [
+      "bend",
+      "base",
+      "IO.cancel"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "bend: Base has no IO.cancel (see bend --help)\n"
+  }
+]

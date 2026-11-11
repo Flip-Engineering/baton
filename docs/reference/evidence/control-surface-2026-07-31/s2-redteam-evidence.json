@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T22:33:01.948Z",
+  "members": [
+    "s2-redteam-opus"
+  ],
+  "outcomes": [
+    {
+      "role": "s2-redteam-opus",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "e89e7b7bdfbfa944597bc72273bf1462536eeda5"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "s2-redteam-opus",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "s2-redteam-opus",
+      "requestId": "pause:baton-abcf66cdf4500137cc6fe034-work:96",
+      "at": "2026-07-31T22:42:05.164Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "s2-redteam-opus",
+      "requestId": "pause:baton-abcf66cdf4500137cc6fe034-work:104",
+      "at": "2026-07-31T22:42:25.557Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}

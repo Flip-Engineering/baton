@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-07T05:28:50.203Z",
+  "salt": "s820260807052850",
+  "role": "suite-80",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-c765195d1af8edfe3a374ae46750a9f4"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-80",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-80": {
+      "pin": "0825c6e1a37157e650c09c8ca479ae0bd49e1ce4",
+      "paths": [
+        "impl/test/tg3-window-red.test.mjs",
+        "docs/reference/evidence/tg3-window-2026-08-07/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 363,
+  "verdict": "SUITE-80-OK"
+}

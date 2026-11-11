@@ -1,0 +1,173 @@
+Compiler SHA256: 3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-no-ledger.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/examples/laws-no-ledger.bend
+no-ledger: the gate reads only observations; both laws checked.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/.work/control-a.bend --check-only
+Error:
+- expected : False{}
+- observed : True{}
+Context:
+- p : Nat
+Location: gate_reads_only_observations
+104 |           match target:
+105>|             case Passed{}: {==}
+106 |             case Failed{}: {==}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/.work/control-b.bend --check-only
+Error:
+- expected : True{}
+- observed : False{}
+Location: gate_reads_only_observations
+ 99 |             case Passed{}: {==}
+100>|             case Failed{}: {==}
+101 |             case Absent{}: {==}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/.work/control-b1.bend --check-only
+Error:
+- expected : True{}
+- observed : False{}
+Context:
+- p : Nat
+Location: gate_reads_only_observations
+93 |           match target:
+94>|             case Passed{}: {==}
+95 |             case Failed{}: {==}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/.work/control-c.bend --check-only
+Error:
+- expected : True{}
+- observed : False{}
+Location: gate_reads_only_observations
+91 |             case Passed{}: {==}
+92>|             case Failed{}: {==}
+93 |             case Absent{}: {==}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/.work/import-control-a.bend --check-only
+Error:
+- expected : False{}
+- observed : True{}
+Context:
+- p : Nat
+Location: control-a.gate_reads_only_observations
+104 |           match target:
+105>|             case Passed{}: {==}
+106 |             case Failed{}: {==}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/.work/read-record.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/.work/read-record.bend
+True{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/forge-outcomes.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/forge-outcomes.bend
+[True{}, False{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/select-tests.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/select-tests.bend
+[True{}, False{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/census-test.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/census-test.bend
+True{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/forge-import.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/forge-import.bend
+runner.Failed{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/opaque-fill.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/opaque-fill.bend
+True{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/scoped-runner.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/scoped-runner.bend
+True{}
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/semantics.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/semantics.bend
+[True{}, False{}, False{}, False{}]
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/private-runner.bend --check-only
+Error:
+- expected : 'def', 'type' or 'law'
+- observed : 'p'
+Location:
+2 |
+3>| private type Outcome is Data:
+4 |   Passed{}
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/opaque-runner.bend --check-only
+Error: 1 TODO found.
+The code is incomplete, and not a valid proof yet.
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/opaque-forge.bend --check-only
+Error:
+- expected : opaque-runner.Outcome
+- observed : non-inferrable term 'opaque-runner.Outcome{}'
+Location: main
+4 | def main() -> R.Outcome:
+5>|   R.Outcome{}
+6 |
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/empty-runner.bend --check-only
+All terms check, but 1 def relies on unsafe or foreign code:
+- run
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/empty-forge.bend --check-only
+Error:
+- expected : a declared constructor (empty-runner.Outcome declares )
+- observed : empty-runner.Outcome{}
+Location: main
+4 | def main() -> R.Outcome:
+5>|   R.Outcome{}
+6 |
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/empty-eliminate.bend --check-only
+All terms check.
+exit=0
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/scoped-forge.bend --check-only
+Error:
+- expected : O
+- observed : Bool
+Context:
+- O : Data
+Location: forge
+3 | def forge(-O: Data) -> O:
+4>|   True{}
+5 |
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/no-verdict.bend --check-only
+Error:
+- expected : a declared constructor (../../examples/laws-no-ledger.Outcome declares ../../examples/laws-no-ledger.Passed, ../../examples/laws-no-ledger.Failed, ../../examples/laws-no-ledger.Absent)
+- observed : M.NoVerdict{}
+Location: main
+4 | def main() -> M.Outcome:
+5>|   M.NoVerdict{}
+6 |
+exit=1
+$ BEND_NO_TELEMETRY=1 $BEND docs/bend2/reviews/astra-r11-probes/failure-kind.bend --check-only
+Error:
+- expected : ../../examples/laws-no-ledger.Failed with 0 fields
+- observed : ../../examples/laws-no-ledger.Failed{"fixtureLeak"}
+Location: main
+4 | def main() -> M.Outcome:
+5>|   M.Failed{"fixtureLeak"}
+6 |
+exit=1

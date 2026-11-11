@@ -1,0 +1,36 @@
+{
+  "attempt": "2026-08-06T23:08:23.867Z",
+  "salt": "b420260806230823",
+  "role": "blue-114",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-f7cc3d6a69c9b3873b86b48afb5882b9"
+        ]
+      }
+    },
+    {
+      "step": "terminal:blue-114",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "blue-114": {
+      "pin": "ef81d697b0750a65b69d484b56192b7788efb7ee",
+      "paths": [
+        "docs/reference/evidence/workflow-as-data-2026-08-06/suite-blueteam.md"
+      ]
+    }
+  },
+  "verdict": "BLUE-114-OK"
+}
