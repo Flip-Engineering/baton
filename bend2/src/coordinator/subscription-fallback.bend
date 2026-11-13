@@ -335,7 +335,7 @@ def exhausted_marker_sql(+text: String) -> String:
 # 402 (billing_error) classifies as exhaustion by status first: billing is a
 # funding fact for either route, and the documented tier-cap 429 and spend-limit
 # 400 shapes stay on wording until an observed fixture terminal names them.
-def exhausted_reason_sql(event: String) -> String:
+def exhausted_reason_sql(+event: String) -> String:
   "WITH frame(value) AS (VALUES(CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.q(event) ++ " ELSE '{}' END)), diagnostic(failed,text,status_402) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.type')='result' AND json_extract(frame.value,'$.api_error_status')=402 THEN 1 ELSE 0 END FROM frame) SELECT CASE WHEN diagnostic.failed=0 THEN '' WHEN diagnostic.status_402=1 THEN 'provider-reported billing exhaustion (api_error_status 402): ' || diagnostic.text WHEN " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
 
 # The operator list and the per-session record are plain files beside the database,
@@ -441,7 +441,7 @@ def exhaustion_cause(db: String, +event: String) -> IO(String):
 
 # Settled OMP rate refusals and socket closures, and Muse transport timeouts,
 # continue on the same account. Usage exhaustion follows the account handoff path.
-def transient_provider_sql(event: String) -> String:
+def transient_provider_sql(+event: String) -> String:
   "WITH frame(value) AS (VALUES(CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.q(event) ++ " ELSE '{}' END)), diagnostic(terminal,assistant,muse_terminal,muse_reason) AS MATERIALIZED (SELECT json_extract(frame.value,'$.type')," ++ C.last_assistant_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.payload.kind')='run_terminal' THEN json_extract(frame.value,'$.payload.terminal') END,coalesce(json_extract(frame.value,'$.payload.reason'),'') FROM frame) SELECT CASE WHEN (diagnostic.terminal='agent_end' AND json_extract(diagnostic.assistant,'$.stopReason')='error' AND (json_extract(diagnostic.assistant,'$.errorStatus')=429 OR instr(coalesce(json_extract(diagnostic.assistant,'$.errorMessage'),''),'The socket connection was closed unexpectedly.')=1)) OR (diagnostic.muse_terminal='failed' AND instr(diagnostic.muse_reason,'transport error [net-timeout]:')=1) THEN 1 ELSE 0 END FROM diagnostic;"
 
 def transient_provider_stated(+db: String, +event: String) -> IO(Bool):
