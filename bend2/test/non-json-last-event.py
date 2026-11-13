@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('receive_fixture', ROOT / 'bend2/test/receive.py')
@@ -18,6 +19,12 @@ receive.EXE = pathlib.Path(os.environ['BATON_EVENT_TEST_BINARY']).resolve()
 
 class NonJsonLastEvent(receive.Receive):
     def setUp(self):
+        environment = dict(os.environ)
+        for key in ('BATON_DATABASE', 'BATON_SESSION', 'BATON_ATTEMPT_DIRECTORY'):
+            environment.pop(key, None)
+        isolated = patch.dict(os.environ, environment, clear=True)
+        isolated.start()
+        self.addCleanup(isolated.stop)
         (ROOT / '.scratch/bend2').mkdir(parents=True, exist_ok=True)
         super().setUp()
 
@@ -88,6 +95,19 @@ class NonJsonLastEvent(receive.Receive):
 
     def test_empty_last_event_recovery_failure_is_reported_once(self):
         self.recovery_after('')
+
+    def observe_event(self, event):
+        path = self.directory / 'event.txt'
+        path.write_text(event)
+        self.coord('observe-file', 'observed-turn', 'root', path)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM refusal_recoveries').fetchone()[0], 0)
+
+    def test_plain_text_outcome_can_be_observed(self):
+        self.observe_event('The turn completed. λ')
+
+    def test_empty_outcome_can_be_observed(self):
+        self.observe_event('')
 
 
 for name in dir(receive.Receive):
