@@ -38,30 +38,33 @@ class NonJsonLastEvent(receive.Receive):
             time.sleep(.01)
         self.fail(description)
 
-    def next_native(self):
+    def next_native(self, session):
         ready, _, _ = select.select([self.server], [], [], 30)
         self.assertTrue(ready, 'Dispatch did not start a native turn')
-        return self.accept('root')
+        return self.accept(session)
 
     def dispatch_after(self, event):
-        self.prepare_input('first', 'root')
-        self.connect('root')
-        first = self.spawn(*self.receive_args('root'))
-        control, started = self.accept_child(first, 'root')
+        self.player()
+        self.prepare_input('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept_child(first, 'parent')
         self.action(control, body='The first turn completed.')
         self.finish(first)
         with sqlite3.connect(self.db) as db:
-            ident, = db.execute("SELECT id FROM turns WHERE worker='root' ORDER BY rowid DESC LIMIT 1").fetchone()
+            ident, = db.execute("SELECT id FROM turns WHERE worker='parent' ORDER BY rowid DESC LIMIT 1").fetchone()
             db.execute('UPDATE turns SET event=? WHERE id=?', (event, ident))
-        self.message('second', 'root', 'Continue the recorded conversation.')
-        control, resumed = self.next_native()
+        self.connect('parent')
+        delivery = self.spawn('message', 'second', 'root', 'parent', 'guidance',
+                              'Continue the recorded conversation.')
+        control, resumed = self.next_native('parent')
         self.assertEqual(resumed['resume'], started['native'])
         self.assertIn('[id: second]', resumed['prompt'])
         self.action(control, body='The second turn completed.')
         self.assertEqual(control.readline(), b'')
+        self.finish(delivery)
         self.shutdown_idle_database_owner('The completed turn retained custody')
         self.assertTrue(receive.read_recorded(self.db, 'second'))
-        self.assertEqual(self.execution('root')[0], 'exited')
+        self.assertEqual(self.execution('parent')[0], 'exited')
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute('SELECT event FROM turns WHERE id=?', (ident,)).fetchone()[0], event)
 
