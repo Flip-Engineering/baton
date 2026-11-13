@@ -53,7 +53,7 @@ def completed(db: String, saved: String, run: Result<&1,&1,U32 & String,String>)
       written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(log,output ++ "\n")
       IO.pure(Result<&1,&1,U32 & String,String>,logged(saved,log,output,written))
 
-def launch_selected(db: String, saved: String, argv: String, root: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def launch_selected(+db: String, saved: String, argv: String, root: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match root:
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
       run : Result<&1,&1,U32 & String,String> <- RootChannel.endpoint_run(db,argv)
