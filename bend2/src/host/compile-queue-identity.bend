@@ -5,6 +5,9 @@ import ../host/storage.bend as Storage
 import ./digest.bend as Digest
 import ./compile-queue-files.bend as QF
 
+type CompileQueueRunValue is Data:
+  CompileQueueRunValue{value: String, marker: String}
+
 type CompileQueueWalk is Data:
   CompileQueueWalk{queue: List<&2,String>, +visited: List<&2,String>, records: List<&2,String>}
 
@@ -743,38 +746,94 @@ def CompileQueueIdentity.control_path(+path: String, +cwd: String, +root: String
     Bool.pick(String, Bool.and(Bool.not(String.is_empty(cwd)),CompileQueueIdentity.path_inside(cwd,path)),
       "@cwd/" ++ CompileQueueIdentity.path_relative(cwd,path),path))
 
-def CompileQueueIdentity.control_digest_lines(files: List<&2,String>, +cwd: String, +root: String) -> IO(Result<&1,&1,U32 & String,String>):
+# Named values have raw and normalized-path spellings. Longest matches are
+# replaced in one pass, including a commit that occurs inside an evidence path.
+def CompileQueueIdentity.run_row(parts: List<&2,String>, +cwd: String, +root: String) -> List<&2,CompileQueueRunValue>:
+  match parts:
+    case name <> +value <> rest:
+      +marker = "{run:" ++ name ++ "}"
+      Bool.pick(List<&2,CompileQueueRunValue>, String.is_empty(value), Nil{},
+        [CompileQueueRunValue{value,marker}, CompileQueueRunValue{CompileQueueIdentity.control_path(value,cwd,root),marker}])
+    case other: Nil{}
+
+def CompileQueueIdentity.run_values(rows: List<&2,String>, +cwd: String, +root: String) -> List<&2,CompileQueueRunValue>:
+  match rows:
+    case Nil{}: Nil{}
+    case row <> rest:
+      List.append(&2,CompileQueueRunValue,CompileQueueIdentity.run_row(String.split(row,Char.from_u32(9)),cwd,root),CompileQueueIdentity.run_values(rest,cwd,root))
+
+def CompileQueueIdentity.longer_run(candidate: CompileQueueRunValue, current: Maybe<&2,CompileQueueRunValue>) -> Maybe<&2,CompileQueueRunValue>:
+  match candidate:
+    case CompileQueueRunValue{+next,+replacement}:
+      match current:
+        case None{}: Some{CompileQueueRunValue{next,replacement}}
+        case Some{CompileQueueRunValue{+value,+marker}}:
+          Bool.pick(Maybe<&2,CompileQueueRunValue>,
+            Bool.or(Nat.is_gt(String.length(next),String.length(value)),
+              Bool.and(Nat.is_eq(String.length(next),String.length(value)),String.is_lt(replacement,marker))),
+            Some{CompileQueueRunValue{next,replacement}},Some{CompileQueueRunValue{value,marker}})
+
+def CompileQueueIdentity.match_run(+text: String, values: List<&2,CompileQueueRunValue>, +current: Maybe<&2,CompileQueueRunValue>) -> Maybe<&2,CompileQueueRunValue>:
+  match values:
+    case Nil{}: current
+    case candidate <> rest:
+      match candidate:
+        case CompileQueueRunValue{+value,marker}:
+          CompileQueueIdentity.match_run(text,rest,
+            Bool.pick(Maybe<&2,CompileQueueRunValue>,String.starts_with(text,value),
+              CompileQueueIdentity.longer_run(CompileQueueRunValue{value,marker},current),current))
+
+def CompileQueueIdentity.mask_run_go(text: String, +values: List<&2,CompileQueueRunValue>, skip: String, matched: Maybe<&2,CompileQueueRunValue>) -> String:
+  match text:
+    case SNil{}: ""
+    case SCon{+c,+rest}:
+      match skip:
+        case SCon{head,tail}:
+          CompileQueueIdentity.mask_run_go(rest,values,tail,CompileQueueIdentity.match_run(rest,values,None{}))
+        case SNil{}:
+          match matched:
+            case Some{CompileQueueRunValue{value,marker}}:
+              marker ++ CompileQueueIdentity.mask_run_go(rest,values,String.drop(value,1n),CompileQueueIdentity.match_run(rest,values,None{}))
+            case None{}:
+              SCon{c,CompileQueueIdentity.mask_run_go(rest,values,"",CompileQueueIdentity.match_run(rest,values,None{}))}
+
+def CompileQueueIdentity.mask_run(+text: String, +values: List<&2,CompileQueueRunValue>) -> String:
+  CompileQueueIdentity.mask_run_go(text,values,"",CompileQueueIdentity.match_run(text,values,None{}))
+
+# A per-run control contributes its masked path. Stable controls also
+# contribute their content digest.
+def CompileQueueIdentity.control_digest_lines(files: List<&2,String>, +cwd: String, +root: String, +values: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
   match files:
     case Nil{}:
       IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
     case +path <> +rest:
       do IO<Result<&1,&1,U32 & String,String>>:
         +skip : Bool <- IO.pure(Bool, Bool.or(String.is_empty(path), CompileQueueIdentity.workload_source(path)))
-        +line : String <- Bool.pick(IO(String), skip, IO.pure(String, ""),
-          IO.try(String, CompileQueueIdentity.file_digest(path)))
-        +more : String <- IO.try(String, CompileQueueIdentity.control_digest_lines(rest,cwd,root))
-        IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String, String.is_empty(line), more,
-          CompileQueueIdentity.control_path(path,cwd,root) ++ "\t" ++ line ++ "\n" ++ more)})
+        +normalized : String <- IO.pure(String,CompileQueueIdentity.control_path(path,cwd,root))
+        +masked : String <- IO.pure(String,CompileQueueIdentity.mask_run(normalized,values))
+        +per_run : Bool <- IO.pure(Bool,Bool.not(String.eq(masked,normalized)))
+        +digest : String <- Bool.pick(IO(String),Bool.or(skip,per_run),IO.pure(String,""),
+          IO.try(String,CompileQueueIdentity.file_digest(path)))
+        +more : String <- IO.try(String, CompileQueueIdentity.control_digest_lines(rest,cwd,root,values))
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String,skip,more,
+          masked ++ Bool.pick(String,per_run,"","\t" ++ digest) ++ "\n" ++ more)})
 
 def CompileQueueIdentity.joined_lines(values: List<&2,String>) -> String:
   match values:
     case Nil{}: ""
     case value <> rest: value ++ "\n" ++ CompileQueueIdentity.joined_lines(rest)
 
-def CompileQueueIdentity.control_digest(+files: String, cwd: String, root: String) -> IO(Result<&1,&1,U32 & String,String>):
+def CompileQueueIdentity.control_digest(+files: String, cwd: String, root: String, values: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    +lines : String <- IO.try(String, CompileQueueIdentity.control_digest_lines(String.lines(files),cwd,root))
+    +lines : String <- IO.try(String, CompileQueueIdentity.control_digest_lines(String.lines(files),cwd,root,values))
     CompileQueueIdentity.text_digest(CompileQueueIdentity.joined_lines(CompileQueueIdentity.sort(CompileQueueIdentity.nonempty(String.lines(lines)))))
 
-# The history group of a cc request: the workload family whose recorded peaks
-# apply to it. The material is the request key material with the digest of the
-# C-family source files and the digests of the input rows left out and the content
-# digest of every other input and aux file kept (control_digest). The kind, entry,
-# options, toolchain, artifact names and normalized command stay in it. An edit of
-# the C source keeps the group; a change of a driver, helper or other control
-# file, of a command argument, of an option or of the toolchain starts another.
-def CompileQueueIdentity.request_group(+kind: String, +cwd: String, +root: String, +entry: String, +compiler: String, +linker: String, +version: String, +inputs: String, +aux: String, +artifacts: String, +options: String, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
+# The history group retains workload options, toolchain, artifact names,
+# normalized command and stable control paths and digests. Named per-run
+# values become placeholders in options, command and control paths.
+def CompileQueueIdentity.request_group(+kind: String, +cwd: String, +root: String, +entry: String, +compiler: String, +linker: String, +version: String, +inputs: String, +aux: String, +artifacts: String, +options: String, +command: String, per_run: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
+    +values : List<&2,CompileQueueRunValue> <- IO.pure(List<&2,CompileQueueRunValue>,CompileQueueIdentity.run_values(String.lines(per_run),cwd,root))
     toolchain : String <- IO.try(String, CompileQueueIdentity.history_compiler(cwd, root, compiler, linker, version, command))
-    +controls : String <- IO.try(String, CompileQueueIdentity.control_digest(CompileQueueIdentity.closure_files(CompileQueueIdentity.input_sources(String.lines(inputs)), aux),cwd,root))
-    CompileQueueIdentity.text_digest("baton-compile-queue-history-v4\n" ++ CompileQueueIdentity.material(kind, entry, options, "", controls, toolchain, "", CompileQueueIdentity.artifact_names(String.lines(artifacts)), command))
+    +controls : String <- IO.try(String, CompileQueueIdentity.control_digest(CompileQueueIdentity.closure_files(CompileQueueIdentity.input_sources(String.lines(inputs)), aux),cwd,root,values))
+    CompileQueueIdentity.text_digest("baton-compile-queue-history-v4\n" ++ CompileQueueIdentity.material(kind, entry, CompileQueueIdentity.mask_run(options,values), "", controls, toolchain, "", CompileQueueIdentity.artifact_names(String.lines(artifacts)), CompileQueueIdentity.mask_run(command,values)))
