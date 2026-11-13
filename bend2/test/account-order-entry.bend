@@ -1,4 +1,6 @@
 import Base
+import ../src/host/instance.bend as Custody
+import ../src/json/canonical.bend as J
 import ../harness/usage-read.bend as Reader
 import ../src/coordinator/claude-usage.bend as Claude
 import ../src/coordinator/accounts.bend as A
@@ -90,10 +92,56 @@ def wake_message(+db: String, +message: String) -> IO(Unit):
     appended : Unit <- IO.try(Unit,Text.Text.append(db ++ ".wake-mark",message ++ " " ++ line ++ "\n"))
     IO.pure(Unit,Unit{})
 
+# The provider fixture drives the same recorded-read and launch-move functions.
+def provider_wake(+db: String, +session: String, +helper: String) -> IO(Unit):
+  do IO<Unit>:
+    label : String <- A.handoff_label_io(db,session)
+    current : UW.Gate <- UW.window_gate_with(db,session,label,helper)
+    gate : UW.Gate <- A.order_gate_with(db,session,helper,current)
+    moved : Bool <- A.order_move_with(db,session,"","/bin/false","/")
+    harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,Tx.trim_nl(harness))
+    IO.print("{\"moved\":" ++ Bool.pick(String,moved,"true","false") ++ ",\"account\":" ++ J.string_literal(current_label(account)) ++ "}")
+
+def provider_attempt(+db: String, +session: String, +harness: String, id: String) -> IO(Unit):
+  do IO<Unit>:
+    +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+    recorded : Unit <- A.record_current_attempt(db,session,id,"",account)
+    IO.print(current_label(account))
+
+def binding_lines(values: List<String>) -> IO(Unit):
+  match values:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case head <> tail: do IO<Unit>:
+      shown : Unit <- IO.print(head)
+      binding_lines(tail)
+
+def provider_binding(+db: String, +session: String, +harness: String) -> IO(Unit):
+  do IO<Unit>:
+    account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+    match A.account_binding(harness,account,None{},"/fixture/default"):
+      case None{}: IO.print("no binding")
+      case Some{values}: binding_lines(values)
+
+def expected_request(key: String, expected: String, status: String, body: String) -> IO(Result<&1,&1,U32 & String,String & String>):
+  IO.pure(Result<&1,&1,U32 & String,String & String>,Bool.pick(Result<&1,&1,U32 & String,String & String>,String.eq(key,expected),Done{(status,body)},Fail{(1,"The fixture received another credential.")}))
+
+def read_reference(provider: String, reference: String, expected: String, status: String, body: String) -> IO(Unit):
+  Reader.read_http(provider,"fixture provider usage","1794600000000",reference,
+    key => expected_request(key,expected,status,body),
+    response => "SELECT json_extract(" ++ C.q(response) ++ ",'$.windows')",
+    response => "SELECT ''")
+
 # The command word is matched in the first column only; the release wake's flag is
 # tested before the database argument is read.
 def command(+db: String, arguments: List<String>) -> IO(Unit):
   match arguments:
+    case "provider-wake" <> session <> helper <> Nil{}: provider_wake(db,session,helper)
+    case "provider-attempt" <> session <> harness <> id <> Nil{}: provider_attempt(db,session,harness,id)
+    case "provider-binding" <> session <> harness <> Nil{}: provider_binding(db,session,harness)
+    case "account-path" <> session <> Nil{}: do IO<Unit>:
+      path : String <- A.account_sidecar(db,session)
+      IO.write(path)
     case "account" <> +action <> +id <> +provider <> +harness <> +funding <> +secret <> +organization <> +detail <> +session <> Nil{}:
       A.run(db,action,id,provider,harness,funding,secret,organization,detail,session)
     case "handoff" <> +session <> +id <> +event <> Nil{}:
@@ -130,6 +178,18 @@ def wake_args(arguments: List<String>) -> IO(Unit):
 
 def dispatch_first(+first: String, rest: List<String>) -> IO(Unit):
   match first:
+    case "--instance-owner": match rest:
+      case db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
+      case other: IO.die(Unit,2,"expected database")
+    case "--instance-shutdown": match rest:
+      case db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
+      case other: IO.die(Unit,2,"expected database")
+    case "--instance-wait": match rest:
+      case db <> Nil{}: Custody.Instance.print_wait(db)
+      case other: IO.die(Unit,2,"expected database")
+    case "read-reference": match rest:
+      case provider <> reference <> expected <> status <> body <> Nil{}: read_reference(provider,reference,expected,status,body)
+      case other: IO.die(Unit,2,"expected provider, reference, expected credential, HTTP status and body")
     case "--wake-message": wake_args(rest)
     case "--fixture-usage-read": fixture_args(rest)
     case other: command(first,rest)
