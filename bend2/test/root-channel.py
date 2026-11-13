@@ -4,8 +4,8 @@ The root's Claude Code session loaded the removed impl/scripts/mcp-web.mjs.
 That server failed at startup, so the root attached no channel, and its owed
 input grew to 7136 messages with nothing reporting it. status, session and
 orchestra now print one error line for each such root on stderr. A committed
-message, report or question to it prints the line to its sender and appends
-it to the database's .root.log.
+message, report or question to it appends the line to the database's .root.log.
+The sender receives the committed message with a separate notice result.
 
 A root is any parentless session with the operator role, whatever its harness.
 A Codex root with a recorded managed receiver is attached when 'codex app-server
@@ -189,11 +189,11 @@ class RootChannel(unittest.TestCase):
         self.endpoint('lead', json.dumps(['/opt/baton/bin/baton', self.path, 'receive', 'lead']))
         self.assertEqual(self.warn(), [])
 
-    def test_message_to_an_unattached_root_reaches_the_sender_and_root_log(self):
+    def test_message_to_an_unattached_root_records_the_root_log(self):
         self.owe('operator', 1)
         result = self.run_entry('message', self.path, 'operator:report:0')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('Baton error: root session operator has 1 owed inputs', result.stderr)
+        self.assertEqual(result.stderr, '')
         self.assertIn('Baton error: root session operator has 1 owed inputs', self.root_log())
 
     def test_message_to_another_session_is_not_reported(self):
@@ -209,7 +209,7 @@ class RootChannel(unittest.TestCase):
         result = self.run_entry('report', self.path, 'operator:report:0')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.strip(), 'driven')
-        self.assertIn('Baton error: root session operator has 1 owed inputs', result.stderr)
+        self.assertEqual(result.stderr, '')
         self.assertIn('Baton error: root session operator has 1 owed inputs', self.root_log())
 
 
@@ -227,7 +227,7 @@ class RootChannel(unittest.TestCase):
         self.sql("UPDATE messages SET receipt='legacy-only'")
         result = self.run_entry('message', self.path, 'operator:report:0')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('1 owed inputs', result.stderr)
+        self.assertEqual(result.stderr, '')
         self.assertIn('no channel endpoint is registered', self.root_log())
 
 
@@ -310,12 +310,12 @@ class RootChannel(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertIn('not a supported root notification channel', lines[0])
 
-    def test_codex_root_message_reaches_the_sender_and_root_log(self):
+    def test_codex_root_message_records_the_root_log(self):
         self.owe('operator', 1)
         self.codex_root(self.fake_codex('refused', self.REFUSED))
         result = self.run_entry('message', self.path, 'operator:report:0')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('the Codex app-server is not reachable', result.stderr)
+        self.assertEqual(result.stderr, '')
         self.assertIn('the Codex app-server is not reachable', self.root_log())
 
     def test_codex_root_stream_witness_records_the_accepted_complete_read(self):
