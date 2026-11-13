@@ -54,7 +54,7 @@ class KnowledgeBehavior(unittest.TestCase):
                          ('committed-finding', 'worker', 'Retained claim'))
         notice = saved['noticeDelivery']
         self.assertEqual(set(notice), {'status', 'code', 'detail', 'cause'})
-        self.assertEqual(notice['detail'], 'The finding is committed. Its notice remains in the recipient's inbox.')
+        self.assertEqual(notice['detail'], "The finding is committed. Its notice remains in the recipient's inbox.")
         self.assertEqual((notice['status'], notice['code']), ('undelivered', 1))
         self.assertIn('session delivery failed', notice['cause'])
         self.assertEqual(self.json_call('detail', 'root', 'committed-finding')[0]['claim'],
