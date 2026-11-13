@@ -158,6 +158,13 @@ class RootInboxDelivery(receive.Receive):
         self.send('report', '--text', 'The report is complete.')
         self.retained('report', 'The report is complete.')
 
+    def test_batch_send_retains_its_message_and_notice_result(self):
+        body = 'The batch report is complete.'
+        saved = self.send('send', 'root', '--kind', 'report', '--text', body)
+        ident = self.retained('report', body)
+        self.assertEqual(saved['admission']['message']['id'], ident)
+        self.assertEqual(saved['admission']['message']['body'], body)
+
     def test_question_is_committed_with_separate_notice_result(self):
         self.send('ask', '--text', 'Which recorded target should I use?')
         self.retained('question', 'Which recorded target should I use?')
