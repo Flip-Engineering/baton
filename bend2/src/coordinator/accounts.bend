@@ -273,6 +273,34 @@ def organization_blocked(+blocked: String, +organization: String) -> Bool:
 def funding_matches(+required: String, +funding: String) -> Bool:
   Bool.or(String.is_empty(required),String.eq(required,funding))
 
+# Usage readers name the Codex and Claude services; account records name their
+# providers. OMP model prefixes retain their recorded provider identity.
+def model_account_provider(provider: String) -> String:
+  match provider:
+    case "codex": "openai"
+    case "claude": "anthropic"
+    case other: other
+
+def provider_matches(+provider: String, account: AccountRecord) -> Bool:
+  Bool.and(Bool.not(String.is_empty(provider)),String.eq(model_account_provider(provider),model_account_provider(account_provider(account))))
+
+def provider_accounts(accounts: List<&2,AccountRecord>, +provider: String) -> List<&2,AccountRecord>:
+  match accounts:
+    case Nil{}: Nil{}
+    case +account <> rest: Bool.pick(List<&2,AccountRecord>,provider_matches(provider,account),account <> provider_accounts(rest,provider),provider_accounts(rest,provider))
+
+# An explicit current binding remains usable while the seat has no recorded
+# provider. A recorded different provider supplies no account attribution.
+def current_provider_account(provider: String, account: Maybe<&2,AccountRecord>) -> Maybe<&2,AccountRecord>:
+  match account:
+    case None{}: None{}
+    case Some{+chosen}: Bool.pick(Maybe<&2,AccountRecord>,Bool.or(String.is_empty(provider),provider_matches(provider,chosen)),Some{chosen},None{})
+
+def for_seat_provider(+db: String, session: String, account: Maybe<&2,AccountRecord>) -> IO(Maybe<&2,AccountRecord>):
+  do IO<Maybe<&2,AccountRecord>>:
+    provider : String <- UW.seat_provider_io(db,session)
+    IO.pure(Maybe<&2,AccountRecord>,current_provider_account(provider,account))
+
 def account_matches(+harness: String, +required_funding: String, +account: AccountRecord) -> Bool:
   Bool.and(String.eq(account_harness(account),harness),Bool.and(funding_matches(required_funding,account_funding(account)),funding_route_ok(account_harness(account),account_funding(account))))
 
@@ -1144,7 +1172,7 @@ def file_text(path: String) -> IO(String):
 
 def bind_admitted(+db: String, +id: String, +session: String, present: Bool) -> IO(Unit):
   match present:
-    case False{}: IO.die(Unit,2,"Account binding requires a registered session and a recorded account with that session's harness. No binding was recorded.")
+    case False{}: IO.die(Unit,2,"Account binding requires a registered session and a recorded account for its harness and model provider. No binding was recorded.")
     case True{}: do IO<Unit>:
       path : String <- account_sidecar(db,session)
       appended : Unit <- IO.try(Unit,Text.Text.append(Tx.trim_nl(path),id ++ "\n"))
@@ -1152,8 +1180,15 @@ def bind_admitted(+db: String, +id: String, +session: String, present: Bool) -> 
 
 def bind(+db: String, +id: String, +session: String) -> IO(Unit):
   do IO<Unit>:
-    admitted : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM sessions s JOIN accounts a ON a.id=" ++ C.q(id) ++ " AND a.harness=s.harness WHERE s.id=" ++ C.q(session) ++ ");"))
-    bind_admitted(db,id,session,String.eq(Tx.trim_nl(admitted),"1"))
+    harness_row : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    account : Maybe<&2,AccountRecord> <- account_by_label(db,id,Tx.trim_nl(harness_row))
+    compatible : Maybe<&2,AccountRecord> <- for_seat_provider(db,session,account)
+    bind_admitted(db,id,session,account_present(compatible))
+
+def account_present(account: Maybe<&2,AccountRecord>) -> Bool:
+  match account:
+    case None{}: False{}
+    case Some{chosen}: True{}
 
 # The account in force: the last line of the session's append-only account
 # record, or the label of its profile record when no account record exists, so a
@@ -1183,7 +1218,7 @@ def current_account(+db: String, +session: String, +harness: String) -> IO(Maybe
     +fallback : String <- IO.pure(String,Subs.record_current(Tx.trim_nl(harness),Subs.last_line(Tx.split_lines(profiles))))
     +chosen : String <- IO.pure(String,Bool.pick(String,String.is_empty(label),fallback,label))
     found : Maybe<&2,AccountRecord> <- account_by_label(db,Tx.trim_nl(chosen),Tx.trim_nl(harness))
-    IO.pure(Maybe<&2,AccountRecord>,found)
+    for_seat_provider(db,session,found)
 
 # The account a binding put in force: the account record's own last label, with
 # no profile fallback, so a session that predates accounts keeps the profile
@@ -1195,7 +1230,7 @@ def bound_account(+db: String, +session: String, +harness: String) -> IO(Maybe<&
     +labelled : String <- file_text(Tx.trim_nl(sidecar))
     +label : String <- IO.pure(String,Tx.trim_nl(Subs.last_line(Tx.split_lines(labelled))))
     found : Maybe<&2,AccountRecord> <- Bool.pick(IO(Maybe<&2,AccountRecord>),String.is_empty(label),IO.pure(Maybe<&2,AccountRecord>,None{}),account_by_label(db,label,harness))
-    IO.pure(Maybe<&2,AccountRecord>,found)
+    for_seat_provider(db,session,found)
 
 # The account after the one that refused, in operator recording order, or none
 # when no further recorded account matches the harness. The refused account
@@ -1324,10 +1359,11 @@ def accounts_empty(accounts: List<&2,AccountRecord>) -> Bool:
     case Nil{}: True{}
     case account <> rest: False{}
 
-def ordered_accounts(+db: String, +harness: String) -> IO(List<&2,AccountRecord>):
+def ordered_accounts(+db: String, +session: String, +harness: String) -> IO(List<&2,AccountRecord>):
   do IO<List<&2,AccountRecord>>:
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
-    IO.pure(List<&2,AccountRecord>,harness_accounts(account_lines(Tx.split_lines(rows),Nil{}),harness))
+    provider : String <- UW.seat_provider_io(db,session)
+    IO.pure(List<&2,AccountRecord>,provider_accounts(harness_accounts(account_lines(Tx.split_lines(rows),Nil{}),harness),provider))
 
 # The request-level promotional-credit guard is on: an Anthropic API-key launch
 # reserves its maximum charge from the newest usable credit observation, records
@@ -1549,10 +1585,10 @@ def organization_refused(+db: String, +session: String, +id: String, +cause: Str
     reported : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),Subs.report_body(db,session,id,"organization-api-unavailable","The organization API account refused this attempt. Its account and unfinished work remain recorded; cause: " ++ cause))
     IO.pure(Bool,False{})
 
-def handoff_ordered(+db: String, +session: String, +id: String, +event: String, +native: String, +cmd: String, +cwd: String, +cause: String, +harness: String, +label: String, +helper: String, +bound: Maybe<&2,AccountRecord>, +ordered: List<&2,AccountRecord>) -> IO(Bool):
-  Bool.pick(IO(Bool),organization_route(bound),organization_refused(db,session,id,cause),Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),accounts_empty(ordered)),
+def handoff_ordered(+db: String, +session: String, +id: String, +event: String, +native: String, +cmd: String, +cwd: String, +cause: String, +harness: String, +label: String, +helper: String, +bound: Maybe<&2,AccountRecord>, +ordered: List<&2,AccountRecord>, registered: Bool) -> IO(Bool):
+  Bool.pick(IO(Bool),organization_route(bound),organization_refused(db,session,id,cause),Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),Bool.not(registered)),
     handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound),
-    advance_in_order(db,session,id,harness,label,native,cmd,cwd,cause,helper,bound,ordered)))
+    Bool.pick(IO(Bool),accounts_empty(ordered),IO.pure(Bool,False{}),advance_in_order(db,session,id,harness,label,native,cmd,cwd,cause,helper,bound,ordered))))
 
 # --- the order at a wake and at a launch ------------------------------------------
 #
@@ -1575,7 +1611,7 @@ def order_gate_held(+db: String, +session: String, +helper: String, +gate: UW.Ga
   do IO<UW.Gate>:
     +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
-    +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
+    +ordered : List<&2,AccountRecord> <- ordered_accounts(db,session,harness)
     bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
     +label : String <- handoff_label_io(db,session)
     Bool.pick(IO(UW.Gate),Bool.or(organization_route(bound),accounts_empty(ordered)),IO.pure(UW.Gate,gate),do IO<UW.Gate>:
@@ -1621,7 +1657,7 @@ def order_move_with(+db: String, +session: String, +native: String, +cmd: String
   do IO<Bool>:
     +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
-    +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
+    +ordered : List<&2,AccountRecord> <- ordered_accounts(db,session,harness)
     +label : String <- handoff_label_io(db,session)
     +provider : String <- UW.seat_provider_io(db,session)
     +model : String <- UW.seat_model_io(db,session)
@@ -1652,8 +1688,9 @@ def handoff_with(+db: String, +session: String, +id: String, +event: String, nat
     +label : String <- label_for_bound(db,session,bound)
     recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     read : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.read_refused_with(db,session,label,id,helper))
-    +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
-    advanced : Bool <- handoff_ordered(db,session,id,event,native,cmd,cwd,cause,harness,label,helper,bound,ordered)
+    +ordered : List<&2,AccountRecord> <- ordered_accounts(db,session,harness)
+    registered : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM accounts WHERE harness=" ++ C.q(harness) ++ ");"))
+    advanced : Bool <- handoff_ordered(db,session,id,event,native,cmd,cwd,cause,harness,label,helper,bound,ordered,String.eq(registered,"1\n"))
     +next_label : String <- handoff_label_io(db,session)
     gate : UW.Gate <- UW.window_state(db,session,next_label)
     held : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(cause)),gate_held(gate)))
