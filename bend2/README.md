@@ -883,8 +883,14 @@ unattached root:
 Baton error: root session operator has 7136 owed inputs and no attached channel: no channel endpoint is registered. Attach a Claude Code channel with bend2/scripts/mcp-conductor.mjs as described in bend2/README.md, section "Root on another host".
 ```
 
-A message, report or question committed to an unattached root prints the same
-line on its sender's stderr and appends it to the database's `.root.log`.
+A message, report, question, completion request or knowledge notice addressed to
+a root is committed before notification. The sender receives `committed: true`
+and a separate `noticeDelivery` object. Its `status` is `notified` when the
+notification succeeds and `undelivered` when the channel is unavailable; `cause`
+contains the channel error. Its `detail` says: "The message is committed. The
+root reads it from its inbox." Channel diagnostics are appended to the
+database's `.root.log`. Recovery retains completed native work when the root
+notification channel is unavailable.
 
 An input that Baton cannot route to a non-Codex session is reported to that
 session's coordinator. The report names the input, delivery cause, owed input

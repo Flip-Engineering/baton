@@ -71,10 +71,15 @@ class RootInboxDelivery(receive.Receive):
     def send(self, verb, *args):
         actions = self.coord('as', 'worker', verb, *args)
         action, = actions
-        self.assertEqual(action['status'], 'completed', action)
-        self.assertEqual(action['waitStatus'], 'exit 0', action)
-        self.assertEqual(action['stderr'], '', action)
-        saved = json.loads(action['stdout'])
+        if 'action' in action:
+            self.assertEqual(action['status'], 'completed', action)
+            self.assertEqual(action['waitStatus'], 'exit 0', action)
+            self.assertEqual(action['stderr'], '', action)
+            saved = json.loads(action['stdout'])
+        else:
+            self.assertEqual(action['admission']['status'], 'admitted', action)
+            self.assertEqual(action['wake']['status'], 'accepted', action)
+            saved = action
         answer = self.committed_notice(saved)
         self.assertIsNotNone(answer, saved)
         self.assertTrue(answer['committed'], answer)
@@ -140,7 +145,10 @@ class RootInboxDelivery(receive.Receive):
             db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('recover-task','root','parent','task','Finish the retained native work.')")
         observer = self.spawn(*self.receive_args('parent'))
         control, started = self.accept_child(observer, 'parent')
-        self.eventually(lambda: self.execution('parent'), 'The original attempt was not recorded')
+        def bound():
+            with sqlite3.connect(self.db) as db:
+                return db.execute("SELECT 1 FROM sessions s JOIN executions e ON e.session=s.id WHERE s.id='parent' AND s.native=? AND e.phase='running'", (started['native'],)).fetchone()
+        self.eventually(bound, 'The original native identity was not recorded')
         with sqlite3.connect(self.db) as db:
             ident, directory = db.execute("SELECT id,directory FROM executions WHERE session='parent'").fetchone()
         observer.kill()
