@@ -45,6 +45,7 @@ class NonJsonLastEvent(receive.Receive):
 
     def dispatch_after(self, event):
         self.prepare_input('first', 'root')
+        self.connect('root')
         first = self.spawn(*self.receive_args('root'))
         control, started = self.accept_child(first, 'root')
         self.action(control, body='The first turn completed.')
