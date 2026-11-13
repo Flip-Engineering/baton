@@ -241,7 +241,7 @@ def generation_log(+log: String, +id: String) -> String:
 # finish delivers the settled turn to its recorded coordinator.
 def recovery_observe(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
 
 def refusal_observed(+db: String, +player: String, +id: String, +event: String) -> IO(Unit):
   do IO<Unit>:
@@ -251,7 +251,7 @@ def refusal_observed(+db: String, +player: String, +id: String, +event: String) 
 
 def recovery_after(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
 
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
@@ -290,7 +290,7 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
         case False{}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
           do IO<Result<&1,&1,U32 & String,Unit>>:
-            output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
+            output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL WHEN json_valid(value) THEN json(value) ELSE value END,'error'," ++ C.q(error) ++ ") FROM frame;"))
             T.Text.control_output(output))
 
 def finish(+db: String, +player: String, +id: String, log: String, +outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):

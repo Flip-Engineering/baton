@@ -152,7 +152,7 @@ def m5_bind_preserves_parentage_and_placement(id, native, harness, model, effort
 # the caller's body cannot make a record terminal.
 law m11_terminal_reads_the_records_own_event:
   for +event: String
-  {C.terminal_expr(event) == "(json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1))" : String}
+  {C.terminal_expr(event) == "CASE WHEN json_valid(" ++ event ++ ") THEN (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1)) ELSE 0 END" : String}
 
 def m11_terminal_reads_the_records_own_event(event):
   {==}
@@ -1076,7 +1076,7 @@ def principal_reports_use_the_recorded_upstream_recipient(session):
 law terminal_reports_preserve_the_native_result:
   for +event: String
   {C.terminal_body_expr(event) == (
-  "coalesce(" ++ C.omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ C.assistant_text_sql_expr(event) ++ "," ++ event ++ ") END)") : String}
+  "CASE WHEN json_valid(" ++ event ++ ") THEN coalesce(" ++ C.omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ C.assistant_text_sql_expr(event) ++ "," ++ event ++ ") END) ELSE " ++ event ++ " END") : String}
 
 def terminal_reports_preserve_the_native_result(event):
   {==}
