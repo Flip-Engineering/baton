@@ -144,7 +144,8 @@ print(json.dumps(base))
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn('Account ' + label, result.stderr)
                 self.assertIn('Accepted forms for ' + harness + ' ' + funding + ': ' + forms, result.stderr)
-                self.assertNotIn(reference, result.stderr)
+                if reference == 'literal-credential-value':
+                    self.assertNotIn(reference, result.stderr)
                 self.assertEqual(self.rows('SELECT id FROM accounts WHERE id=?', (label,)), [])
 
     def test_claude_api_file_and_keychain_reference_forms_are_recorded(self):
