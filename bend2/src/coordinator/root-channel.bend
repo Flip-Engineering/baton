@@ -17,8 +17,8 @@
 # Every check derives this from sessions, messages and a connect when it runs.
 #
 # status, session and orchestra print one error line per unattached root on
-# stderr. A committed message, report or question to an unattached root prints
-# the same line to its sender and appends it to the database's .root.log.
+# stderr. Committed root input records channel diagnostics in .root.log and
+# returns the committed message with a separate noticeDelivery result.
 import Base
 import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
@@ -158,12 +158,11 @@ def log_written(+log: String, written: Result<&1,&1,U32 & String,Unit>) -> IO(Un
     case Done{unit}: IO.pure(Unit,Unit{})
     case Fail{(code,text)}: IO.print_err("Baton error: the delivery log " ++ log ++ " could not be written: " ++ U32.show(code) ++ ": " ++ text)
 
-# Each line goes to stderr and to the delivery log.
+# Each line goes to the delivery log.
 def reported(+log: String, lines: List<String>) -> IO(Unit):
   match lines:
     case Nil{}: IO.pure(Unit,Unit{})
     case +head <> tail: do IO<Unit>:
-      shown : Unit <- IO.print_err(head)
       written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(log,head ++ "\n")
       checked : Unit <- log_written(log,written)
       reported(log,tail)
@@ -179,3 +178,63 @@ def warn_message(+db: String, +id: String) -> IO(Unit):
   do IO<Unit>:
     found : List<String> <- errors(db,"EXISTS(SELECT 1 FROM messages admitted WHERE admitted.id=" ++ C.q(id) ++ " AND admitted.recipient=s.id AND " ++ C.owed_sql("admitted") ++ ")")
     reported(db ++ ".root.log",found)
+
+# A committed message identifies its root from the current recorded recipient.
+def message_root_sql(+id: String, +condition: String) -> String:
+  "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ channel_root_sql() ++ " AND NOT " ++ C.stopped_session_sql("s.id") ++ " AND " ++ condition ++ ");"
+
+def message_condition(+id: String) -> String:
+  "EXISTS(SELECT 1 FROM messages admitted WHERE admitted.id=" ++ C.q(id) ++ " AND admitted.recipient=s.id AND " ++ C.owed_sql("admitted") ++ ")"
+
+def message_root(+db: String, id: String, condition: String) -> IO(Bool):
+  do IO<Bool>:
+    found : String <- IO.try(String,DB.Sql.query(db,message_root_sql(id,condition)))
+    IO.pure(Bool,String.eq(found,"1\n"))
+
+def notice_text() -> String:
+  "The message is committed. The root reads it from its inbox."
+
+# The public message or finding remains the answer; notification has its own field.
+def answer(+db: String, +saved: String, +status: String, +cause: String) -> IO(Result<&1,&1,U32 & String,String>):
+  DB.Sql.read(db,"SELECT json_set(CASE WHEN json_valid(" ++ C.q(saved) ++ ") THEN CASE WHEN json_type(" ++ C.q(saved) ++ ")='object' THEN " ++ C.q(saved) ++ " ELSE '{}' END ELSE '{}' END,'$.committed',json('true'),'$.noticeDelivery',json_object('status'," ++ C.q(status) ++ ",'detail'," ++ C.q(notice_text()) ++ ",'cause'," ++ C.q(cause) ++ "));" )
+
+def notice_result(+db: String, saved: String, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Done{output}: answer(db,saved,"notified","")
+    case Fail{(code,cause)}: answer(db,saved,"undelivered",cause)
+
+def checked_notice(+db: String, +saved: String, found: List<String>, next: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  match found:
+    case Nil{}: do IO<Result<&1,&1,U32 & String,String>>:
+      result : Result<&1,&1,U32 & String,String> <- next(Unit{})
+      notice_result(db,saved,result)
+    case +head <> tail: do IO<Result<&1,&1,U32 & String,String>>:
+      logged : Unit <- reported(db ++ ".root.log",head <> tail)
+      answer(db,saved,"undelivered",head)
+
+def selected_notice(db: String, id: String, saved: String, root: Bool, next: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  match root:
+    case False{}: next(Unit{})
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      found : List<String> <- errors(db,message_condition(id))
+      checked_notice(db,saved,found,next)
+
+def notice(+db: String, +id: String, condition: String, saved: String, next: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    root : Bool <- message_root(db,id,condition)
+    selected_notice(db,id,saved,root,next)
+
+# The root endpoint writes stderr into its retained delivery output. Conductor
+# socket names are relative to the database directory.
+def endpoint_run_selected(db: String, argv: String, root: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match root:
+    case False{}: Process.Process.run(argv,".")
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      directory : String <- IO.try(String,DB.Sql.read(db,"SELECT rtrim(" ++ C.q(db) ++ ",replace(" ++ C.q(db) ++ ",'/',''));"))
+      +cwd : String = Tx.trim_nl(directory)
+      Process.Process.run(Tx.enc_argv(["/bin/sh","-c","exec \"$@\" 2>&1","baton-root-notice"]) ++ argv,Bool.pick(String,String.is_empty(cwd),".",cwd))
+
+def endpoint_run(+db: String, id: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    root : Bool <- message_root(db,id,"1")
+    endpoint_run_selected(db,argv,root)

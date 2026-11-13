@@ -8,6 +8,7 @@ import ../git/process.bend as Process
 import ../git/text.bend as Tx
 import ../git/types.bend as T
 import ./codex-route.bend as CodexRoute
+import ./root-channel.bend as RootChannel
 import ../json/canonical.bend as J
 import ../context/request.bend as Req
 
@@ -54,7 +55,7 @@ def completed(db: String, saved: String, run: Result<&1,&1,U32 & String,String>)
 
 def launch(db: String, id: String, saved: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(argv ++ Tx.enc_argv(Con{id,Nil{}}),".")
+    run : Result<&1,&1,U32 & String,String> <- RootChannel.endpoint_run(db,id,argv ++ Tx.enc_argv(Con{id,Nil{}}))
     completed(db,saved,run)
 
 # A stopped recipient retains its original message and read state. Its parent gets
@@ -333,12 +334,15 @@ def endpoint_delivery(+db: String, +id: String, +condition: String, +saved: Stri
     managed : String <- IO.try(String,DB.Sql.query(db,codex_inbox_endpoint_sql(id,condition)))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(managed,"1\n"),inbox_endpoint(db,id,condition,saved,argv,retry),launch(db,id,saved,argv))
 
-def normal_delivery(+db: String, +id: String, +condition: String, +saved: String, +retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def ordinary_delivery(+db: String, +id: String, +condition: String, +saved: String, +retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     encoded : String <- IO.try(String,DB.Sql.query(db,endpoint_sql(id,condition)))
     +argv : String <- IO.pure(String,Tx.trim_nl(encoded))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(argv),
       endpointless(db,id,condition,saved,retry),endpoint_delivery(db,id,condition,saved,argv,retry))
+
+def normal_delivery(+db: String, +id: String, +condition: String, +saved: String, +retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  RootChannel.notice(db,id,condition,saved,unit => ordinary_delivery(db,id,condition,saved,retry))
 
 def routed(+db: String, +id: String, condition: String, +saved: String, +kind: String, ordinary: Bool, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match ordinary:
