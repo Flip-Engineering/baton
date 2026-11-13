@@ -48,7 +48,7 @@ class NonJsonLastEvent(receive.Receive):
         self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept_child(first, 'parent')
-        self.action(control, body='The first turn completed.')
+        self.action(control, body='The first turn completed.', read=['first'])
         self.finish(first)
         with sqlite3.connect(self.db) as db:
             ident, = db.execute("SELECT id FROM turns WHERE worker='parent' ORDER BY rowid DESC LIMIT 1").fetchone()
@@ -59,7 +59,7 @@ class NonJsonLastEvent(receive.Receive):
         control, resumed = self.next_native('parent')
         self.assertEqual(resumed['resume'], started['native'])
         self.assertIn('[id: second]', resumed['prompt'])
-        self.action(control, body='The second turn completed.')
+        self.action(control, body='The second turn completed.', read=['second'])
         self.assertEqual(control.readline(), b'')
         self.finish(delivery)
         self.shutdown_idle_database_owner('The completed turn retained custody')
