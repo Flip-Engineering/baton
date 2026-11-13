@@ -1,4 +1,5 @@
 import Base
+import ../src/coordinator/credential-reference.bend as Reference
 import ../src/git/text.bend as Tx
 import ../src/host/clock.bend as Clock
 import ../src/host/http.bend as Http
@@ -35,12 +36,8 @@ import ../src/coordinator/codex-rate-limits.bend as Codex
 def print_unreadable(+provider: String, +source: String, +observed: String, +reason: String) -> IO(Unit):
   IO.print(UR.unreadable_document(provider,source,observed,reason))
 
-def scheme_of(+reference: String) -> String:
-  Bool.pick(String,Tx.starts_with(reference,"omp-models:"),"omp-models",
-  Bool.pick(String,Tx.starts_with(reference,"file:"),"file",
-  Bool.pick(String,Tx.starts_with(reference,"codex-home:"),"codex-home",
-  Bool.pick(String,Tx.starts_with(reference,"omp-auth:"),"omp-auth",
-  Bool.pick(String,Tx.starts_with(reference,"claude-oauth:"),"claude-oauth","")))))
+def scheme_of(reference: String) -> String:
+  Reference.kind(reference)
 
 def after_colon(text: String) -> String:
   match text:
@@ -70,12 +67,15 @@ def models_key_found(+reference: String, found: Result<&1,&1,U32 & String,String
     case Fail{(code,detail)}: Fail{"the models.yml scan failed: " ++ U32.show(code)}
     case Done{+value}: secret_checked(Tx.trim_nl(value),reference)
 
-def models_text(+reference: String, read: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,String,String>):
+def models_text_for(+reference: String, +block: String, read: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,String,String>):
   match read:
     case Fail{(code,detail)}: IO.pure(Result<&1,&1,String,String>,Fail{"cannot read the models.yml of " ++ reference ++ ": " ++ U32.show(code) ++ " " ++ detail})
     case Done{+text}: do IO<Result<&1,&1,String,String>>:
-      found : Result<&1,&1,U32 & String,String> <- DB.Sql.query(":memory:",models_key_sql(text,after_colon(reference)))
+      found : Result<&1,&1,U32 & String,String> <- DB.Sql.query(":memory:",models_key_sql(text,block))
       IO.pure(Result<&1,&1,String,String>,models_key_found(reference,found))
+
+def models_text(+reference: String, read: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,String,String>):
+  models_text_for(reference,after_colon(reference),read)
 
 def models_home(+reference: String, home: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,String,String>):
   match home:
@@ -157,10 +157,21 @@ def resolve_scheme(+scheme: String, +reference: String) -> IO(Result<&1,&1,Strin
       home : Result<&1,&1,U32 & String,String> <- IO.get_env("HOME")
       omp_auth_home(reference,home)
     case "claude-oauth": claude_oauth(reference)
-    case _: IO.pure(Result<&1,&1,String,String>,Fail{"the credential reference " ++ reference ++ " is not omp-models:BLOCK, omp-auth:PROVIDER, claude-oauth:PATH or file:PATH"})
+    case _: IO.pure(Result<&1,&1,String,String>,Fail{"unsupported credential reference; accepted forms: " ++ Reference.http_forms()})
 
-def resolve(+reference: String) -> IO(Result<&1,&1,String,String>):
-  resolve_scheme(scheme_of(reference),reference)
+# OMP launches use this same store directory through PI_CODING_AGENT_DIR. The
+# provider selects the credential lookup already used by its default read.
+def resolve_store(+provider: String, +store: String) -> IO(Result<&1,&1,String,String>):
+  Bool.pick(IO(Result<&1,&1,String,String>),String.eq(provider,"deepseek"),
+    do IO<Result<&1,&1,String,String>>:
+      found : Result<&1,&1,U32 & String,String> <- DB.Sql.read(store ++ "/agent.db",omp_auth_sql(provider))
+      IO.pure(Result<&1,&1,String,String>,stored_found(store,found)),
+    do IO<Result<&1,&1,String,String>>:
+      read : Result<&1,&1,U32 & String,String> <- Text.Text.read(store ++ "/models.yml")
+      models_text_for(store,provider,read))
+
+def resolve(+provider: String, +reference: String) -> IO(Result<&1,&1,String,String>):
+  Bool.pick(IO(Result<&1,&1,String,String>),String.eq(scheme_of(reference),"store"),resolve_store(provider,reference),resolve_scheme(scheme_of(reference),reference))
 
 # --- the parsed answer -----------------------------------------------------------
 
@@ -234,7 +245,7 @@ def http_resolved(+provider: String, +source: String, +observed: String, request
 
 def read_http(+provider: String, +source: String, +observed: String, +reference: String, request: String -> IO(Result<&1,&1,U32 & String,String & String>), windows: String -> String, problem: String -> String) -> IO(Unit):
   do IO<Unit>:
-    resolved : Result<&1,&1,String,String> <- resolve(reference)
+    resolved : Result<&1,&1,String,String> <- resolve(provider,reference)
     http_resolved(provider,source,observed,request,windows,problem,resolved)
 
 # --- z.ai ------------------------------------------------------------------------
@@ -389,7 +400,7 @@ def codex_spawn(+observed: String, +reference: String, +recorded: String) -> IO(
     codex_spawned(observed,spawned)
 
 def read_codex(+observed: String, +reference: String, +recorded: String) -> IO(Unit):
-  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"codex-home"),codex_spawn(observed,reference,recorded),print_unreadable("codex",Codex.codex_source(),observed,"the credential reference " ++ reference ++ " is not codex-home:PATH"))
+  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"codex-home"),codex_spawn(observed,reference,recorded),print_unreadable("codex",Codex.codex_source(),observed,"unsupported credential reference; accepted forms: " ++ Reference.describe(["codex-home"])))
 
 # --- dispatch ------------------------------------------------------------------------
 

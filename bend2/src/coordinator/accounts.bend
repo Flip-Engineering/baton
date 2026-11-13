@@ -12,6 +12,7 @@
 # their source, observed time and actual failure condition. A value the source
 # did not report stays empty and its state stays unavailable.
 import Base
+import ./credential-reference.bend as Reference
 import ../coordinator/commands.bend as C
 import ./subscription-fallback.bend as Subs
 import ./usage-windows.bend as UW
@@ -229,19 +230,6 @@ def label_tail(+text: String) -> Bool:
 
 def label_ok(+text: String) -> Bool:
   Bool.and(Bool.not(String.is_empty(text)),label_tail(text))
-
-# A reference is a store path or store key: nonempty and free of control
-# characters, so it stays one recorded field.
-def ref_char_ok(+code: U32) -> Bool:
-  Bool.and(Bool.not(U32.is_lt(code,32)),Bool.not(U32.is_eq(code,127)))
-
-def ref_tail(+text: String) -> Bool:
-  match text:
-    case SNil{}: True{}
-    case SCon{head, tail}: Bool.and(ref_char_ok(Char.to_u32(head)),ref_tail(tail))
-
-def ref_ok(+text: String) -> Bool:
-  Bool.and(Bool.not(String.is_empty(text)),ref_tail(text))
 
 # The supported observation operations and the fact each one records. A fact the
 # provider did not report is never recorded, so no operation yields a balance.
@@ -1132,10 +1120,15 @@ def record_decided(+db: String, +id: String, provider: String, harness: String, 
     case False{}: record_admitted(db,id,provider,harness,funding,secret_ref,False{})
     case True{}: Bool.pick(IO(Unit),String.eq(state,"different"),IO.die(Unit,2,"Account " ++ id ++ " is already recorded with a different provider, harness, funding route or secret-store reference; nothing was changed. Record the rotated credential under a new label."),record_admitted(db,id,provider,harness,funding,secret_ref,True{}))
 
-def record(+db: String, +id: String, +provider: String, +harness: String, +funding: String, +secret_ref: String) -> IO(Unit):
+def record_validated(+db: String, +id: String, +provider: String, +harness: String, +funding: String, +secret_ref: String) -> IO(Unit):
   do IO<Unit>:
     state : String <- IO.try(String,DB.Sql.read(db,record_state_sql(id,provider,harness,funding,secret_ref)))
-    record_decided(db,id,provider,harness,funding,secret_ref,Bool.and(label_ok(id),Bool.and(Bool.not(String.is_empty(provider)),Bool.and(harness_launchable(harness),Bool.and(funding_known(funding),Bool.and(funding_route_ok(harness,funding),ref_ok(secret_ref)))))),Tx.trim_nl(state))
+    record_decided(db,id,provider,harness,funding,secret_ref,Bool.and(label_ok(id),Bool.and(Bool.not(String.is_empty(provider)),Bool.and(harness_launchable(harness),Bool.and(funding_known(funding),funding_route_ok(harness,funding))))),Tx.trim_nl(state))
+
+def record(+db: String, +id: String, +provider: String, +harness: String, +funding: String, +secret_ref: String) -> IO(Unit):
+  Bool.pick(IO(Unit),Reference.accepted_account(harness,funding,secret_ref),
+    record_validated(db,id,provider,harness,funding,secret_ref),
+    IO.die(Unit,2,"Account " ++ id ++ " has an unsupported credential reference. Accepted forms for " ++ harness ++ " " ++ funding ++ ": " ++ Reference.account_forms(harness,funding) ++ "."))
 
 # --- reading accounts --------------------------------------------------------
 
@@ -1580,13 +1573,14 @@ def organization_route(chosen: Maybe<&2,AccountRecord>) -> Bool:
     case None{}: False{}
     case Some{+account}: Bool.and(String.eq(account_provider(account),"openai"),Bool.and(String.eq(account_harness(account),"omp"),String.eq(account_funding(account),"api_key")))
 
-def organization_refused(+db: String, +session: String, +id: String, +cause: String) -> IO(Bool):
+def organization_refused(+db: String, +session: String, +id: String, +label: String, +cause: String) -> IO(Bool):
   do IO<Bool>:
-    reported : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),Subs.report_body(db,session,id,"organization-api-unavailable","The organization API account refused this attempt. Its account and unfinished work remain recorded; cause: " ++ cause))
+    provider : String <- UW.seat_provider_io(db,session)
+    reported : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),Subs.report_body(db,session,id,"organization-api-unavailable","Provider " ++ provider ++ " refused this attempt on account " ++ from_text(label) ++ ". Provider response: " ++ cause))
     IO.pure(Bool,False{})
 
 def handoff_ordered(+db: String, +session: String, +id: String, +event: String, +native: String, +cmd: String, +cwd: String, +cause: String, +harness: String, +label: String, +helper: String, +bound: Maybe<&2,AccountRecord>, +ordered: List<&2,AccountRecord>, registered: Bool) -> IO(Bool):
-  Bool.pick(IO(Bool),organization_route(bound),organization_refused(db,session,id,cause),Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),Bool.not(registered)),
+  Bool.pick(IO(Bool),organization_route(bound),organization_refused(db,session,id,label,cause),Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),Bool.not(registered)),
     handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound),
     Bool.pick(IO(Bool),accounts_empty(ordered),IO.pure(Bool,False{}),advance_in_order(db,session,id,harness,label,native,cmd,cwd,cause,helper,bound,ordered))))
 
