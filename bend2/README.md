@@ -817,14 +817,21 @@ writing a batch. A native harness background job delivers that completion
 to its running conversation. Run the subscriber on the database host with
 `--database PATH --coordinator EXECUTABLE --session ROOT --native NATIVE_ID`.
 The default includes retained unread input; `--new` selects messages committed
-after the subscription command starts.
+after the subscription command starts; `--after SEQ` selects messages whose
+sequence number is greater than `SEQ`, read or unread. `--from SENDER`, which
+may be repeated, limits any of these selections to the named senders.
 
 `root-notice-ssh.mjs --ssh HOST --script REMOTE_SCRIPT` runs the subscriber
 through SSH and passes the other arguments to it. `--node REMOTE_NODE` selects
 the remote Node executable. `--as-user USER` runs the remote subscriber through
 `sudo -n -u USER --`. The SSH login must already have that noninteractive
 sudo permission. For the Mac root connecting to the homelab, use
-`--ssh atari-homelab-lan --as-user batonci`.
+`--ssh atari-homelab-lan --as-user batonci`. `--ssh-option VALUE`, which may be
+repeated, is passed to `ssh` as `-o VALUE`. A subscription that waits for hours
+passes `--ssh-option ServerAliveInterval=30 --ssh-option ServerAliveCountMax=3`:
+when the connection drops, `ssh` exits with status 255, the job ends, and the
+harness reports the completion to the conversation, which starts the
+subscription again.
 The scripts require Node 22 or later and use its
 standard library. The native harness must run this command as a background job
 that delivers completion output to its owning conversation.
@@ -844,6 +851,13 @@ permitted. Each notification includes re-arm guidance. After reading and
 handling a batch, start the same background command with `--new` omitted.
 Pending replay includes messages committed while that batch was handled. One
 job completion covers all messages selected by that snapshot.
+
+Two roots that share one recipient each keep their own position. Every notice
+carries `through`, the highest sequence number in its batch. A root started
+with `--new` or `--after` starts its next subscription with `--after THROUGH`.
+That selection reads sequence numbers only, so a read recorded by one root
+leaves the message selected for the other, and a root receives each message
+once. `--from` lets each root subscribe to the senders it directs.
 
 The JavaScript resident `impl/scripts/mcp-web.mjs` has been removed. A Claude
 Code configuration that still names it starts no server and receives no
