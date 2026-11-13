@@ -231,14 +231,18 @@ def last_assistant_sql_expr(+event: String) -> String:
   "(SELECT m.value FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.messages')='array' THEN json_extract(" ++ event ++ ",'$.messages') ELSE '[]' END) m WHERE CASE WHEN m.type='object' THEN json_extract(m.value,'$.role') END='assistant' ORDER BY m.key DESC LIMIT 1)"
 
 # OMP records provider failure on the terminal's latest assistant message.
+# The enclosing CASE has selected a valid JSON event.
+def omp_terminal_error_valid_sql_expr(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract(" ++ last_assistant_sql_expr(event) ++ ",'$.stopReason')='error',0) ELSE 0 END"
+
 def omp_terminal_error_sql_expr(+event: String) -> String:
-  "CASE WHEN json_valid(" ++ event ++ ") THEN CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract(" ++ last_assistant_sql_expr(event) ++ ",'$.stopReason')='error',0) ELSE 0 END ELSE 0 END"
+  "CASE WHEN json_valid(" ++ event ++ ") THEN " ++ omp_terminal_error_valid_sql_expr(event) ++ " ELSE 0 END"
 
 def blocked_cause_sql(+session: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"
   ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code','dsh','antigravity') THEN 'harness-unsupported'"
   ++ " WHEN " ++ blocked_endpoint_absent_sql(session) ++ " AND NOT " ++ direct_app_route_sql(session) ++ " THEN 'endpoint-absent'"
-  ++ " WHEN EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ session ++ " AND e.phase='exited' AND (e.status<>'exit 0' OR EXISTS(SELECT 1 FROM turns t WHERE t.id=e.id AND t.worker=e.session AND (CASE WHEN json_valid(t.event) THEN coalesce(json_extract(t.event,'$.is_error'),0)=1 OR " ++ omp_terminal_error_sql_expr("t.event") ++ " OR (json_extract(t.event,'$.payload.kind')='run_terminal' AND json_extract(t.event,'$.payload.terminal')<>'completed') ELSE 0 END)))) THEN 'provider-failure'"
+  ++ " WHEN EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ session ++ " AND e.phase='exited' AND (e.status<>'exit 0' OR EXISTS(SELECT 1 FROM turns t WHERE t.id=e.id AND t.worker=e.session AND (CASE WHEN json_valid(t.event) THEN coalesce(json_extract(t.event,'$.is_error'),0)=1 OR " ++ omp_terminal_error_valid_sql_expr("t.event") ++ " OR (json_extract(t.event,'$.payload.kind')='run_terminal' AND json_extract(t.event,'$.payload.terminal')<>'completed') ELSE 0 END)))) THEN 'provider-failure'"
   ++ " ELSE '' END"
 
 def assigned_role(session: String) -> String:
