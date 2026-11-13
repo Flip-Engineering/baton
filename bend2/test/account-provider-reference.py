@@ -35,7 +35,7 @@ base={'schema':'baton2-usage-read-v1','provider':sys.argv[1], 'source':'fixture 
 if 'unreadable' in reference or 'openai' in reference:
  base.update(state='unreadable',reason='fixture credential read unavailable')
 else:
- used=100 if reference=='omp-models:kimi-code' else 12
+ used=100 if reference=='omp-models:'+sys.argv[1] else 12
  base.update(state='read',windows=[{'window':'7-day','usedPercent':used,'exhausted':used==100,'resetsAt':4070908800000}])
 print(json.dumps(base))
 ''')
@@ -73,14 +73,21 @@ print(json.dumps(base))
     def wake(self):
         return json.loads(self.entry('provider-wake', 'worker', self.helper).stdout)
 
-    def test_a_different_provider_supplies_no_account_move(self):
+    def different_provider_supplies_no_account_move(self, provider, model):
+        self.sql("UPDATE sessions SET model=? WHERE id='worker'", (model,))
         self.record('openai-account', 'openai')
         self.assertEqual(self.wake(), {'moved': False, 'account': ''})
         self.assertEqual(self.current(), '')
         moves = self.rows("SELECT body FROM messages WHERE body LIKE 'account move:%'")
         self.assertEqual(moves, [])
         providers = self.rows('SELECT DISTINCT provider FROM usage_reads')
-        self.assertEqual(providers, [('kimi-code',)])
+        self.assertEqual(providers, [(provider,)])
+
+    def test_kimi_cannot_move_to_an_openai_account(self):
+        self.different_provider_supplies_no_account_move('kimi-code', 'kimi-code/k3.1-pro')
+
+    def test_zai_cannot_move_to_an_openai_account(self):
+        self.different_provider_supplies_no_account_move('zai', 'zai/glm-5.3-flash')
 
     def test_account_order_and_attempt_use_the_matching_provider(self):
         self.record('openai-account', 'openai')
