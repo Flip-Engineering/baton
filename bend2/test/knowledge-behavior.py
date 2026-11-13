@@ -6,7 +6,9 @@ directly. No native attach, owner socket or Main entry is used.
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -20,13 +22,13 @@ class KnowledgeBehavior(unittest.TestCase):
         self.db = pathlib.Path(self.temp.name) / 'state.db'
         self.call('seed', self.db)
 
-    def call(self, *args, ok=True):
+    def call(self, *args, ok=True, cwd=None):
         if args and args[0] == 'seed':
             argv = [str(EXE), *map(str, args)]
         else:
             argv = [str(EXE), str(self.db), *map(str, args)]
         result = subprocess.run(argv, text=True,
-                                capture_output=True, timeout=60)
+                                capture_output=True, timeout=60, cwd=cwd)
         if ok:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             return result.stdout
@@ -35,6 +37,53 @@ class KnowledgeBehavior(unittest.TestCase):
 
     def json_call(self, *args):
         return json.loads(self.call(*args))
+
+    def committed_record_with_absent_receiver(self, command, fields):
+        directory = pathlib.Path(self.temp.name)
+        endpoint = directory / 'root-receiver.py'
+        endpoint.write_text('import socket,sys\n'
+                            'socket.socket(socket.AF_UNIX).connect(sys.argv[1])\n')
+        socket_name = 'conductor-ended-owner.sock'
+        self.assertFalse((directory / socket_name).exists())
+        with sqlite3.connect(self.db) as db:
+            db.execute('UPDATE sessions SET endpoint=? WHERE id=?',
+                       (json.dumps([sys.executable, str(endpoint), socket_name]), 'root'))
+        args = (command, 'committed-finding', 'worker', *fields)
+        saved = json.loads(self.call(*args, cwd=directory))
+        self.assertEqual((saved['id'], saved['author'], saved['claim']),
+                         ('committed-finding', 'worker', 'Retained claim'))
+        notice = saved['noticeDelivery']
+        self.assertEqual((notice['status'], notice['code']), ('undelivered', 1))
+        self.assertIn('session delivery failed', notice['cause'])
+        self.assertEqual(self.json_call('detail', 'root', 'committed-finding')[0]['claim'],
+                         'Retained claim')
+        pending = self.json_call('inbox', 'root')
+        self.assertEqual([row['id'] for row in pending], ['committed-finding:notice'])
+        self.assertEqual(json.loads(pending[0]['body']),
+                         {'finding': 'committed-finding', 'author': 'worker'})
+        repeated = json.loads(self.call(*args, cwd=directory))
+        self.assertEqual(repeated, saved)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM knowledge').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT count(*) FROM messages').fetchone()[0], 1)
+        changed = list(args)
+        changed[changed.index('Retained claim')] = 'Changed claim'
+        refused = self.call(*changed, ok=False, cwd=directory)
+        self.assertIn('finding-id-conflict', refused.stderr)
+        self.assertEqual(self.json_call('detail', 'root', 'committed-finding')[0]['claim'],
+                         'Retained claim')
+
+    def test_committed_plain_record_reports_an_absent_receiver_separately(self):
+        self.committed_record_with_absent_receiver(
+            'record-plain', ('Retained claim', 'run:notice', 'Private receiver'))
+
+    def test_committed_typed_record_reports_an_absent_receiver_separately(self):
+        self.committed_record_with_absent_receiver(
+            'record', ('observation', 'Retained claim', 'run:notice', 'Private receiver'))
+
+    def test_committed_linked_record_reports_an_absent_receiver_separately(self):
+        self.committed_record_with_absent_receiver(
+            'record-linked', ('hypothesis', 'Retained claim', 'run:notice', 'Private receiver', '[]'))
 
     def test_789_scope_validation_and_typed_graph(self):
         self.call('record', 'finding-a', 'worker', 'observation', 'Alpha finding', 'run:a', '')
