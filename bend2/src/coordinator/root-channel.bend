@@ -150,7 +150,7 @@ def errors_from(+db: String, lines: List<String>) -> IO(List<ChannelIssue>):
 def errors_found(+db: String, found: Result<&1,&1,U32 & String,String>) -> IO(List<ChannelIssue>):
   match found:
     case Done{text}: errors_from(db,Tx.split_lines(Tx.trim_nl(text)))
-    case Fail{(code,text)}: IO.pure(List<ChannelIssue>,Con{Issue{text,"Baton error: the root channel check could not read the database: " ++ U32.show(code) ++ ": " ++ text},Nil{}})
+    case Fail{(code,+text)}: IO.pure(List<ChannelIssue>,Con{Issue{text,"Baton error: the root channel check could not read the database: " ++ U32.show(code) ++ ": " ++ text},Nil{}})
 
 def errors(+db: String, +condition: String) -> IO(List<ChannelIssue>):
   do IO<List<ChannelIssue>>:
@@ -237,7 +237,7 @@ def checked_notice(+db: String, +saved: String, found: List<ChannelIssue>, next:
       logged : Unit <- reported(db ++ ".root.log",head <> tail)
       answer(db,saved,"undelivered",1,issue_reason(head),notice_text())
 
-def selected_notice(db: String, id: String, saved: String, root: Bool, next: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+def selected_notice(+db: String, id: String, saved: String, root: Bool, next: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
   match root:
     case False{}: next(Unit{})
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
@@ -271,9 +271,9 @@ def run_logged(saved: String, run: T.RunRes, written: Result<&1,&1,U32 & String,
 
 def completed(+db: String, saved: String, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
-    case Fail{(code,cause)}: do IO<Result<&1,&1,U32 & String,String>>:
+    case Fail{(code,+cause)}: do IO<Result<&1,&1,U32 & String,String>>:
       written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(db ++ ".root.log",cause ++ "\n")
       IO.pure(Result<&1,&1,U32 & String,String>,run_logged(saved,T.RSpawn{cause},written))
-    case Done{output}: do IO<Result<&1,&1,U32 & String,String>>:
+    case Done{+output}: do IO<Result<&1,&1,U32 & String,String>>:
       written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(db ++ ".root.log",output ++ "\n")
       IO.pure(Result<&1,&1,U32 & String,String>,run_logged(saved,Tx.run_res(Done{output}),written))
