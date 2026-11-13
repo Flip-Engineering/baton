@@ -152,7 +152,7 @@ def m5_bind_preserves_parentage_and_placement(id, native, harness, model, effort
 # the caller's body cannot make a record terminal.
 law m11_terminal_reads_the_records_own_event:
   for +event: String
-  {C.terminal_expr(event) == "(json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1))" : String}
+  {C.terminal_expr(event) == "CASE WHEN json_valid(" ++ event ++ ") THEN (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1)) ELSE 0 END" : String}
 
 def m11_terminal_reads_the_records_own_event(event):
   {==}
