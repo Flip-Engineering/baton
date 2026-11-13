@@ -37,15 +37,16 @@ const socket=require('net').createConnection(${JSON.stringify(join(dir, 'events.
 socket.pipe(process.stdout);
 socket.on('error',error=>{console.error(error.message);process.exitCode=1;});
 `, { mode: 0o755 });
-  const start = (native, fresh = true, ssh = false, index = false) => {
+  const start = (native, fresh = true, ssh = false, index = false, extra = []) => {
     if (ssh) {
-      writeFileSync(join(dir, 'ssh'), '#!/bin/sh\nshift 2\nexec /bin/sh -c "$1"\n', { mode: 0o755 });
+      writeFileSync(join(dir, 'ssh'), '#!/bin/sh\nwhile [ "$1" = "-o" ]; do echo "$2" >> "' + join(dir, 'ssh-options')
+        + '"; shift 2; done\nshift 2\nexec /bin/sh -c "$1"\n', { mode: 0o755 });
       writeFileSync(join(dir, 'sudo'), '#!/bin/sh\n[ "$1 $2 $3 $4" = "-n -u batonci --" ] || exit 2\nshift 4\nexec "$@"\n', { mode: 0o755 });
     }
     const child = spawn(process.execPath, [ssh ? resolve('bend2/scripts/root-notice-ssh.mjs') : script,
       ...(ssh ? ['--ssh', 'fixture-host', '--as-user', 'batonci', '--node', process.execPath, '--script', script] : []),
       '--database', database, '--coordinator', coordinator,
-      '--session', 'operator', '--native', native, ...(fresh ? ['--new'] : []), ...(index ? ['--index'] : [])],
+      '--session', 'operator', '--native', native, ...(fresh ? ['--new'] : []), ...(index ? ['--index'] : []), ...extra],
     { env: { ...process.env, PATH: dir + ':' + process.env.PATH } });
     let out = '', error = '';
     child.stdout.on('data', chunk => { out += chunk; });
@@ -127,4 +128,60 @@ test('an index notice batches pending input and preserves the complete bodies fo
   assert.equal(f.db.prepare('SELECT body FROM messages WHERE id=?').get('first').body, body);
   assert.match(notice.rearm, /--new omitted/);
   assert.equal(f.db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+});
+
+test('--after selects every message past the position, read or unread, and reports the next position', async t => {
+  const f = await fixture(t);
+  const insert = f.db.prepare('INSERT INTO messages(seq,id,sender,recipient,kind,body) VALUES(?,?,?,?,?,?)');
+  insert.run(1, 'handled-earlier', 'worker-a', 'operator', 'report', 'Handled by this root in its last batch.');
+  insert.run(2, 'read-by-other-root', 'worker-a', 'operator', 'report', 'The other root recorded a read.');
+  insert.run(3, 'for-a-seat', 'operator', 'worker-a', 'task', 'Addressed to a seat.');
+  insert.run(4, 'newest', 'worker-b', 'operator', 'question', 'Committed while the last batch was handled.');
+  f.db.exec("INSERT INTO message_reads VALUES('read-by-other-root','operator','codex-on-mac')");
+  const run = f.start('claude-on-mac', false, false, false, ['--after', '1']);
+  const ended = await run.ended;
+  assert.equal(ended.code, 0, ended.error);
+  const notice = JSON.parse(ended.out);
+  assert.deepEqual(notice.messages.map(row => row.id), ['read-by-other-root', 'newest']);
+  assert.equal(notice.through, 4);
+  assert.match(notice.rearm, /--after 4\b/);
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 1);
+  assert.equal(JSON.parse(readFileSync(f.database + '.root.log', 'utf8').trim()).through, 4);
+});
+
+test('--from limits a subscription to the named senders', async t => {
+  const f = await fixture(t);
+  const run = f.start('claude-on-mac', true, false, false, ['--from', 'engineer', '--from', 'reviewer']);
+  await f.ready(1);
+  const insert = f.db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)');
+  insert.run('other-ensemble', 'client-seat', 'operator', 'report', 'For the other root.');
+  f.commit();
+  insert.run('mine', 'engineer', 'operator', 'report', 'For this root.');
+  f.commit();
+  const ended = await run.ended;
+  assert.equal(ended.code, 0, ended.error);
+  const notice = JSON.parse(ended.out);
+  assert.deepEqual(notice.messages.map(row => row.id), ['mine']);
+  assert.equal(notice.through, 2);
+  assert.match(notice.rearm, /--after 2\b/);
+});
+
+test('--new and --after together are refused before a subscription starts', async t => {
+  const f = await fixture(t);
+  const run = f.start('claude-on-mac', true, false, false, ['--after', '3']);
+  const ended = await run.ended;
+  assert.equal(ended.code, 1);
+  assert.match(ended.error, /pass one of them/);
+  assert.equal(existsSync(join(f.dir, 'calls')), false);
+});
+
+test('the SSH adapter passes each --ssh-option to ssh and forwards the other arguments', async t => {
+  const f = await fixture(t);
+  f.db.exec("INSERT INTO messages VALUES(1,'retained','worker','operator','report','Retained failure report')");
+  const run = f.start('claude-on-mac', false, true, false,
+    ['--ssh-option', 'ServerAliveInterval=30', '--after', '0', '--ssh-option', 'ServerAliveCountMax=3']);
+  const ended = await run.ended;
+  assert.equal(ended.code, 0, ended.error);
+  assert.equal(JSON.parse(ended.out).through, 1);
+  assert.equal(readFileSync(join(f.dir, 'ssh-options'), 'utf8'), 'ServerAliveInterval=30\nServerAliveCountMax=3\n');
 });

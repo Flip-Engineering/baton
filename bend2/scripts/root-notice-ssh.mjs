@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 // Run the database-host root subscriber through an SSH background job.
+// --ssh-option VALUE, repeatable, is passed to ssh as -o VALUE.
 import { spawn } from 'node:child_process';
 
-const args = process.argv.slice(2), remote = [], options = { node: 'node' };
+const args = process.argv.slice(2), remote = [], options = { node: 'node' }, sshOptions = [];
 try {
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
-    if (['--ssh', '--script', '--node', '--as-user'].includes(flag)) {
+    if (flag === '--ssh-option') {
+      const value = args[++i];
+      if (!value) throw new Error(flag + ' requires a value.');
+      sshOptions.push('-o', value);
+    } else if (['--ssh', '--script', '--node', '--as-user'].includes(flag)) {
       const value = args[++i];
       if (!value) throw new Error(flag + ' requires a value.');
       options[flag.slice(2).replaceAll('-', '_')] = value;
@@ -16,7 +21,7 @@ try {
   const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
   const command = [...(options.as_user ? ['sudo', '-n', '-u', options.as_user, '--'] : []),
     options.node, options.script, ...remote];
-  const child = spawn('ssh', ['-T', options.ssh, 'exec ' + command.map(quote).join(' ')],
+  const child = spawn('ssh', [...sshOptions, '-T', options.ssh, 'exec ' + command.map(quote).join(' ')],
     { stdio: 'inherit' });
   const forward = signal => child.kill(signal);
   process.on('SIGINT', () => forward('SIGINT'));
