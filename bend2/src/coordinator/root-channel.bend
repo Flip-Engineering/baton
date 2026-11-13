@@ -29,7 +29,7 @@ import ../git/process.bend as Process
 import ../git/types.bend as T
 import ./codex-route.bend as CodexRoute
 
-type ChannelIssue is Type:
+type ChannelIssue is Data:
   Issue{reason: String, diagnostic: String}
 
 def issue_reason(issue: ChannelIssue) -> String:
