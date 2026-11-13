@@ -11,8 +11,8 @@ largest measured value from its exact key and compatible profile. Each profile
 records the source request key and attempt that supplied its largest observation.
 
 `--per-run NAME=VALUE` declares a commit, evidence directory or other per-run
-value. It can be repeated. The exact request key includes the complete command,
-options and input contents. In history-group material, each occurrence of a
+value. It can be repeated. The exact request key continues to hash options, the normalized command and
+input contents. In history-group material, each occurrence of a
 named value becomes `{run:NAME}` in options, command tokens and control paths.
 Absolute paths also match their normalized `@root/` or `@cwd/` spelling. Matching
 uses the longest value at each position, so an evidence path can contain a named

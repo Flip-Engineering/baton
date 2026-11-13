@@ -446,7 +446,9 @@ class HistoryGroupTests(unittest.TestCase):
         self.until("deploy claim recorded", lambda: self.claim("deploy-two") is not None)
         claim = self.claim("deploy-two")
         self.assertEqual(claim["history"], "1", claim)
-        self.assertEqual(claim["history_group"], group)
+        attempts = list((self.state / "keys" / claim["key"] / "runs").iterdir())
+        self.assertTrue(attempts)
+        self.assertEqual({fields(attempt / "history-group")["group"] for attempt in attempts}, {group})
         self.assertGreaterEqual(int(claim["expected_kb"]), peak)
         first_key = fields(self.root / "receipt-deploy-one")["key"]
         self.assertNotEqual(claim["key"], first_key)
