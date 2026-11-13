@@ -6,6 +6,7 @@ import pathlib
 import select
 import sqlite3
 import subprocess
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -16,6 +17,19 @@ receive.EXE = pathlib.Path(os.environ['BATON_EVENT_TEST_BINARY']).resolve()
 
 
 class NonJsonLastEvent(receive.Receive):
+    def setUp(self):
+        (ROOT / '.scratch/bend2').mkdir(parents=True, exist_ok=True)
+        super().setUp()
+
+    def eventually(self, observation, description):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            result = observation()
+            if result:
+                return result
+            time.sleep(.01)
+        self.fail(description)
+
     def next_native(self):
         ready, _, _ = select.select([self.server], [], [], 30)
         self.assertTrue(ready, 'Dispatch did not start a native turn')
