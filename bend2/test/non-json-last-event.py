@@ -110,6 +110,35 @@ class NonJsonLastEvent(receive.Receive):
     def test_empty_outcome_can_be_observed(self):
         self.observe_event('')
 
+    def failed_refusal_retry(self, event):
+        path = self.directory / 'retry-event.txt'
+        path.write_text(json.dumps({'type': 'result', 'result': 'Completed.', 'is_error': False}))
+        self.coord('observe-file', 'initial-turn', 'root', path)
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE sessions SET endpoint=? WHERE id='operator'", (json.dumps(['/usr/bin/true']),))
+            db.execute("""INSERT INTO refusal_recoveries
+                (id,source,conductor,instruction,harness,model,initial_turn,initial_refusal,status)
+                VALUES('recovery','root','operator','Complete the task.','codex','fixture','refused-turn','I cannot help.','active')""")
+            db.execute("""INSERT INTO refusal_attempts
+                (id,recovery,stage,ordinal,session,instruction,status)
+                VALUES('retry','recovery','fork-and-continue',1,'root','Complete the task.','running')""")
+        path.write_text(event)
+        for _ in range(2):
+            self.coord('observe-file', 'failed-turn', 'root', path)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute("SELECT status FROM refusal_recoveries WHERE id='recovery'").fetchone()[0], 'failed')
+            self.assertEqual(db.execute("SELECT status FROM refusal_attempts WHERE id='retry'").fetchone()[0], 'failed')
+            reports = db.execute("SELECT recipient,body FROM messages WHERE id='refusal-result:recovery'").fetchall()
+            self.assertEqual(len(reports), 1)
+            self.assertEqual(reports[0][0], 'operator')
+            self.assertEqual(json.loads(reports[0][1])['refusal-recovery-failed']['cause'], event)
+
+    def test_plain_text_refusal_retry_failure_is_reported_once(self):
+        self.failed_refusal_retry('The native ended without a structured result. λ')
+
+    def test_empty_refusal_retry_failure_is_reported_once(self):
+        self.failed_refusal_retry('')
+
 
 for name in dir(receive.Receive):
     if name.startswith('test_'):
