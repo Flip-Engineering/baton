@@ -5,6 +5,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
+import ./root-channel.bend as RootChannel
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
 
@@ -437,7 +438,7 @@ def answered(delivery: Result<&1,&1,U32 & String,String>) -> IO(Unit):
 def record_answer(+db: String, saved: String, delivery: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match delivery:
     case Fail{(code,cause)}: do IO<Unit>:
-      answer : String <- IO.try(String,DB.Sql.read(db,"SELECT json_set(" ++ C.q(saved) ++ ",'$.noticeDelivery',json_object('status','undelivered','code'," ++ U32.show(code) ++ ",'cause'," ++ C.q(cause) ++ "));"))
+      answer : String <- IO.try(String,RootChannel.answer(db,saved,"undelivered",code,cause,RootChannel.pending_notice_text()))
       write_answer(answer)
     case Done{output}: write_answer(output)
 

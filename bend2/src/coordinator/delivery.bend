@@ -53,10 +53,19 @@ def completed(db: String, saved: String, run: Result<&1,&1,U32 & String,String>)
       written : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(log,output ++ "\n")
       IO.pure(Result<&1,&1,U32 & String,String>,logged(saved,log,output,written))
 
-def launch(db: String, id: String, saved: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
+def launch_selected(db: String, saved: String, argv: String, root: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match root:
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      run : Result<&1,&1,U32 & String,String> <- RootChannel.endpoint_run(db,argv)
+      RootChannel.completed(db,saved,run)
+    case False{}: do IO<Result<&1,&1,U32 & String,String>>:
+      run : Result<&1,&1,U32 & String,String> <- Process.Process.run(argv,".")
+      completed(db,saved,run)
+
+def launch(+db: String, id: String, saved: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    run : Result<&1,&1,U32 & String,String> <- RootChannel.endpoint_run(db,id,argv ++ Tx.enc_argv(Con{id,Nil{}}))
-    completed(db,saved,run)
+    root : Bool <- RootChannel.message_root(db,id,"1")
+    launch_selected(db,saved,argv ++ Tx.enc_argv(Con{id,Nil{}}),root)
 
 # A stopped recipient retains its original message and read state. Its parent gets
 # one ordinary report naming the retained input and work.
