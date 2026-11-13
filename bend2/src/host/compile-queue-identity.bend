@@ -762,21 +762,21 @@ def CompileQueueIdentity.run_values(rows: List<&2,String>, +cwd: String, +root: 
     case row <> rest:
       List.append(&2,CompileQueueRunValue,CompileQueueIdentity.run_row(String.split(row,Char.from_u32(9)),cwd,root),CompileQueueIdentity.run_values(rest,cwd,root))
 
-def CompileQueueIdentity.longer_run(+candidate: CompileQueueRunValue, current: Maybe<&2,CompileQueueRunValue>) -> Maybe<&2,CompileQueueRunValue>:
-  match current:
-    case None{}: Some{candidate}
-    case Some{CompileQueueRunValue{+value,+marker}}:
-      match candidate:
-        case CompileQueueRunValue{+next,+replacement}:
+def CompileQueueIdentity.longer_run(candidate: CompileQueueRunValue, current: Maybe<&2,CompileQueueRunValue>) -> Maybe<&2,CompileQueueRunValue>:
+  match candidate:
+    case CompileQueueRunValue{+next,+replacement}:
+      match current:
+        case None{}: Some{CompileQueueRunValue{next,replacement}}
+        case Some{CompileQueueRunValue{+value,+marker}}:
           Bool.pick(Maybe<&2,CompileQueueRunValue>,
             Bool.or(Nat.is_gt(String.length(next),String.length(value)),
               Bool.and(Nat.is_eq(String.length(next),String.length(value)),String.is_lt(replacement,marker))),
             Some{CompileQueueRunValue{next,replacement}},Some{CompileQueueRunValue{value,marker}})
 
-def CompileQueueIdentity.match_run(+text: String, values: List<&2,CompileQueueRunValue>, current: Maybe<&2,CompileQueueRunValue>) -> Maybe<&2,CompileQueueRunValue>:
+def CompileQueueIdentity.match_run(+text: String, values: List<&2,CompileQueueRunValue>, +current: Maybe<&2,CompileQueueRunValue>) -> Maybe<&2,CompileQueueRunValue>:
   match values:
     case Nil{}: current
-    case +candidate <> rest:
+    case candidate <> rest:
       match candidate:
         case CompileQueueRunValue{+value,marker}:
           CompileQueueIdentity.match_run(text,rest,
