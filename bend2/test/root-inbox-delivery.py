@@ -5,6 +5,7 @@ import os
 import pathlib
 import sqlite3
 import subprocess
+import sys
 import time
 import unittest
 from unittest.mock import patch
@@ -103,6 +104,53 @@ class RootInboxDelivery(receive.Receive):
         self.assertIn('root session root', pathlib.Path(str(self.db) + '.root.log').read_text())
         self.assert_no_start()
         return ident
+
+    def attached_endpoint(self):
+        received = self.directory / 'root-notifications'
+        script = ("import socket,sys\n"
+                  "s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n"
+                  "s.bind(sys.argv[1]);s.listen();print('listening',flush=True)\n"
+                  "while True:\n"
+                  " c,_=s.accept();data=c.recv(65536);c.close()\n"
+                  " if data:\n"
+                  "  with open(sys.argv[2],'ab') as f:f.write(data+b'\\n')\n")
+        listener = subprocess.Popen([sys.executable, '-c', script, 'attached-root.sock', str(received)],
+                                    cwd=self.directory, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True)
+        self.children.append(listener)
+        self.assertEqual(listener.stdout.readline(), 'listening\n')
+        self.endpoint[-1] = 'attached-root.sock'
+        with sqlite3.connect(self.db) as db:
+            db.execute('UPDATE sessions SET endpoint=? WHERE id=?', (json.dumps(self.endpoint), 'root'))
+        return received
+
+    def test_attached_endpoint_resolves_its_socket_from_the_database_directory(self):
+        received = self.attached_endpoint()
+        action, = self.coord('as', 'worker', 'report', '--text', 'Notify the attached root.')
+        self.assertEqual(action['status'], 'completed', action)
+        self.assertEqual(action['stderr'], '', action)
+        saved = json.loads(action['stdout'])
+        self.assertTrue(saved['committed'])
+        self.assertEqual(saved['noticeDelivery'],
+                         {'status': 'notified', 'code': 0, 'cause': '', 'detail': TEXT})
+        self.eventually(lambda: received.exists() and saved['id'] in received.read_text(),
+                        'The endpoint did not receive the committed report identity')
+
+    def test_attached_endpoint_failure_has_a_separate_reason(self):
+        self.attached_endpoint()
+        pathlib.Path(self.endpoint[1]).write_text("throw new Error('root notification endpoint failed');\n")
+        action, = self.coord('as', 'worker', 'report', '--text', 'Retain the report after notification failure.')
+        self.assertEqual(action['status'], 'completed', action)
+        self.assertEqual(action['stderr'], '', action)
+        saved = json.loads(action['stdout'])
+        self.assertTrue(saved['committed'])
+        notice = saved['noticeDelivery']
+        self.assertEqual(set(notice), {'status', 'code', 'detail', 'cause'})
+        self.assertEqual((notice['status'], notice['code'], notice['detail']), ('undelivered', 1, TEXT))
+        self.assertIn('root notification endpoint failed', notice['cause'])
+        self.assertNotIn('Attach ', notice['cause'])
+        self.assertNotIn('retry', notice['cause'])
+        self.assertIn('root notification endpoint failed', pathlib.Path(str(self.db) + '.root.log').read_text())
 
     def test_report_is_committed_with_separate_notice_result(self):
         self.send('report', '--text', 'The report is complete.')
