@@ -202,7 +202,7 @@ def committed_answer(saved: String, result: Result<&1,&1,U32 & String,String>) -
 
 def admitted(+db: String, +index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, +command: C.Command) -> IO(String):
   do IO<String>:
-    result : Result<&1,&1,U32 & String,String> <- Wake.command_result(db,command,Done{saved})
+    +result : Result<&1,&1,U32 & String,String> <- Wake.command_result(db,command,Done{saved})
     state : Result<&1,&1,U32 & String,String & String> <- snapshot(db,id)
     IO.pure(String,admitted_snapshot(index,id,sender,recipient,kind,committed_answer(saved,result),Delivery.wake_result(result),state))
 
