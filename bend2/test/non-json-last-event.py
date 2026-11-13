@@ -29,6 +29,10 @@ class NonJsonLastEvent(receive.Receive):
         (ROOT / '.scratch/bend2').mkdir(parents=True, exist_ok=True)
         super().setUp()
 
+    def process_names(self):
+        # Linux names the owner started through /proc/self/exe as exe.
+        return super().process_names() | {'exe'}
+
     def eventually(self, observation, description):
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
