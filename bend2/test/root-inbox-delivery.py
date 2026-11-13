@@ -158,6 +158,9 @@ class RootInboxDelivery(receive.Receive):
         attempt = pathlib.Path(directory)
         self.eventually(lambda: (attempt / 'acknowledged').exists(), 'Recovery did not acknowledge the retained native')
         self.eventually(lambda: self.execution('parent')[0] == 'exited', 'Recovery did not record completion')
+        self.eventually(lambda: not [process for process in self.owned_processes()
+                                     if ' --instance-owner ' not in process['command']],
+                        'The recovered observer did not finish its delivery')
         with sqlite3.connect(self.db) as db:
             reports = db.execute("SELECT body FROM messages WHERE sender='parent' AND recipient='root' AND kind='report'").fetchall()
             self.assertTrue(any('The recovered native completed.' in row[0] for row in reports), reports)
