@@ -5,6 +5,7 @@
 # committed message and prints its result. The store starts its instance owner
 # by running this binary with '--instance-owner DB'.
 import Base
+import ./knowledge-behavior.bend as KnowledgeFixture
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/store.bend as Store
 import ../src/coordinator/root-channel.bend as RootChannel
@@ -41,8 +42,14 @@ def read_input(+db: String, +session: String, +id: String) -> IO(Unit):
       "SELECT json_array(json_object('status','found','id',m.id,'recipient',m.recipient,'body',m.body)) FROM messages m WHERE m.id=" ++ C.q(id) ++ ";"))
     AgentInput.external_read(db,session,Tx.trim_nl(saved),True{})
 
+def answer_saved(+db: String, saved: String) -> IO(Unit):
+  do IO<Unit>:
+    answer : String <- IO.try(String,RootChannel.answer(db,saved,"undelivered",1,"no channel endpoint is registered",RootChannel.notice_text()))
+    IO.write(answer)
+
 def route(args: List<String>) -> IO(Unit):
   match args:
+    case "answer-saved" <> db <> saved <> Nil{}: answer_saved(db,saved)
     case "install" <> db <> Nil{}: Store.ensure_before_begin(db)
     case "warn" <> db <> Nil{}: RootChannel.warn(db)
     case "message" <> db <> id <> Nil{}: RootChannel.warn_message(db,id)
@@ -52,7 +59,7 @@ def route(args: List<String>) -> IO(Unit):
     case "wait" <> db <> Nil{}: Custody.Instance.print_wait(db)
     case "shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
-    case other: IO.die(Unit,2,"usage: root-channel install|warn DB | message|report|deliver DB ID")
+    case other: KnowledgeFixture.main_args(other)
 
 def main() -> IO(Unit):
   do IO<Unit>:

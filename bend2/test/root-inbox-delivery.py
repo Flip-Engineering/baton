@@ -85,7 +85,11 @@ class RootInboxDelivery(receive.Receive):
         self.assertTrue(answer['committed'], answer)
         self.assertEqual(answer['noticeDelivery']['status'], 'undelivered', answer)
         self.assertEqual(answer['noticeDelivery']['detail'], TEXT, answer)
-        self.assertIn('no attached channel', answer['noticeDelivery']['cause'])
+        self.assertEqual(set(answer['noticeDelivery']), {'status', 'code', 'detail', 'cause'})
+        self.assertEqual(answer['noticeDelivery']['code'], 1)
+        self.assertIn('no process accepts connections', answer['noticeDelivery']['cause'])
+        self.assertNotIn('Attach ', answer['noticeDelivery']['cause'])
+        self.assertNotIn('retry', answer['noticeDelivery']['cause'])
         return saved
 
     def retained(self, kind, body):

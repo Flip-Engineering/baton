@@ -127,6 +127,25 @@ class RootChannel(unittest.TestCase):
         log = pathlib.Path(self.path + '.root.log')
         return log.read_text() if log.exists() else ''
 
+    def test_notification_preserves_non_object_answers(self):
+        for saved in ['', 'The original answer. λ\n', '[{"id":"saved"}]', '"text"', 'null', '17']:
+            with self.subTest(saved=saved):
+                result = self.run_entry('answer-saved', self.path, saved)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, saved)
+
+    def test_notification_preserves_original_object_fields(self):
+        saved = {'id': 'original', 'body': 'Original report.', 'receipt': None,
+                 'nested': {'values': [1, 'λ']}}
+        result = self.run_entry('answer-saved', self.path, json.dumps(saved))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        answer = json.loads(result.stdout)
+        for name, value in saved.items():
+            self.assertEqual(answer[name], value)
+        self.assertTrue(answer['committed'])
+        self.assertEqual(set(answer['noticeDelivery']), {'status', 'code', 'detail', 'cause'})
+        self.assertEqual(answer['noticeDelivery']['cause'], 'no channel endpoint is registered')
+
     def test_operator_without_endpoint_is_reported(self):
         self.owe('operator', 2)
         lines = self.warn()

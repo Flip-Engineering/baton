@@ -884,13 +884,19 @@ Baton error: root session operator has 7136 owed inputs and no attached channel:
 ```
 
 A message, report, question, completion request or knowledge notice addressed to
-a root is committed before notification. The sender receives `committed: true`
-and a separate `noticeDelivery` object. Its `status` is `notified` when the
-notification succeeds and `undelivered` when the channel is unavailable; `cause`
-contains the channel error. Its `detail` says: "The message is committed. The
-root reads it from its inbox." Channel diagnostics are appended to the
-database's `.root.log`. Recovery retains completed native work when the root
-notification channel is unavailable.
+a root is committed before notification. Its answer retains the committed row
+and adds `committed: true`. The separate `noticeDelivery` object has four fields:
+
+- `status`: `notified` when notification succeeds, or `undelivered` when it fails.
+- `code`: zero on success, or the notification error code.
+- `cause`: the notification failure reason, or an empty string on success.
+- `detail`: "The message is committed. The root reads it from its inbox."
+
+A knowledge record whose notice fails for another recipient returns the same
+notice shape. Its `detail` says: "The finding is committed. Its notice remains
+in the recipient's inbox." Channel diagnostics and attachment instructions are
+appended to the database's `.root.log`. Recovery retains completed native work
+when the root notification channel is unavailable.
 
 An input that Baton cannot route to a non-Codex session is reported to that
 session's coordinator. The report names the input, delivery cause, owed input
