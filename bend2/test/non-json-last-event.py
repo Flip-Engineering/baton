@@ -47,11 +47,19 @@ class NonJsonLastEvent(receive.Receive):
         self.assertTrue(ready, 'Dispatch did not start a native turn')
         return self.accept(session)
 
+    def wait_for_native_binding(self, session, native):
+        def bound():
+            with sqlite3.connect(self.db.as_uri() + '?mode=ro', uri=True) as db:
+                return db.execute("""SELECT 1 FROM sessions s JOIN executions e ON e.session=s.id
+                    WHERE s.id=? AND s.native=? AND e.phase='running'""", (session, native)).fetchone()
+        self.eventually(bound, 'The native startup frame was not recorded')
+
     def dispatch_after(self, event):
         self.player()
         self.prepare_input('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept_child(first, 'parent')
+        self.wait_for_native_binding('parent', started['native'])
         self.action(control, body='The first turn completed.', read=['first'])
         self.finish(first)
         with sqlite3.connect(self.db) as db:
@@ -61,6 +69,7 @@ class NonJsonLastEvent(receive.Receive):
         delivery = self.spawn('message', 'second', 'root', 'parent', 'guidance',
                               'Continue the recorded conversation.')
         control, resumed = self.next_native('parent')
+        self.wait_for_native_binding('parent', resumed['native'])
         self.assertEqual(resumed['resume'], started['native'])
         self.assertIn('[id: second]', resumed['prompt'])
         self.action(control, body='The second turn completed.', read=['second'])
