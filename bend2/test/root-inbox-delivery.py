@@ -130,6 +130,7 @@ class RootInboxDelivery(receive.Receive):
         self.assertEqual(action['status'], 'completed', action)
         self.assertEqual(action['stderr'], '', action)
         saved = json.loads(action['stdout'])
+        self.assertIn('committed', saved)
         self.assertTrue(saved['committed'])
         self.assertEqual(saved['noticeDelivery'],
                          {'status': 'notified', 'code': 0, 'cause': '', 'detail': TEXT})
@@ -143,6 +144,7 @@ class RootInboxDelivery(receive.Receive):
         self.assertEqual(action['status'], 'completed', action)
         self.assertEqual(action['stderr'], '', action)
         saved = json.loads(action['stdout'])
+        self.assertIn('committed', saved)
         self.assertTrue(saved['committed'])
         notice = saved['noticeDelivery']
         self.assertEqual(set(notice), {'status', 'code', 'detail', 'cause'})
