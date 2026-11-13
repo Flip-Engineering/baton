@@ -119,7 +119,7 @@ def token_ok(+s: String) -> Bool:
 
 # default_config emits one empty line per singleton field and config_line
 # appends supplied values, so the supplied value for a singleton is the last
-# matching line. Repeated fields (input, option, artifact, aux) are read with
+# matching line. Repeated fields (input, option, artifact, aux, per_run) are read with
 # fields_all and keep every line.
 def field_line_value(parsed: Maybe<&1,Split>, name: String, +acc: String) -> String:
   match parsed:
@@ -340,6 +340,14 @@ def artifact_option_config(parsed: Maybe<&1,Split>, +value: String, config: Conf
     case Some{Split{name, +path}}: IO.pure(Config, config_line(config, "artifact", name ++ "\t" ++ path))
     case None{}: IO.die(Config, 2, "compile-queue: artifact must be NAME=PATH: " ++ value)
 
+def per_run_option_config(parsed: Maybe<&1,Split>, config: Config) -> IO(Config):
+  match parsed:
+    case Some{Split{+name, +value}}:
+      Bool.pick(IO(Config), Bool.and(token_ok(name), non_empty(value)),
+        IO.pure(Config, config_line(config, "per_run", name ++ "\t" ++ value)),
+        IO.die(Config, 2, "compile-queue: per-run requires NAME=VALUE with a nonempty value and a token name"))
+    case None{}: IO.die(Config, 2, "compile-queue: per-run requires NAME=VALUE")
+
 def parse_common(args: List<&2,String>, config: Config) -> IO(Config):
   match args:
     case Nil{}: IO.pure(Config, config)
@@ -359,6 +367,10 @@ def parse_common(args: List<&2,String>, config: Config) -> IO(Config):
     case "--input" <> value <> rest: parse_common(rest, config_input(config, value))
     case "--aux" <> value <> rest: parse_common(rest, config_line(config, "aux", value))
     case "--option" <> value <> rest: parse_common(rest, config_line(config, "option", value))
+    case "--per-run" <> value <> rest:
+      do IO<Config>:
+        updated : Config <- per_run_option_config(split_eq(value, ""), config)
+        parse_common(rest, updated)
     case "--artifact" <> +value <> rest:
       do IO<Config>:
         updated : Config <- artifact_option_config(split_eq(value, ""), value, config)
@@ -535,7 +547,8 @@ def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,Strin
           input_pairs_text(inputs), fields_join("\n", fields_all(text, "aux")),
           artifact_pairs_text(artifacts),
           fields_join("\n", fields_all(text, "option")),
-          normalize_command(command, cwd, root, compiler, inputs, artifacts)),
+          normalize_command(command, cwd, root, compiler, inputs, artifacts),
+          fields_join("\n", fields_all(text, "per_run"))),
         IO.pure(Result<&1,&1,U32 & String,String>, Done{""}))
 
 def identity_group(config: Config) -> IO(String):
@@ -2915,6 +2928,7 @@ def adopt_command(args: List<&2,String>) -> IO(Unit):
 
 def usage() -> String:
   "usage: compile-queue.sh run --kind cgen|cc|check --state-root DIR --cwd DIR [options] -- COMMAND...\n"
+  ++ "       --per-run NAME=VALUE names per-run data for history grouping (repeatable)\n"
   ++ "       compile-queue.sh key --kind cgen|cc|check [options]\n"
   ++ "       compile-queue.sh cancel --state-root DIR --key KEY --token TOKEN\n"
   ++ "       compile-queue.sh wait --state-root DIR --key KEY\n"
