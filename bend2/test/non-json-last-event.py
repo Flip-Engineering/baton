@@ -14,7 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('receive_fixture', ROOT / 'bend2/test/receive.py')
 receive = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(receive)
-receive.EXE = pathlib.Path(os.environ['BATON_EVENT_TEST_BINARY']).resolve()
+receive.EXE = pathlib.Path(os.environ.get('BATON_EVENT_TEST_BINARY', str(receive.EXE))).resolve()
 
 
 class NonJsonLastEvent(receive.Receive):
