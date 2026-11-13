@@ -39,7 +39,7 @@ def deliver(+db: String, +id: String) -> IO(Unit):
 def read_input(+db: String, +session: String, +id: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.read(db,
-      "SELECT json_array(json_object('status','found','id',m.id,'recipient',m.recipient,'body',m.body)) FROM messages m WHERE m.id=" ++ C.q(id) ++ ";"))
+      "SELECT json_array(json_object('status','found','delivery',json_object('id',m.id,'recipient',m.recipient,'body',m.body))) FROM messages m WHERE m.id=" ++ C.q(id) ++ ";"))
     AgentInput.external_read(db,session,Tx.trim_nl(saved),True{})
 
 def answer_saved(+db: String, saved: String) -> IO(Unit):

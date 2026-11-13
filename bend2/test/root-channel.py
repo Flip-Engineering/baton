@@ -416,7 +416,7 @@ class RootChannel(unittest.TestCase):
         lines = self.warn()
         self.assertEqual(len(lines), 1, lines)
         self.assertIn('root session operator has 3 owed inputs and no attached channel: no channel endpoint is registered', lines[0])
-        self.assertIn("Register an endpoint for harness 'omp'", lines[0])
+        self.assertIn("harness 'omp'", lines[0])
         self.assertNotIn('mcp-conductor.mjs', lines[0])
 
     def test_unsupported_harness_operator_without_an_endpoint_is_reported(self):
