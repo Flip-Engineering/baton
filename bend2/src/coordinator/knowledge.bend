@@ -427,11 +427,18 @@ def promotion_notice_statement(+id: String, +promoter: String, +source_kind: Str
 def promote_statements(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
   promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding)
 
-# A committed record whose notice could not be delivered refuses with the retry
-# path; the write itself stands.
+# Promotion delivery failures retain the committed promotion and report an error.
 def answered(delivery: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match delivery:
     case Fail{error}: IO.die(Unit,1,"The row is committed and its notice is undelivered. Read the pending inbox and retry the delivery.")
+    case Done{output}: write_answer(output)
+
+# A record answer retains the committed finding and reports a failed notice.
+def record_answer(+db: String, saved: String, delivery: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match delivery:
+    case Fail{(code,cause)}: do IO<Unit>:
+      answer : String <- IO.try(String,DB.Sql.read(db,"SELECT json_set(" ++ C.q(saved) ++ ",'$.noticeDelivery',json_object('status','undelivered','code'," ++ U32.show(code) ++ ",'cause'," ++ C.q(cause) ++ "));"))
+      write_answer(answer)
     case Done{output}: write_answer(output)
 
 # Record: one transaction writes the finding and the notice, the notice is then
@@ -446,21 +453,21 @@ def record(+db: String, +id: String, author: String, claim: String, evidence: St
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(record_statements(id,author,claim,evidence,limits))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
-      answered(delivery))
+      record_answer(db,saved,delivery))
 
 def record_typed(+db: String, +id: String, author: String, kind: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(typed_record_statements(id,author,kind,claim,evidence,limits))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
-      answered(delivery))
+      record_answer(db,saved,delivery))
 
 def record_linked(+db: String, +id: String, author: String, kind: String, claim: String, evidence: String, limits: String, links: String) -> IO(Unit):
   do IO<Unit>:
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(linked_record_statements(id,author,kind,claim,evidence,limits,links))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
-      answered(delivery))
+      record_answer(db,saved,delivery))
 
 def tool_help() -> String:
   "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Worker and group scopes require a nonempty subject; contextual commands default the subject to the current session. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
