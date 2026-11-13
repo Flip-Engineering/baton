@@ -56,7 +56,8 @@ class NonJsonLastEvent(receive.Receive):
 
     def dispatch_after(self, event):
         self.player()
-        self.prepare_input('first', 'parent')
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('first','root','parent','guidance','Review this input.')")
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept_child(first, 'parent')
         self.wait_for_native_binding('parent', started['native'])
