@@ -1,7 +1,7 @@
 import Base
 
 # Credential reference forms used by account writes and provider usage reads.
-type Form is Type:
+type Form is Data:
   ReferenceForm{kind: String, prefix: String, label: String, empty: Bool}
 
 def forms() -> List<Form>:
@@ -29,12 +29,14 @@ def form_matches(form: Form, +reference: String) -> Bool:
       +payload = String.drop(reference,String.length(prefix))
       Bool.and(String.starts_with(reference,prefix),Bool.and(Bool.or(empty,Bool.not(String.is_empty(payload))),Bool.or(Bool.not(String.eq(kind,"keychain")),keychain_parts(payload,False{}))))
 
+def form_kind(form: Form) -> String:
+  match form:
+    case ReferenceForm{kind,prefix,label,empty}: kind
+
 def kind_from(remaining: List<Form>, +reference: String) -> String:
   match remaining:
     case Nil{}: ""
-    case +form <> rest:
-      match form:
-        case ReferenceForm{+kind,prefix,label,empty}: Bool.pick(String,form_matches(form,reference),kind,kind_from(rest,reference))
+    case +form <> rest: Bool.pick(String,form_matches(form,reference),form_kind(form),kind_from(rest,reference))
 
 def kind(+reference: String) -> String:
   Bool.pick(String,safe_text(reference),kind_from(forms(),reference),"")
