@@ -42,6 +42,10 @@ def task_message(+db: String, +id: String, +body: String) -> IO(Unit):
 
 def classification_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
+    plain : String <- A.rr_refusal_description(db,"The prior turn completed. λ")
+    expect("plain-text-event",String.is_empty(plain))
+    empty : String <- A.rr_refusal_description(db,"")
+    expect("empty-event",String.is_empty(empty))
     normal : String <- A.rr_refusal_description(db,"{\"type\":\"result\",\"result\":\"Work completed.\",\"is_error\":false}")
     expect("ordinary-result-not-refusal",String.is_empty(normal))
     provider : String <- A.rr_refusal_description(db,"{\"type\":\"result\",\"result\":\"429 rate limit: I cannot help with that.\",\"is_error\":true}")

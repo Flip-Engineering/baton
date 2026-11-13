@@ -1076,7 +1076,7 @@ def principal_reports_use_the_recorded_upstream_recipient(session):
 law terminal_reports_preserve_the_native_result:
   for +event: String
   {C.terminal_body_expr(event) == (
-  "coalesce(" ++ C.omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ C.assistant_text_sql_expr(event) ++ "," ++ event ++ ") END)") : String}
+  "CASE WHEN json_valid(" ++ event ++ ") THEN coalesce(" ++ C.omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ C.assistant_text_sql_expr(event) ++ "," ++ event ++ ") END) ELSE " ++ event ++ " END") : String}
 
 def terminal_reports_preserve_the_native_result(event):
   {==}

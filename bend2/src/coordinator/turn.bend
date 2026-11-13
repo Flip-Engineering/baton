@@ -290,7 +290,7 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
         case False{}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
           do IO<Result<&1,&1,U32 & String,Unit>>:
-            output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
+            output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL WHEN json_valid(value) THEN json(value) ELSE value END,'error'," ++ C.q(error) ++ ") FROM frame;"))
             T.Text.control_output(output))
 
 def finish(+db: String, +player: String, +id: String, log: String, +outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
