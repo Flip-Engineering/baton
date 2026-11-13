@@ -783,19 +783,22 @@ def CompileQueueIdentity.match_run(+text: String, values: List<&2,CompileQueueRu
             Bool.pick(Maybe<&2,CompileQueueRunValue>,String.starts_with(text,value),
               CompileQueueIdentity.longer_run(CompileQueueRunValue{value,marker},current),current))
 
-def CompileQueueIdentity.mask_run_go(text: String, +values: List<&2,CompileQueueRunValue>, matched: Maybe<&2,CompileQueueRunValue>) -> String:
+def CompileQueueIdentity.mask_run_go(text: String, +values: List<&2,CompileQueueRunValue>, skip: String, matched: Maybe<&2,CompileQueueRunValue>) -> String:
   match text:
     case SNil{}: ""
     case SCon{+c,+rest}:
-      match matched:
-        case Some{CompileQueueRunValue{value,marker}}:
-          +tail = String.drop(SCon{c,rest},String.length(value))
-          marker ++ CompileQueueIdentity.mask_run_go(tail,values,CompileQueueIdentity.match_run(tail,values,None{}))
-        case None{}:
-          SCon{c,CompileQueueIdentity.mask_run_go(rest,values,CompileQueueIdentity.match_run(rest,values,None{}))}
+      match skip:
+        case SCon{head,tail}:
+          CompileQueueIdentity.mask_run_go(rest,values,tail,CompileQueueIdentity.match_run(rest,values,None{}))
+        case SNil{}:
+          match matched:
+            case Some{CompileQueueRunValue{value,marker}}:
+              marker ++ CompileQueueIdentity.mask_run_go(rest,values,String.drop(value,1n),CompileQueueIdentity.match_run(rest,values,None{}))
+            case None{}:
+              SCon{c,CompileQueueIdentity.mask_run_go(rest,values,"",CompileQueueIdentity.match_run(rest,values,None{}))}
 
 def CompileQueueIdentity.mask_run(+text: String, +values: List<&2,CompileQueueRunValue>) -> String:
-  CompileQueueIdentity.mask_run_go(text,values,CompileQueueIdentity.match_run(text,values,None{}))
+  CompileQueueIdentity.mask_run_go(text,values,"",CompileQueueIdentity.match_run(text,values,None{}))
 
 # A per-run control contributes its masked path. Stable controls also
 # contribute their content digest.
