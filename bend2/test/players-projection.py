@@ -67,7 +67,7 @@ class PlayersProjection(unittest.TestCase):
         self.assert_players(self.call('as', 'operator', 'players'))
 
     def test_orchestra_returns_the_same_session_state(self):
-        orchestra = self.call('as', 'operator', 'orchestra')
+        orchestra = self.call('orchestra')
         self.assert_players(orchestra['players'])
         self.assertEqual([row['id'] for row in orchestra['operators']], ['operator'])
 
