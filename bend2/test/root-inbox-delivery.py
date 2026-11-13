@@ -3,7 +3,6 @@ import importlib.util
 import json
 import os
 import pathlib
-import signal
 import sqlite3
 import subprocess
 import time
@@ -31,8 +30,8 @@ class RootInboxDelivery(receive.Receive):
         super().setUp()
         script = self.directory / 'mcp-conductor.mjs'
         script.write_text("import net from 'node:net';\n"
-                          "const s=net.createConnection(process.argv[8]);\n"
-                          "s.on('connect',()=>s.end(process.argv[9]));\n"
+                          "const s=net.createConnection(process.argv[7]);\n"
+                          "s.on('connect',()=>s.end(process.argv[8]));\n"
                           "s.on('error',e=>{console.error(e);process.exitCode=1});\n")
         self.endpoint = ['node', str(script), str(self.db), str(receive.EXE),
                          '--session', 'root', '--deliver', 'missing-root.sock']

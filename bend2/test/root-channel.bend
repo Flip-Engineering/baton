@@ -49,6 +49,7 @@ def route(args: List<String>) -> IO(Unit):
     case "report" <> db <> id <> Nil{}: report(db,id)
     case "deliver" <> db <> id <> Nil{}: deliver(db,id)
     case "read" <> db <> session <> id <> Nil{}: read_input(db,session,id)
+    case "wait" <> db <> Nil{}: Custody.Instance.print_wait(db)
     case "shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
     case other: IO.die(Unit,2,"usage: root-channel install|warn DB | message|report|deliver DB ID")

@@ -70,10 +70,17 @@ class RootChannel(unittest.TestCase):
         self.path = str(self.dir / 'orchestra.db')
         installed = self.run_entry('install', self.path)
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        self.addCleanup(self.shutdown_owner)
         self.sql("INSERT INTO sessions(id,parent,harness) VALUES('operator',NULL,'claude-code')")
         self.sql("INSERT INTO session_roles(session,role) VALUES('operator','operator')")
         self.sql("INSERT INTO sessions(id,parent,harness) VALUES('lead',NULL,'omp')")
         self.sql("INSERT INTO session_roles(session,role) VALUES('lead','conductor')")
+
+    def shutdown_owner(self):
+        stopped = self.run_entry('shutdown', self.path)
+        self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+        waited = self.run_entry('wait', self.path)
+        self.assertEqual(waited.returncode, 0, waited.stdout + waited.stderr)
 
     def run_entry(self, *args, env=None):
         return subprocess.run([self.binary, *args], capture_output=True, text=True, env=env,
