@@ -241,7 +241,7 @@ def generation_log(+log: String, +id: String) -> String:
 # finish delivers the settled turn to its recorded coordinator.
 def recovery_observe(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
 
 def refusal_observed(+db: String, +player: String, +id: String, +event: String) -> IO(Unit):
   do IO<Unit>:
@@ -251,7 +251,7 @@ def refusal_observed(+db: String, +player: String, +id: String, +event: String) 
 
 def recovery_after(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
 
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
