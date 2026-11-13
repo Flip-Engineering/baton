@@ -62,7 +62,7 @@ def launch_selected(+db: String, saved: String, argv: String, root: Bool) -> IO(
       run : Result<&1,&1,U32 & String,String> <- Process.Process.run(argv,".")
       completed(db,saved,run)
 
-def launch(+db: String, id: String, saved: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
+def launch(+db: String, +id: String, saved: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     root : Bool <- RootChannel.message_root(db,id,"1")
     launch_selected(db,saved,argv ++ Tx.enc_argv(Con{id,Nil{}}),root)
