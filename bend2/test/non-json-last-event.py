@@ -20,7 +20,8 @@ receive.EXE = pathlib.Path(os.environ['BATON_EVENT_TEST_BINARY']).resolve()
 class NonJsonLastEvent(receive.Receive):
     def setUp(self):
         environment = dict(os.environ)
-        for key in ('BATON_DATABASE', 'BATON_SESSION', 'BATON_ATTEMPT_DIRECTORY'):
+        for key in ('BATON_DATABASE', 'BATON_SESSION', 'BATON_ATTEMPT_DIRECTORY',
+                    'BATON2_GIT_REGISTRY', 'HOME'):
             environment.pop(key, None)
         isolated = patch.dict(os.environ, environment, clear=True)
         isolated.start()
