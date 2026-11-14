@@ -317,7 +317,12 @@ class AccountCredits(unittest.TestCase):
         self.assertEqual(attempts[0]['turn'], execution[0]['id'])
         self.finish(stream)
         self.exited('leaf')
-        self.assertEqual(self.send('attempts', session='leaf')['attempts'], attempts)
+        completed = self.eventually(lambda: next((rows for rows in
+            [self.send('attempts', session='leaf')['attempts']] if rows and rows[0]['endedAt']), None))
+        identity_fields = ('attempt', 'turn', 'session', 'account', 'funding', 'secretRef', 'predecessor')
+        self.assertEqual([{key: row[key] for key in identity_fields} for row in completed],
+                         [{key: row[key] for key in identity_fields} for row in attempts])
+        self.assertEqual((completed[0]['outcome'], completed[0]['errorText']), ('exit 0', ''))
 
     def test_exhaustion_advances_the_bound_account_and_records_the_next_attempt(self):
         self.root()
@@ -328,8 +333,7 @@ class AccountCredits(unittest.TestCase):
         self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         first, started = self.accept('leaf')
         cause = "You've hit your session limit. Try again later."
-        self.action(first, fail=True, ack=False, fail_message=cause)
-        self.action(first, exit_fixture=True)
+        self.finish(first, body=cause, fail=True)
         second, resumed = self.accept('leaf')
         self.assertEqual(resumed['native'], started['native'])
         self.finish(second)
@@ -353,8 +357,7 @@ class AccountCredits(unittest.TestCase):
         self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         first, started = self.accept('leaf')
         cause = "You've hit your session limit. Try again later."
-        self.action(first, fail=True, ack=False, fail_message=cause)
-        self.action(first, exit_fixture=True)
+        self.finish(first, body=cause, fail=True)
         self.exited('leaf')
         attempts = self.send('attempts', session='leaf')['attempts']
         self.assertEqual([row['account'] for row in attempts], ['omp-only'], attempts)
@@ -379,8 +382,7 @@ class AccountCredits(unittest.TestCase):
         self.call('message', 'isolated-task', 'root', 'leaf2', 'task', self.task.read_text())
         first, started = self.accept('leaf')
         cause = "You've hit your session limit. Try again later."
-        self.action(first, fail=True, ack=False, fail_message=cause)
-        self.action(first, exit_fixture=True)
+        self.finish(first, body=cause, fail=True)
         second, resumed = self.accept('leaf')
         self.assertEqual(resumed['native'], started['native'])
         self.finish(second)
@@ -408,8 +410,7 @@ class AccountCredits(unittest.TestCase):
         self.assertIn(self.task.read_text(), started['prompt'])
         self.call('message', 'owed-task', 'root', 'leaf', 'task', owed)
         cause = "You've hit your session limit. Try again later."
-        self.action(first, fail=True, ack=False, fail_message=cause)
-        self.action(first, exit_fixture=True)
+        self.finish(first, body=cause, fail=True)
         second, resumed = self.accept('leaf')
         self.assertEqual(resumed['native'], started['native'])
         self.assertIn(owed, resumed['prompt'])
