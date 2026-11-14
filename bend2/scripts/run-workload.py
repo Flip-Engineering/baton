@@ -10,13 +10,6 @@ import time
 import uuid
 
 
-def fields(path):
-    try:
-        return dict(line.split('=', 1) for line in path.read_text().splitlines() if '=' in line)
-    except FileNotFoundError:
-        return {}
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--inside', action='store_true', help=argparse.SUPPRESS)
