@@ -728,14 +728,13 @@ def CompileQueueIdentity.history_compiler(+cwd: String, +root: String, +compiler
     +ccache : String <- IO.pure(String, CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler))
     CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache)
 
-# C-family text that the compiler reads. A change of such a file changes the
-# workload; the history group of a cc request admits that variation.
+# Source text can change between measured executions of one workload.
 def CompileQueueIdentity.workload_source(+path: String) -> Bool:
-  Bool.or(String.ends_with(path, ".c"),
+  Bool.or(String.ends_with(path, ".bend"), Bool.or(String.ends_with(path, ".c"),
     Bool.or(String.ends_with(path, ".h"),
       Bool.or(String.ends_with(path, ".cc"),
         Bool.or(String.ends_with(path, ".cpp"),
-          Bool.or(String.ends_with(path, ".cxx"), String.ends_with(path, ".hpp"))))))
+          Bool.or(String.ends_with(path, ".cxx"), String.ends_with(path, ".hpp")))))))
 
 # Each control file contributes its normalized path and content digest. The
 # association preserves the role of helpers when two files exchange contents.

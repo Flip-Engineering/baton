@@ -1,4 +1,4 @@
-"""A cc request that differs from a measured one only in its C source reuses the measured peak (#1310).
+"""Edited compiler workloads reuse observed peak history (#1310).
 
 The history group of a cc request is its request key without the digest of the
 C-family source files and without the digests of the input rows. The content digest
@@ -17,8 +17,8 @@ a fixed number.
 * An edited source of a measured group starts beside a running claim whose history is
   known, which a request without history does not.
 * A request of a group that was never measured waits beside a running claim.
-* A cgen request is admitted on the record of its exact key only: no group record
-  exists for it, whatever was measured before.
+* C generation and checks retain one group across source edits and keep their
+  distinct exact artifact keys.
 * The records are in state/history; the directory peaks/ of the memory-admission
   executable is not created, and the attempt file `group` of that executable is not
   written.
@@ -38,7 +38,7 @@ import pathlib, sys, time
 
 args = sys.argv[1:]
 source = pathlib.Path(args[args.index("--source") + 1]).read_text()
-output = args[args.index("-o") + 1]
+output = args[args.index("-o") + 1] if "-o" in args else None
 settings = dict(line.split("=", 1) for line in source.splitlines() if "=" in line)
 memory = bytes(b"x") * (int(settings.get("mb", "64")) * 1024 * 1024)
 with open(settings["log"], "a") as log:
@@ -49,7 +49,8 @@ while not hold.exists() and time.monotonic() < deadline:
     time.sleep(0.05)
 if settings.get("exit", "0") != "0":
     sys.exit(int(settings["exit"]))
-pathlib.Path(output).write_text("complete " + settings["name"] + "\\n")
+if output:
+    pathlib.Path(output).write_text("complete " + settings["name"] + "\\n")
 with open(settings["log"], "a") as log:
     log.write("end %s\\n" % settings["name"])
 '''
@@ -134,7 +135,10 @@ class HistoryGroupTests(unittest.TestCase):
             argv += ["--option", option]
         for role, value in per_run:
             argv += ["--per-run", role + "=" + str(value)]
-        argv += ["--", str(self.compiler), "--source", str(source), "-o", str(output), *extra]
+        argv += ["--", str(self.compiler), "--source", str(source)]
+        if kind != "check":
+            argv += ["-o", str(output)]
+        argv += extra
         child = subprocess.Popen(argv, env=dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(self.state)),
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.children.append(child)
@@ -255,18 +259,26 @@ class HistoryGroupTests(unittest.TestCase):
         out, err = other.communicate(timeout=60)
         self.assertEqual(other.returncode, 0, out + err)
 
-    def test_a_cgen_request_is_admitted_on_the_record_of_its_exact_key_only(self):
-        self.measured("first", "one", kind="cgen")
-        self.assertEqual(self.group_records(), {})
-        self.assertEqual(len(list((self.state / "keys").glob("*/peak"))), 1)
-        second = self.request("second", "two", kind="cgen")
-        self.until("second has a claim", lambda: self.claim("second") is not None)
-        claim = self.claim("second")
-        self.assertEqual(claim["history"], "0", claim)
-        self.holds["second"].touch()
-        out, err = second.communicate(timeout=60)
-        self.assertEqual(second.returncode, 0, out + err)
-        self.assertEqual(self.group_records(), {})
+    def test_edited_bend_workloads_reuse_observed_history(self):
+        for kind in ("cgen", "check"):
+            with self.subTest(kind=kind):
+                first_name, second_name = kind + "-first", kind + "-second"
+                self.measured(first_name, "one", kind=kind)
+                first_key = fields(self.root / ("receipt-" + first_name))["key"]
+                first_attempt, = (self.state / "keys" / first_key / "runs").iterdir()
+                group = fields(first_attempt / "history-group")["group"]
+                peak = self.group_records()[group]
+                second = self.request(second_name, "two", kind=kind)
+                self.until("edited workload has a claim", lambda: self.claim(second_name) is not None)
+                claim = self.claim(second_name)
+                self.assertNotEqual(claim["key"], first_key)
+                self.assertEqual(claim["history"], "1", claim)
+                self.assertGreaterEqual(int(claim["expected_kb"]), peak)
+                second_attempt, = (self.state / "keys" / claim["key"] / "runs").iterdir()
+                self.assertEqual(fields(second_attempt / "history-group")["group"], group)
+                self.holds[second_name].touch()
+                out, err = second.communicate(timeout=60)
+                self.assertEqual(second.returncode, 0, out + err)
 
     def test_a_command_that_does_not_exit_zero_records_no_group_peak(self):
         failing = self.request("failing", "broken", exit_code=1)

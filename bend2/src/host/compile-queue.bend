@@ -528,10 +528,8 @@ def identity_key_result(+config: Config) -> IO(Result<&1,&1,U32 & String,String>
 def identity_key(config: Config) -> IO(String):
   IO.try(String, identity_key_result(config))
 
-# The history group of a cc request (see CompileQueueIdentity.request_group); empty
-# for every other kind. A cgen or check request is admitted on the record of its
-# exact key only: a changed Bend source can use several times the memory of the
-# source recorded before it, and no property of the source predicts that.
+# Workload history retains the kind, entry, toolchain, options and controls.
+# Source bytes remain part of the exact artifact key (#1310).
 def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,String>):
   match config:
     case Config{+text, command}:
@@ -540,16 +538,14 @@ def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,Strin
       +cwd = field(text, "cwd")
       +root = field(text, "root")
       +compiler = field(text, "compiler")
-      Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.eq(field(text, "kind"), "cc"),
-        Identity.CompileQueueIdentity.request_group(
-          field(text, "kind"), cwd, root, field(text, "entry"), compiler,
-          field(text, "linker"), field(text, "version"),
-          input_pairs_text(inputs), fields_join("\n", fields_all(text, "aux")),
-          artifact_pairs_text(artifacts),
-          fields_join("\n", fields_all(text, "option")),
-          normalize_command(command, cwd, root, compiler, inputs, artifacts),
-          fields_join("\n", fields_all(text, "per_run"))),
-        IO.pure(Result<&1,&1,U32 & String,String>, Done{""}))
+      Identity.CompileQueueIdentity.request_group(
+        field(text, "kind"), cwd, root, field(text, "entry"), compiler,
+        field(text, "linker"), field(text, "version"),
+        input_pairs_text(inputs), fields_join("\n", fields_all(text, "aux")),
+        artifact_pairs_text(artifacts),
+        fields_join("\n", fields_all(text, "option")),
+        normalize_command(command, cwd, root, compiler, inputs, artifacts),
+        fields_join("\n", fields_all(text, "per_run")))
 
 def identity_group(config: Config) -> IO(String):
   IO.try(String, identity_group_result(config))
@@ -1050,13 +1046,10 @@ def peak_record(+attempt: String, +peak: U32) -> IO(Unit):
 def admission_root(+state: String) -> String:
   state ++ "/admission"
 
-# The peak measured for a cc command that exited 0 is recorded for the history
-# group of its request, so a later request that differs only in its C source finds
-# it. The record holds the largest peak seen: a later larger measurement raises it
-# and a smaller one leaves it. The peak of a run that did not exit 0 stays with its
-# own key: it predicts that exact request and says nothing about the request after
-# the source is fixed. The records are in history/, which the memory-admission
-# executable neither reads nor rebuilds (it rebuilds peaks/).
+# A command that exits 0 records its peak for the workload history group.
+# A later larger measurement raises the record. Failed commands retain their
+# observations with the exact key. Group records retain the measured key and
+# attempt under history/.
 def exit_marker_success(+attempt: String) -> IO(Bool):
   do IO<Bool>:
     result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/exit_status")
@@ -1152,7 +1145,7 @@ def history_import_attempt(+state: String, +key: String, +keydir: String,
       status_number(field(peak_text_result(legacy_peak_read),"peak_kb"))))
     +eligible : Bool <- IO.pure(Bool,Bool.and(U32.is_gt(peak,0),
       Bool.and(Result.CompileQueueResult.recorded_completed(result,key),
-        Bool.and(Tx.str_eq(field(result,"kind"),"cc"),Bool.not(Tx.str_eq(field(result,"external"),"1"))))))
+        Bool.not(Tx.str_eq(field(result,"external"),"1")))))
     Bool.pick(IO(Unit),eligible,
       do IO<Unit>:
         config_read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/identity-config")
@@ -1160,7 +1153,7 @@ def history_import_attempt(+state: String, +key: String, +keydir: String,
         +text : String <- IO.pure(String,peak_text_result(config_read))
         +packed : String <- IO.pure(String,peak_text_result(command_read))
         +config : Config <- IO.pure(Config,Config{text,copy_identity_tokens(Tx.split_nul(packed),Nil{})})
-        +valid : Bool <- IO.pure(Bool,Bool.and(Tx.str_eq(field(text,"kind"),"cc"),
+        +valid : Bool <- IO.pure(Bool,Bool.and(Tx.str_eq(field(text,"kind"),field(result,"kind")),
           Bool.and(Tx.str_eq(field(text,"state_root"),state),String.is_empty(validate_config(config,True{})))))
         history_import_config(valid,config,state,key,attempt,peak),
       IO.write("history=unavailable key=" ++ key ++ "\n"))
