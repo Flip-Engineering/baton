@@ -99,6 +99,30 @@ class WorkloadAdmission(unittest.TestCase):
             (self.root / 'release').unlink()
         self.assertEqual((self.root / 'executions').read_text().splitlines(), ['ran', 'ran'])
 
+    def test_a_priority_owner_reuses_the_active_workloads_result(self):
+        request = [self.queue, '--', 'run', '--kind', 'workload',
+            '--state-root', str(self.state), '--cwd', str(self.root),
+            '--root', str(self.root), '--source-root', str(self.root),
+            '--compiler', sys.executable, '--input', str(self.worker)]
+        command = ['--', sys.executable, str(self.worker)]
+        first_receipt = self.root / 'first-receipt'
+        first = subprocess.Popen(request + ['--receipt', str(first_receipt)] + command,
+            cwd=self.root, env=self.environment, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True)
+        self.addCleanup(self.stop, first)
+        self.wait_for(lambda: (self.root / 'child-started').exists(), first)
+        second_receipt = self.root / 'second-receipt'
+        second = subprocess.Popen(request + ['--priority', '10',
+            '--receipt', str(second_receipt)] + command, cwd=self.root,
+            env=self.environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(self.stop, second)
+        self.wait_for(lambda: len(list(self.state.glob('keys/*/owners/*'))) == 2, second)
+        self.finish(first)
+        self.finish(second)
+        self.assertEqual((self.root / 'executions').read_text().splitlines(), ['ran'])
+        self.assertEqual(fields(first_receipt)['key'], fields(second_receipt)['key'])
+        self.assertEqual(fields(second_receipt)['reused'], '1')
+
     def test_a_measured_workload_waits_for_available_host_memory(self):
         first = self.launch()
         self.addCleanup(self.stop, first)
