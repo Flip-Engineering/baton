@@ -2564,8 +2564,6 @@ class Receive(unittest.TestCase):
                                  'original native identity was not recorded')
         self.assertEqual(native, started['native'])
         evidence['recordedNativeId'] = native
-        # Reports remain queued while OMP is active; guidance may be steered live.
-        self.coord('message', 'second', 'root', 'parent', 'report', 'Queued before observer loss.')
         original_body = 'Original completion retained through observer loss: ' + harness
         log = self.output_log('parent')
         if terminal_before_loss:
@@ -2576,6 +2574,7 @@ class Receive(unittest.TestCase):
             self.eventually(lambda: log.exists() and original_body in log.read_text(),
                             'terminal event was not observed before killing the observer')
             evidence['turnsBeforeLoss'] = self.coord('turns', 'parent')
+            self.coord('message', 'second', 'root', 'parent', 'report', 'Queued before native exit.')
         observer.kill()
         observer.wait()
         evidence['supervisorExit'] = observer.returncode
@@ -2585,7 +2584,6 @@ class Receive(unittest.TestCase):
             queued = self.coord(*self.receive_args('parent'))
             evidence['retryReceive'] = queued['receive']
             self.assertEqual(queued['receive'], 'none')
-        self.coord('message', 'third', 'root', 'parent', 'report', 'Queued after observer loss.')
         marker = 'output from original native after observer loss: ' + harness
         self.action(original, progress=marker)
         self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
@@ -2597,6 +2595,8 @@ class Receive(unittest.TestCase):
                         complete_task=False)
             self.assertEqual(json.loads(original.readline()),
                              {'terminal_written': True, 'input_after_prompt': ''})
+            self.coord('message', 'second', 'root', 'parent', 'report', 'Queued before native exit.')
+        self.coord('message', 'third', 'root', 'parent', 'report', 'Queued after observer loss.')
         evidence['originalPromptRepeated'] = False
         self.eventually(lambda: original_body in log.read_text(), 'original terminal output was lost')
         evidence['duplicateNativeSession'] = bool(select.select([self.server], [], [], 0)[0])
@@ -2607,7 +2607,12 @@ class Receive(unittest.TestCase):
             evidence['retryAfterTerminalReceive'] = after_terminal['receive']
             self.assertEqual(after_terminal['receive'], 'none')
             self.assert_no_start()
-        evidence['pendingBeforeNativeExit'] = self.coord('inbox', 'parent')
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            database.row_factory = sqlite3.Row
+            evidence['pendingBeforeNativeExit'] = [dict(row) for row in database.execute(
+                "SELECT id,body FROM messages m WHERE recipient='parent' AND NOT EXISTS("
+                'SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient) '
+                'ORDER BY seq')]
         self.assertEqual([m['id'] for m in evidence['pendingBeforeNativeExit']], ['second', 'third'])
         self.action(original)
         self.assertEqual(original.readline(), b'')
