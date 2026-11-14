@@ -813,7 +813,7 @@ def CompileQueueIdentity.control_digest_add(result: Result<&1,&1,U32 & String,St
       Done{Bool.pick(List<&2,String>,skip,acc,
         (masked ++ Bool.pick(String,per_run,"","\t" ++ digest)) <> acc)}
 
-def CompileQueueIdentity.control_digest_lines(accumulated: Result<&1,&1,U32 & String,List<&2,String>>, files: List<&2,String>, +cwd: String, +root: String, +values: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
+def CompileQueueIdentity.control_digest_lines(files: List<&2,String>, accumulated: Result<&1,&1,U32 & String,List<&2,String>>, +cwd: String, +root: String, +values: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
   match accumulated:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{acc}:
@@ -830,7 +830,7 @@ def CompileQueueIdentity.control_digest_lines(accumulated: Result<&1,&1,U32 & St
               IO.pure(Result<&1,&1,U32 & String,String>,Done{""}),CompileQueueIdentity.file_digest(path))
             next : Result<&1,&1,U32 & String,List<&2,String>> <- IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,
               CompileQueueIdentity.control_digest_add(result,acc,masked,skip,per_run))
-            CompileQueueIdentity.control_digest_lines(next,rest,cwd,root,values)
+            CompileQueueIdentity.control_digest_lines(rest,next,cwd,root,values)
 
 def CompileQueueIdentity.control_digest_result(result: Result<&1,&1,U32 & String,String>, canonical: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
@@ -840,7 +840,7 @@ def CompileQueueIdentity.control_digest_result(result: Result<&1,&1,U32 & String
 
 def CompileQueueIdentity.control_digest(files: String, cwd: String, root: String, values: List<&2,CompileQueueRunValue>, canonical: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    result : Result<&1,&1,U32 & String,String> <- CompileQueueIdentity.control_digest_lines(Done{Nil{}},String.lines(files),cwd,root,values)
+    result : Result<&1,&1,U32 & String,String> <- CompileQueueIdentity.control_digest_lines(String.lines(files),Done{Nil{}},cwd,root,values)
     CompileQueueIdentity.control_digest_result(result,canonical)
 
 def CompileQueueIdentity.family_run_markers(values: List<&2,CompileQueueRunValue>) -> List<&2,CompileQueueRunValue>:
