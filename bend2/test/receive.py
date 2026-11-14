@@ -5525,6 +5525,7 @@ class Receive(unittest.TestCase):
 
     def test_output_only_frames_replay_from_durable_checkpoint(self):
         self.player(harness='omp')
+        self.coord('logs', 'parent', 'diagnostic')
         self.prepare_input('output-replay-task', 'parent', 'Replay output from the last semantic checkpoint.')
         observer = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
