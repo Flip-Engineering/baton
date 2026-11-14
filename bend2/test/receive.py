@@ -1231,7 +1231,7 @@ class Receive(unittest.TestCase):
         config_path.write_text(json.dumps(config))
         self.coord('connect', 'root', 'native-root',
                    json.dumps([str(self.fixture), 'parent_endpoint']))
-        self.player(harness='omp')
+        self.player()
         self.prepare_input('task-836-guidance', 'parent', 'Complete the assignment.', kind='task')
         body = 'G' * 200_000
         with sqlite3.connect(self.db) as database:
