@@ -390,13 +390,13 @@ def validate_config(config: Config, need_command: Bool) -> String:
       inputs = input_rows(text)
       +token = field(text, "token")
       +kind_ok = Bool.or(Tx.str_eq(kind, "cgen"),
-        Bool.or(Tx.str_eq(kind, "cc"), Tx.str_eq(kind, "check")))
+        Bool.or(Tx.str_eq(kind, "cc"), Bool.or(Tx.str_eq(kind, "check"), Tx.str_eq(kind, "workload"))))
       +command_ok = Bool.pick(Bool, need_command, non_empty_list(command), True{})
-      +artifact_ok = Bool.pick(Bool, Tx.str_eq(kind, "check"),
+      +artifact_ok = Bool.pick(Bool, Bool.or(Tx.str_eq(kind, "check"), Tx.str_eq(kind, "workload")),
         artifacts_absent(artifacts), artifact_set_valid(artifacts))
       +source_ok = Bool.pick(Bool, Bool.or(Tx.str_eq(kind, "cgen"), Tx.str_eq(kind, "check")),
         Bool.and(non_empty(source), non_empty(entry)), True{})
-      +cc_source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"), valid_state_root(source), True{})
+      +cc_source_ok = Bool.pick(Bool, Bool.or(Tx.str_eq(kind, "cc"), Tx.str_eq(kind, "workload")), valid_state_root(source), True{})
       +linker = field(text, "linker")
       +version = field(text, "version")
       +toolchain_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"),
@@ -419,13 +419,13 @@ def validate_config(config: Config, need_command: Bool) -> String:
                           ""),
                         "compile-queue: token must contain only letters, digits, dot, underscore or hyphen"),
                       "compile-queue: cc requires --linker and --version"),
-                    "compile-queue: cc requires an absolute --source-root"),
+                    "compile-queue: cc and workload require an absolute --source-root"),
                   "compile-queue: cgen requires --source-root and --entry"),
                 "compile-queue: artifact declarations are invalid for this kind"),
               "compile-queue: a command is required after --"),
             "compile-queue: cwd is unavailable"),
           "compile-queue: set BATON_COMPILE_QUEUE_ROOT or pass an absolute --state-root"),
-        "compile-queue: kind must be cgen, cc or check")
+        "compile-queue: kind must be cgen, cc, check or workload")
 
 def input_pairs_text(inputs: List<&2,Input>) -> String:
   match inputs:
@@ -2952,9 +2952,9 @@ def adopt_command(args: List<&2,String>) -> IO(Unit):
     adopt_parsed_config(parsed)
 
 def usage() -> String:
-  "usage: compile-queue.sh run --kind cgen|cc|check --state-root DIR --cwd DIR [options] -- COMMAND...\n"
+  "usage: compile-queue.sh run --kind cgen|cc|check|workload --state-root DIR --cwd DIR [options] -- COMMAND...\n"
   ++ "       --per-run NAME=VALUE names per-run data for history grouping (repeatable)\n"
-  ++ "       compile-queue.sh key --kind cgen|cc|check [options]\n"
+  ++ "       compile-queue.sh key --kind cgen|cc|check|workload [options]\n"
   ++ "       compile-queue.sh cancel --state-root DIR --key KEY --token TOKEN\n"
   ++ "       compile-queue.sh wait --state-root DIR --key KEY\n"
   ++ "       compile-queue.sh status --state-root DIR [--key KEY]\n"
