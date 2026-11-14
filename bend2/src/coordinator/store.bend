@@ -27,7 +27,7 @@ def naming_refused(+saved: String) -> Bool:
                 Tx.starts_with(saved,"{\"error\":\"report-recipient-missing\""))))))))
 
 def refused(+saved: String) -> Bool:
-  Bool.or(naming_refused(saved),
+  Bool.or(Bool.or(naming_refused(saved),Tx.starts_with(saved,"{\"error\":\"knowledge-promotion-refused\"")),
     Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),
       Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),
         Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),
