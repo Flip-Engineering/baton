@@ -902,11 +902,8 @@ class Receive(unittest.TestCase):
                                   'readMessage': ident})
             environment = os.environ | {'BATON_SESSION': 'root', 'BATON_DATABASE': str(self.db),
                                         'BATON_MCP_INPUT': context, 'CODEX_THREAD_ID': 'native-root'}
-            actions = self.coord('as', 'root', 'read', ident, environment=environment)
-            action, = actions
-            self.assertEqual(action['status'], 'completed', action)
-            self.assertEqual(action['waitStatus'], 'exit 0', action)
-            self.assertEqual(json.loads(action['stdout'])['body'], message['body'])
+            accepted = self.coord('delivery', ident, environment=environment)
+            self.assertEqual(accepted['body'], message['body'])
             self.assertTrue(read_recorded(self.db, ident))
 
     def receive_args(self, session, executable=None):
@@ -3383,7 +3380,8 @@ class Receive(unittest.TestCase):
         original, started = self.accept('parent')
         original_body = ('Original OMP result before observer loss.\n'
                          'The second line must reach the parent unchanged.')
-        self.action(original, body=original_body, hold_exit=True, report_input=True)
+        self.action(original, body=original_body, hold_exit=True, report_input=True,
+                    complete_task=False)
         # The fixture reports this only after reading EOF from native stdin.
         self.assertEqual(json.loads(original.readline()),
                          {'terminal_written': True, 'input_after_prompt': ''})
