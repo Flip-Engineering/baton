@@ -561,28 +561,6 @@ def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,Strin
     toolchain : String <- IO.try(String,identity_history_compiler(config))
     identity_profile_result(config,toolchain,False{})
 
-# Retained controls and the original group verify compatibility with the
-# requesting toolchain before an older observation supplies a family bound.
-def retained_family_result(+config: Config, +toolchain: String, recorded: String,
-                           checked: Result<&1,&1,U32 & String,String>) -> IO(String):
-  match checked:
-    case Fail{error}: IO.pure(String,"")
-    case Done{+group}:
-      Bool.pick(IO(String),Bool.and(non_empty(group),Tx.str_eq(group,field(recorded,"group"))),
-        do IO<String>:
-          result : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,True{})
-          IO.pure(String,History.read_value(result)),
-        IO.pure(String,""))
-
-def retained_family(+attempt: String, +toolchain: String) -> IO(String):
-  do IO<String>:
-    text : String <- History.read(attempt ++ "/identity-config")
-    packed : String <- History.read(attempt ++ "/identity-command")
-    +config : Config <- IO.pure(Config,Config{text,copy_identity_tokens(Tx.split_nul(packed),Nil{})})
-    recorded : String <- History.read(attempt ++ "/history-group")
-    checked : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,False{})
-    retained_family_result(config,toolchain,recorded,checked)
-
 def config_state(config: Config) -> String:
   match config:
     case Config{text, command}: field(text, "state_root")
@@ -655,6 +633,28 @@ def copy_identity_tokens(args: List<&1,String>, +acc: List<&2,String>) -> List<&
   match args:
     case Nil{}: List.reverse(&2,String,acc)
     case Con{+token, rest}: copy_identity_tokens(rest, Con{token,acc})
+
+# Retained controls and the original group verify compatibility with the
+# requesting toolchain before an older observation supplies a family bound.
+def retained_family_result(+config: Config, +toolchain: String, recorded: String,
+                           checked: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match checked:
+    case Fail{error}: IO.pure(String,"")
+    case Done{+group}:
+      Bool.pick(IO(String),Bool.and(non_empty(group),Tx.str_eq(group,field(recorded,"group"))),
+        do IO<String>:
+          result : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,True{})
+          IO.pure(String,History.read_value(result)),
+        IO.pure(String,""))
+
+def retained_family(+attempt: String, +toolchain: String) -> IO(String):
+  do IO<String>:
+    text : String <- History.read(attempt ++ "/identity-config")
+    packed : String <- History.read(attempt ++ "/identity-command")
+    +config : Config <- IO.pure(Config,Config{text,copy_identity_tokens(Tx.split_nul(packed),Nil{})})
+    recorded : String <- History.read(attempt ++ "/history-group")
+    checked : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,False{})
+    retained_family_result(config,toolchain,recorded,checked)
 
 def priority_text(+text: String) -> String:
   Bool.pick(String, String.is_empty(field(text, "priority")), "0", field(text, "priority"))
