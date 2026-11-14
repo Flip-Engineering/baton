@@ -865,6 +865,50 @@ class Receive(unittest.TestCase):
         return self.coord('recruit', name, 'root', harness, name, 'low', str(self.repo),
                           name + '-branch', str(self.checkouts / name), self.base)
 
+    def attach_root_channel(self):
+        received = self.directory / 'root-notifications'
+        script = self.directory / 'mcp-conductor.mjs'
+        script.write_text("import net from 'node:net';\n"
+                          "const s=net.createConnection(process.argv[7]);\n"
+                          "s.on('connect',()=>s.end(process.argv[8]));\n"
+                          "s.on('error',e=>{console.error(e);process.exitCode=1});\n")
+        listener_code = ("import socket,sys\n"
+                         "s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n"
+                         "s.bind(sys.argv[1]);s.listen();print('listening',flush=True)\n"
+                         "while True:\n"
+                         " c,_=s.accept()\n"
+                         " with c,c.makefile('rb') as stream:data=stream.read()\n"
+                         " if data:\n"
+                         "  with open(sys.argv[2],'ab') as output:output.write(data+b'\\n')\n")
+        listener = subprocess.Popen([sys.executable, '-c', listener_code,
+                                     'root-channel.sock', str(received)], cwd=self.directory,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(listener)
+        self.assertEqual(listener.stdout.readline(), 'listening\n')
+        endpoint = json.dumps(['node', str(script), str(self.db), str(EXE),
+                               '--session', 'root', '--deliver', 'root-channel.sock'])
+        self.coord('connect', 'root', 'native-root', endpoint)
+        return endpoint, received
+
+    def read_root_channel(self, channel):
+        endpoint, received = channel
+        for message in self.coord('inbox', 'root'):
+            ident = message['id']
+            self.eventually(lambda: received.exists() and ident in received.read_text(),
+                            'The root channel did not receive the report identity.')
+            context = json.dumps({'ready': True, 'database': str(self.db), 'session': 'root',
+                                  'harness': 'codex', 'native': 'native-root', 'endpoint': endpoint,
+                                  'thread': 'native-root', 'connection': 'receive-root-channel',
+                                  'readMessage': ident})
+            environment = os.environ | {'BATON_SESSION': 'root', 'BATON_DATABASE': str(self.db),
+                                        'BATON_MCP_INPUT': context, 'CODEX_THREAD_ID': 'native-root'}
+            actions = self.coord('as', 'root', 'read', ident, environment=environment)
+            action, = actions
+            self.assertEqual(action['status'], 'completed', action)
+            self.assertEqual(action['waitStatus'], 'exit 0', action)
+            self.assertEqual(json.loads(action['stdout'])['body'], message['body'])
+            self.assertTrue(read_recorded(self.db, ident))
+
     def receive_args(self, session, executable=None):
         return ['receive', session, str(executable or self.fixture), session, 'low',
                 str(self.directory), str(self.directory / (session + '.jsonl')), '']
@@ -3247,7 +3291,7 @@ class Receive(unittest.TestCase):
                                         missing_output=True)
 
     def test_completed_omp_attempt_replay_leaves_guidance_for_current_native(self):
-        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        root_channel = self.attach_root_channel()
         self.player(harness='omp')
         self.prepare_input('first', 'parent', 'Original work.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
@@ -3259,15 +3303,11 @@ class Receive(unittest.TestCase):
         self.coord('message', 'second', 'root', 'parent', 'task', 'Work queued before original completion.')
         self.action(original, body='Original report survives completed-attempt replay.')
         self.assertEqual(original.readline(), b'')
-        arrivals = {}
-        for _ in range(2):
-            stream, started = self.accept_any()
-            self.assertNotIn(started['session'], arrivals)
-            arrivals[started['session']] = (stream, started)
-        self.assertEqual(set(arrivals), {'root', 'parent'})
-        parent, notification = arrivals['root']
-        current, second = arrivals['parent']
-        self.assertIn('Original report survives completed-attempt replay.', notification['prompt'])
+        current, second = self.accept('parent')
+        self.read_root_channel(root_channel)
+        report = self.coord('turns', 'parent')[0]
+        self.assertEqual(self.coord('delivery', report['id'])['body'],
+                         'Original report survives completed-attempt replay.')
         self.assertEqual(second['native'], first['native'])
         marker = 'current native state observed before observer loss'
         self.action(current, progress=marker)
@@ -3322,12 +3362,7 @@ class Receive(unittest.TestCase):
         self.assertFalse(read_recorded(self.db, 'later-guidance'))
         self.action(current, body='Current task completed after accepting guidance.')
         self.assertEqual(current.readline(), b'')
-        self.action(parent)
-        self.assertEqual(parent.readline(), b'')
-        parent_again, notification = self.accept('root')
-        self.assertIn('Current task completed after accepting guidance.', notification['prompt'])
-        self.action(parent_again)
-        self.assertEqual(parent_again.readline(), b'')
+        self.read_root_channel(root_channel)
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
                         'replayed completion or current work remained pending')
         turns = self.coord('turns', 'parent')
@@ -3340,7 +3375,7 @@ class Receive(unittest.TestCase):
         self.shutdown_idle_database_owner('keeper or recovery did not exit after replay')
 
     def test_omp_recovery_after_input_closes_defers_guidance_until_native_exit(self):
-        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        root_channel = self.attach_root_channel()
         self.player(harness='omp')
         self.prepare_input('original', 'parent', 'Original work.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
@@ -3373,28 +3408,17 @@ class Receive(unittest.TestCase):
         self.action(original)
         self.assertEqual(original.readline(), b'')
 
-        arrivals = {}
-        for _ in range(2):
-            control, event = self.accept_any()
-            self.assertNotIn(event['session'], arrivals)
-            arrivals[event['session']] = (control, event)
-        self.assertEqual(set(arrivals), {'parent', 'root'})
-        continuation, resumed = arrivals['parent']
-        parent, notification = arrivals['root']
+        continuation, resumed = self.accept('parent')
+        self.read_root_channel(root_channel)
         self.assertFalse(any(p['pid'] == started['pid'] for p in self.owned_processes()))
         self.assertEqual(resumed['native'], started['native'])
         self.assertIn('[id: pending-guidance]', resumed['prompt'])
         self.assertNotIn('[id: original]', resumed['prompt'])
-        self.assertIn(original_body, notification['prompt'])
+        self.assertEqual(self.coord('delivery', original_report['id'])['body'], original_body)
         follow_up_body = 'Pending guidance completed by the next native invocation.'
         self.action(continuation, body=follow_up_body)
         self.assertEqual(continuation.readline(), b'')
-        self.action(parent)
-        self.assertEqual(parent.readline(), b'')
-        parent_again, notification = self.accept('root')
-        self.assertIn(follow_up_body, notification['prompt'])
-        self.action(parent_again)
-        self.assertEqual(parent_again.readline(), b'')
+        self.read_root_channel(root_channel)
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
                         'pending guidance or its parent notification was not acknowledged')
         turns = self.coord('turns', 'parent')
