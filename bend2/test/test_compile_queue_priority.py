@@ -5,7 +5,9 @@ compiler only appends its request id to a log and sleeps briefly, so no
 real compiler runs. Invariants: a later higher-priority request runs
 before an already-waiting default request; equal priorities keep arrival
 order; a ticket whose recorded pid and start time no longer identify a
-live process is ignored; a completed request leaves no ticket behind.
+live process is ignored; a completed request leaves no ticket behind; a
+memory-admission waiting record whose process is gone is reaped at
+supervisor start and during admission.
 """
 import fcntl
 import os
@@ -152,6 +154,53 @@ class QueuePriorityTests(unittest.TestCase):
         revived = self.request("revived")
         self.finish(revived)
         self.assertEqual(self.published_tickets(), [])
+
+    def admission_waiting(self):
+        waiting = self.state / "admission" / "waiting"
+        waiting.mkdir(mode=0o2770, parents=True)
+        waiting.chmod(0o2770)
+        return waiting
+
+    def waiting_names(self, waiting):
+        return sorted(path.name for path in waiting.iterdir() if ".tmp." not in path.name)
+
+    def test_stale_admission_waiting_record_is_reaped_at_start(self):
+        waiting = self.admission_waiting()
+        (waiting / "00000000000000000001-dead").write_text(
+            "priority=9\npid=999999\nstarttime=1\nkey=dead\nhistory_group=dead\ntoken=dead\n")
+        (waiting / "00000000000000000002-unknown").write_text("garbage\n")
+        request = self.request("alive")
+        self.finish(request)
+        self.assertEqual(self.read_order(), ["alive"])
+        self.assertEqual(self.waiting_names(waiting), ["00000000000000000002-unknown"])
+
+    def test_stale_admission_waiting_record_is_reaped_during_admission(self):
+        waiting = self.admission_waiting()
+        (waiting / "00000000000000000002-unknown").write_text("garbage\n")
+        held = (self.state / "admission" / "lock").open("w")
+        fcntl.flock(held, fcntl.LOCK_EX)
+        blocked = None
+        try:
+            blocked = self.request("blocked")
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                others = [name for name in self.waiting_names(waiting)
+                          if name != "00000000000000000002-unknown"]
+                if others:
+                    break
+                time.sleep(0.02)
+            self.assertTrue(others, "blocked request did not publish its waiting record")
+            # The supervisor finished its start pass and now blocks on the
+            # admission lock; only the decision inside the lock can reap this.
+            (waiting / "00000000000000000003-dead").write_text(
+                "priority=9\npid=999999\nstarttime=1\nkey=dead\nhistory_group=dead\ntoken=dead\n")
+        finally:
+            fcntl.flock(held, fcntl.LOCK_UN)
+            held.close()
+            if blocked is not None:
+                self.finish(blocked)
+        self.assertEqual(self.read_order(), ["blocked"])
+        self.assertEqual(self.waiting_names(waiting), ["00000000000000000002-unknown"])
 
 
 if __name__ == "__main__":
