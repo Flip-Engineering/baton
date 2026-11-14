@@ -86,6 +86,11 @@ class AccountCredits(unittest.TestCase):
         return self.call('recruit', session, 'root', harness, model, effort, self.repo,
                          session + '-branch', self.checkouts / session, self.base)
 
+    def store(self, name):
+        path = self.directory / 'stores' / name
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
     def send(self, action, ok=True, **fields):
         # account ACTION ID PROVIDER HARNESS FUNDING SECRET_REF ORGANIZATION DETAIL SESSION
         keys = ('id', 'provider', 'harness', 'funding', 'secret_ref', 'organization', 'detail', 'session')
@@ -178,7 +183,7 @@ class AccountCredits(unittest.TestCase):
         refused = self.send('bind', id='claude-max', session='leaf', ok=False)
         self.assertEqual(refused['code'], 2, refused)
         self.assertIn('No binding was recorded', refused['stderr'])
-        self.record('omp-main', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp')
+        self.record('omp-main', 'kimi-code', 'omp', 'subscription', self.store('omp'))
         self.assertEqual(self.send('bind', id='omp-main', session='leaf'),
                          {'account': 'bound', 'session': 'leaf', 'accountId': 'omp-main'})
 
@@ -295,16 +300,16 @@ class AccountCredits(unittest.TestCase):
     def test_the_launch_records_the_funding_route_for_the_attempt(self):
         self.root()
         self.recruit('leaf')
-        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
-        self.record('omp-main', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp')
+        self.record('omp-main', 'kimi-code', 'omp', 'subscription', self.store('omp'))
         self.send('bind', id='omp-main', session='leaf')
+        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         stream, start = self.accept('leaf')
         self.assertEqual(start['session'], 'leaf')
         attempts = self.send('attempts', session='leaf')['attempts']
         self.assertEqual(len(attempts), 1, attempts)
         self.assertEqual((attempts[0]['account'], attempts[0]['funding'], attempts[0]['session']),
                          ('omp-main', 'subscription', 'leaf'))
-        self.assertEqual(attempts[0]['secretRef'], '/fixture/stores/omp')
+        self.assertEqual(attempts[0]['secretRef'], self.store('omp'))
         execution = self.rows("SELECT id, directory FROM executions WHERE session='leaf'")
         self.assertEqual(attempts[0]['attempt'], execution[0]['directory'])
         self.assertEqual(attempts[0]['turn'], execution[0]['id'])
@@ -315,10 +320,10 @@ class AccountCredits(unittest.TestCase):
     def test_exhaustion_advances_the_bound_account_and_records_the_next_attempt(self):
         self.root()
         self.recruit('leaf')
-        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
-        self.record('omp-main', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp-a')
-        self.record('omp-next', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp-b')
+        self.record('omp-main', 'kimi-code', 'omp', 'subscription', self.store('omp-a'))
+        self.record('omp-next', 'kimi-code', 'omp', 'subscription', self.store('omp-b'))
         self.send('bind', id='omp-main', session='leaf')
+        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         first, started = self.accept('leaf')
         cause = "You've hit your session limit. Try again later."
         self.action(first, fail=True, ack=False, fail_message=cause)
@@ -330,7 +335,7 @@ class AccountCredits(unittest.TestCase):
         attempts = self.send('attempts', session='leaf')['attempts']
         self.assertEqual([row['account'] for row in attempts], ['omp-main', 'omp-next'], attempts)
         self.assertEqual([row['session'] for row in attempts], ['leaf', 'leaf'])
-        self.assertEqual(attempts[1]['secretRef'], '/fixture/stores/omp-b')
+        self.assertEqual(attempts[1]['secretRef'], self.store('omp-b'))
         handoff = [row for row in self.rows(
             "SELECT body FROM messages WHERE body LIKE 'account handoff:%'")]
         self.assertEqual(len(handoff), 1, handoff)
@@ -341,9 +346,9 @@ class AccountCredits(unittest.TestCase):
     def test_the_last_account_exhaustion_records_the_fact_and_wakes_the_conductor(self):
         self.root()
         self.recruit('leaf')
-        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
-        self.record('omp-only', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp-only')
+        self.record('omp-only', 'kimi-code', 'omp', 'subscription', self.store('omp-only'))
         self.send('bind', id='omp-only', session='leaf')
+        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         first, started = self.accept('leaf')
         cause = "You've hit your session limit. Try again later."
         self.action(first, fail=True, ack=False, fail_message=cause)
@@ -363,13 +368,13 @@ class AccountCredits(unittest.TestCase):
         self.root()
         self.recruit('leaf')
         self.recruit('leaf2')
-        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
-        self.call('message', 'isolated-task', 'root', 'leaf2', 'task', self.task.read_text())
-        self.record('omp-main', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp-a')
-        self.record('omp-next', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp-b')
-        self.record('omp-two', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp-c')
+        self.record('omp-main', 'kimi-code', 'omp', 'subscription', self.store('omp-a'))
+        self.record('omp-next', 'kimi-code', 'omp', 'subscription', self.store('omp-b'))
+        self.record('omp-two', 'kimi-code', 'omp', 'subscription', self.store('omp-c'))
         self.send('bind', id='omp-main', session='leaf')
         self.send('bind', id='omp-two', session='leaf2')
+        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
+        self.call('message', 'isolated-task', 'root', 'leaf2', 'task', self.task.read_text())
         first, started = self.accept('leaf')
         cause = "You've hit your session limit. Try again later."
         self.action(first, fail=True, ack=False, fail_message=cause)
@@ -392,11 +397,11 @@ class AccountCredits(unittest.TestCase):
     def test_exhaustion_delivers_owed_input_to_the_continuation_without_guidance(self):
         self.root()
         self.recruit('leaf')
-        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         owed = 'Second retained task: finish the λ review before the handoff report.'
-        self.record('omp-main', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp-a')
-        self.record('omp-next', 'kimi-code', 'omp', 'subscription', '/fixture/stores/omp-b')
+        self.record('omp-main', 'kimi-code', 'omp', 'subscription', self.store('omp-a'))
+        self.record('omp-next', 'kimi-code', 'omp', 'subscription', self.store('omp-b'))
         self.send('bind', id='omp-main', session='leaf')
+        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         first, started = self.accept('leaf')
         self.assertIn(self.task.read_text(), started['prompt'])
         self.call('message', 'owed-task', 'root', 'leaf', 'task', owed)
