@@ -2563,6 +2563,7 @@ class Receive(unittest.TestCase):
                          'terminalBeforeObserverLoss': terminal_before_loss})
         root_channel = self.attach_root_channel()
         self.player(harness=harness)
+        self.coord('account', '--action', 'read')
         with sqlite3.connect(self.db) as database:
             database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
                              ('first', 'root', 'parent', 'task', 'The original input must be sent once.'))
