@@ -43,7 +43,7 @@ def main():
     evidence.mkdir(parents=True)
     receipt = evidence / 'receipt'
     request = [client, '--', 'run', '--kind', 'workload', '--state-root', str(state),
-        '--cwd', str(cwd), '--root', str(cwd), '--source-root', str(cwd),
+        '--cwd', str(cwd), '--root', str(cwd), '--source-root', os.path.commonpath([cwd, script]),
         '--compiler', executable, '--receipt', str(receipt), '--token', invocation,
         '--option', 'invocation=' + invocation, '--per-run', 'invocation=' + invocation,
         '--input', str(script), '--', *command]
