@@ -194,9 +194,9 @@ class RootInboxDelivery(receive.Receive):
                 self.assertIn('root session root', result.stderr)
                 self.assertIn('no attached channel', result.stderr)
         inbox = self.coord('as', 'root', 'inbox')
-        action, = inbox
-        self.assertEqual(action['status'], 'completed', action)
-        self.assertIn(ident, action['stdout'])
+        message, = inbox
+        self.assertEqual(message['id'], ident)
+        self.assertEqual(message['body'], 'Read this retained report.')
         self.assertTrue(receive.read_recorded(self.db, ident))
 
     def test_recovery_finishes_when_only_root_notification_is_unattached(self):
