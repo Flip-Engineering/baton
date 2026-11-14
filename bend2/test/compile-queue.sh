@@ -306,6 +306,50 @@ grep -Fx "artifact-binary=$T/samepath-bin" "$T/samepath-a.receipt" \
 grep -Fx "artifact-binary=$T/samepath-bin" "$T/samepath-b.receipt" \
   && pass 'same-path second receipt records binding' || bad 'same-path second receipt binding differs'
 
+# A publisher that dies leaves its staging file. The next publisher of the
+# same destination removes the staging files whose owner is gone and keeps
+# the one whose owner is running.
+! ls "$T"/samepath-bin.queue-tmp.* >/dev/null 2>&1 \
+  && pass 'completed publication leaves no staging file' || bad 'completed publication left a staging file'
+SMALL=$T/small-compiler
+cat > "$SMALL" <<'EOF'
+#!/bin/sh
+out=''
+prev=''
+for arg in "$@"; do
+  [ "$prev" = -o ] && out=$arg
+  prev=$arg
+done
+printf 'abandoned-ok' > "$out"
+exit 0
+EOF
+chmod +x "$SMALL"
+printf 'dead' > "$T/abandoned-bin.queue-tmp.2147483646.1"
+printf 'dead-previous' > "$T/abandoned-bin.queue-tmp.2147483646.1.previous"
+printf 'legacy' > "$T/abandoned-bin.queue-tmp"
+printf 'legacy-pid' > "$T/abandoned-bin.queue-tmp.4242"
+printf 'other' > "$T/unrelated-bin.queue-tmp.2147483646.1"
+live_start=$(awk '{ sub(/^.*\) /, ""); split($0, f, " "); print f[20] }' "/proc/$$/stat" 2>/dev/null)
+if [ -n "$live_start" ]; then
+  printf 'live' > "$T/abandoned-bin.queue-tmp.$$.$live_start"
+fi
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$SMALL" --linker "$SMALL" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/abandoned-bin" --receipt "$T/abandoned.receipt" --option 'test=abandoned' \
+  --token tok-abandoned -- "$SMALL" -o "$T/abandoned-bin" "$T/input.c" >"$T/abandoned.out" 2>"$T/abandoned.err" \
+  && pass 'publication after abandoned staging succeeds' || bad 'publication after abandoned staging failed'
+[ "$(cat "$T/abandoned-bin" 2>/dev/null)" = 'abandoned-ok' ] \
+  && pass 'publication after abandoned staging holds the artifact bytes' || bad 'artifact bytes differ after abandoned staging'
+[ ! -e "$T/abandoned-bin.queue-tmp.2147483646.1" ] && [ ! -e "$T/abandoned-bin.queue-tmp.2147483646.1.previous" ] \
+  && pass 'staging of a dead publisher is removed' || bad 'staging of a dead publisher remains'
+[ ! -e "$T/abandoned-bin.queue-tmp" ] && [ ! -e "$T/abandoned-bin.queue-tmp.4242" ] \
+  && pass 'staging without a start identity is removed' || bad 'staging without a start identity remains'
+[ -e "$T/unrelated-bin.queue-tmp.2147483646.1" ] \
+  && pass 'staging of another destination is kept' || bad 'staging of another destination was removed'
+if [ -n "$live_start" ]; then
+  [ "$(cat "$T/abandoned-bin.queue-tmp.$$.$live_start" 2>/dev/null)" = 'live' ] \
+    && pass 'staging of a running publisher is kept' || bad 'staging of a running publisher was removed'
+fi
+
 # Artifact names are relative paths used under the attempt and cache roots.
 invalid_artifact=0
 sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
