@@ -531,7 +531,16 @@ def identity_key(config: Config) -> IO(String):
 
 # Workload history retains the kind, entry, toolchain, options and controls.
 # Source bytes remain part of the exact artifact key (#1310).
-def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,String>):
+def identity_history_compiler(config: Config) -> IO(Result<&1,&1,U32 & String,String>):
+  match config:
+    case Config{+text, command}:
+      +cwd = field(text,"cwd")
+      +root = field(text,"root")
+      +compiler = field(text,"compiler")
+      Identity.CompileQueueIdentity.history_compiler(cwd,root,compiler,field(text,"linker"),field(text,"version"),
+        normalize_command(command,cwd,root,compiler,input_rows(text),artifact_rows(text)))
+
+def identity_profile_result(config: Config, toolchain: String, family: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match config:
     case Config{+text, command}:
       +inputs = input_rows(text)
@@ -540,16 +549,35 @@ def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,Strin
       +root = field(text, "root")
       +compiler = field(text, "compiler")
       Identity.CompileQueueIdentity.request_group(
-        field(text, "kind"), cwd, root, field(text, "entry"), compiler,
-        field(text, "linker"), field(text, "version"),
+        field(text, "kind"), cwd, root, field(text, "entry"),
         input_pairs_text(inputs), fields_join("\n", fields_all(text, "aux")),
         artifact_pairs_text(artifacts),
         fields_join("\n", fields_all(text, "option")),
         normalize_command(command, cwd, root, compiler, inputs, artifacts),
-        fields_join("\n", fields_all(text, "per_run")))
+        fields_join("\n", fields_all(text, "per_run")),toolchain,family)
 
-def identity_group(config: Config) -> IO(String):
-  IO.try(String, identity_group_result(config))
+def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    toolchain : String <- IO.try(String,identity_history_compiler(config))
+    identity_profile_result(config,toolchain,False{})
+
+# Retained controls and the original group verify compatibility with the
+# requesting toolchain before an older observation supplies a family bound.
+def retained_family(+attempt: String, +toolchain: String) -> IO(String):
+  do IO<String>:
+    text : String <- History.read(attempt ++ "/identity-config")
+    packed : String <- History.read(attempt ++ "/identity-command")
+    +config : Config <- IO.pure(Config,Config{text,copy_identity_tokens(Tx.split_nul(packed),Nil{})})
+    recorded : String <- History.read(attempt ++ "/history-group")
+    checked : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,False{})
+    match checked:
+      case Fail{error}: IO.pure(String,"")
+      case Done{group}:
+        Bool.pick(IO(String),Bool.and(non_empty(group),Tx.str_eq(group,field(recorded,"group"))),
+          do IO<String>:
+            result : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,True{})
+            IO.pure(String,peak_text_result(result)),
+          IO.pure(String,""))
 
 def config_state(config: Config) -> String:
   match config:
@@ -665,8 +693,11 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
         wrote_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts)))
         wrote_argv : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_bytes(attempt ++ "/argv", P.argv(command_tokens(command, work, inputs, artifacts))))
         wrote_meta : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
-        +group : String <- identity_group(config)
-        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/history-group", "group=" ++ group ++ "\n"))
+        +toolchain : String <- IO.try(String,identity_history_compiler(config))
+        +group : String <- IO.try(String,identity_profile_result(config,toolchain,False{}))
+        +family : String <- IO.try(String,identity_profile_result(config,toolchain,True{}))
+        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/history-group",
+          "group=" ++ group ++ "\nfamily=" ++ family ++ "\ntoolchain=" ++ toolchain ++ "\n"))
         digest_written : Unit <- Bool.pick(IO(Unit),
           Bool.or(Tx.str_eq(field(text, "kind"), "cgen"), Tx.str_eq(field(text, "kind"), "check")),
           write_attempt_digest(attempt, text), IO.pure(Unit, Unit{}))
@@ -1088,7 +1119,7 @@ def max_u32(+a: U32, +b: U32) -> U32:
   Bool.pick(U32,U32.is_gt(a,b),a,b)
 
 def admission_history(state: String, key: String, group: String, kind: String) -> IO(String):
-  History.lookup(state,key,group,kind)
+  History.lookup(state,key,group,kind,retained_family)
 
 # Retained history is imported through the queue's recorded identity and completed
 # result. An unchanged request can reconstruct its group with the current tools.
@@ -1314,7 +1345,7 @@ def admission_claim_file(+state: String, +dir: String, +name: String, +group: St
     +is_live : Bool <- IO.pure(Bool, claim_file_live(live, dir, name))
     Bool.pick(IO(ClaimStats), is_live,
       do IO<ClaimStats>:
-        reserved : String <- History.running_record(state,text)
+        reserved : String <- History.running_record(state,text,retained_family)
         +measured : ClaimStats <- claim_add_stats(True{}, reserved, group, stats)
         usage : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(admission_root(state) ++ "/usage/" ++ name)
         now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()

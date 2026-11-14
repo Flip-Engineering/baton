@@ -4,7 +4,7 @@ import ./compile-queue-lifecycle.bend as L
 import ./compile-queue-result.bend as Result
 
 type Candidates is Data:
-  Candidates{same: String, host: String}
+  Candidates{family: String, same: String, host: String}
 
 def field(text: String, name: String) -> String:
   Result.CompileQueueResult.field(text,name)
@@ -52,19 +52,34 @@ def observation(+text: String) -> IO(String):
     IO.pure(String,Bool.pick(String,eligible,
       record(peak(text),"",key,attempt,field(result,"kind")),""))
 
-def add(+text: String, +kind: String, candidates: Candidates) -> Candidates:
+def classify(+text: String, +kind: String, +family: String, toolchain: String,
+             derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
+  Bool.pick(IO(String),Bool.and(U32.is_gt(peak(text),0),
+    Bool.and(String.eq(field(text,"kind"),kind),Bool.not(String.is_empty(family)))),
+    do IO<String>:
+      +attempt : String <- IO.pure(String,field(text,"peak_attempt"))
+      profile : String <- read(attempt ++ "/history-group")
+      +known : String <- IO.pure(String,field(profile,"family"))
+      actual : String <- Bool.pick(IO(String),String.is_empty(known),derive(attempt,toolchain),IO.pure(String,known))
+      IO.pure(String,"family=" ++ actual ++ "\n" ++ text),
+    IO.pure(String,text))
+
+def add(+text: String, +kind: String, +family: String, candidates: Candidates) -> Candidates:
   match candidates:
-    case Candidates{same,host}:
-      Candidates{Bool.pick(String,String.eq(field(text,"kind"),kind),larger(text,same),same),
+    case Candidates{compatible,same,host}:
+      Candidates{Bool.pick(String,Bool.and(Bool.not(String.is_empty(family)),String.eq(field(text,"family"),family)),larger(text,compatible),compatible),
+        Bool.pick(String,String.eq(field(text,"kind"),kind),larger(text,same),same),
         larger(text,host)}
 
-def history_records(files: List<&1,String>, +state: String, +kind: String, candidates: Candidates) -> IO(Candidates):
+def history_records(files: List<&1,String>, +state: String, +kind: String, +family: String, +toolchain: String,
+                    +derive: (@+attempt: String -> @+toolchain: String -> IO(String)), candidates: Candidates) -> IO(Candidates):
   match files:
     case Nil{}: IO.pure(Candidates,candidates)
     case name <> rest: do IO<Candidates>:
       text : String <- read(state ++ "/history/" ++ name)
       measured : String <- observation(text)
-      history_records(rest,state,kind,add(measured,kind,candidates))
+      classified : String <- classify(measured,kind,family,toolchain,derive)
+      history_records(rest,state,kind,family,toolchain,derive,add(classified,kind,family,candidates))
 
 def sole(files: List<&2,String>) -> Bool:
   match files:
@@ -87,27 +102,48 @@ def completed_peak(+state: String, +key: String) -> IO(String):
         observation("key=" ++ key ++ "\nattempt=" ++ attempt ++ "\n" ++ raw),
       IO.pure(String,""))
 
-def key_records(keys: List<&1,String>, +state: String, +kind: String, candidates: Candidates) -> IO(Candidates):
+def key_records(keys: List<&1,String>, +state: String, +kind: String, +family: String, +toolchain: String,
+                +derive: (@+attempt: String -> @+toolchain: String -> IO(String)), candidates: Candidates) -> IO(Candidates):
   match keys:
     case Nil{}: IO.pure(Candidates,candidates)
     case key <> rest: do IO<Candidates>:
       measured : String <- completed_peak(state,key)
-      key_records(rest,state,kind,add(measured,kind,candidates))
+      classified : String <- classify(measured,kind,family,toolchain,derive)
+      key_records(rest,state,kind,family,toolchain,derive,add(classified,kind,family,candidates))
 
-def fallback(+state: String, +kind: String) -> IO(String):
+def fallback(+state: String, +kind: String, +profile: String,
+             +derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
   do IO<String>:
+    +family : String <- IO.pure(String,field(profile,"family"))
+    +toolchain : String <- IO.pure(String,field(profile,"toolchain"))
     files : String <- names(state ++ "/history")
-    grouped : Candidates <- history_records(Tx.split_nul(files),state,kind,Candidates{"",""})
+    grouped : Candidates <- history_records(Tx.split_nul(files),state,kind,family,toolchain,derive,Candidates{"","",""})
     keys : String <- names(state ++ "/keys")
-    candidates : Candidates <- key_records(Tx.split_nul(keys),state,kind,grouped)
+    candidates : Candidates <- key_records(Tx.split_nul(keys),state,kind,family,toolchain,derive,grouped)
     match candidates:
-      case Candidates{+same,+host}:
-        +selected = Bool.pick(String,U32.is_gt(peak(same),0),same,host)
-        +source = Bool.pick(String,U32.is_gt(peak(same),0),"kind","host")
+      case Candidates{+compatible,+same,+host}:
+        +selected = Bool.pick(String,U32.is_gt(peak(compatible),0),compatible,Bool.pick(String,U32.is_gt(peak(same),0),same,host))
+        +source = Bool.pick(String,U32.is_gt(peak(compatible),0),"family",Bool.pick(String,U32.is_gt(peak(same),0),"kind","host"))
         IO.pure(String,record(peak(selected),Bool.pick(String,U32.is_gt(peak(selected),0),source,"bootstrap"),
           field(selected,"peak_key"),field(selected,"peak_attempt"),field(selected,"kind")))
 
-def lookup(+state: String, +key: String, +group: String, +kind: String) -> IO(String):
+def profile_from_attempts(files: List<&1,String>, +keydir: String, +group: String) -> IO(String):
+  match files:
+    case Nil{}: IO.pure(String,"")
+    case name <> rest: do IO<String>:
+      +profile : String <- read(keydir ++ "/runs/" ++ name ++ "/history-group")
+      Bool.pick(IO(String),Bool.and(String.eq(field(profile,"group"),group),Bool.not(String.is_empty(field(profile,"family")))),
+        IO.pure(String,profile),profile_from_attempts(rest,keydir,group))
+
+def profile(+state: String, +key: String, +group: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(group),IO.pure(String,""),
+    do IO<String>:
+      +keydir : String <- IO.pure(String,state ++ "/keys/" ++ key)
+      files : String <- names(keydir ++ "/runs")
+      profile_from_attempts(Tx.split_nul(files),keydir,group))
+
+def lookup(+state: String, +key: String, +group: String, +kind: String,
+           derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
   do IO<String>:
     exact : String <- read(state ++ "/keys/" ++ key ++ "/peak")
     group_text : String <- Bool.pick(IO(String),String.is_empty(group),IO.pure(String,""),
@@ -117,7 +153,10 @@ def lookup(+state: String, +key: String, +group: String, +kind: String) -> IO(St
     +workload : String <- IO.pure(String,record(peak(grouped),"workload",field(grouped,"peak_key"),
       field(grouped,"peak_attempt"),field(grouped,"kind")))
     +direct : String <- IO.pure(String,larger(workload,own))
-    Bool.pick(IO(String),U32.is_gt(peak(direct),0),IO.pure(String,direct),fallback(state,kind))
+    Bool.pick(IO(String),U32.is_gt(peak(direct),0),IO.pure(String,direct),
+      do IO<String>:
+        current : String <- profile(state,key,group)
+        fallback(state,kind,current,derive))
 
 def kind_from_attempts(files: List<&1,String>, +keydir: String) -> IO(String):
   match files:
@@ -136,12 +175,13 @@ def request_kind(+state: String, +key: String, supplied: String) -> IO(String):
 
 # Existing claims keep their recorded reservation. A claim written with no peak
 # obtains its reservation from the retained measurement evidence on each scan.
-def running_record(+state: String, +text: String) -> IO(String):
+def running_record(+state: String, +text: String,
+                   derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
   Bool.pick(IO(String),U32.is_gt(number(U32.read(field(text,"expected_kb"))),0),IO.pure(String,text),
     do IO<String>:
       +key : String <- IO.pure(String,field(text,"key"))
       kind : String <- request_kind(state,key,field(text,"kind"))
-      measurement : String <- lookup(state,key,field(text,"history_group"),kind)
+      measurement : String <- lookup(state,key,field(text,"history_group"),kind,derive)
       IO.pure(String,"expected_kb=" ++ U32.show(peak(measurement)) ++ "\n" ++ text))
 
 def own_history(text: String) -> U32:
@@ -150,4 +190,4 @@ def own_history(text: String) -> U32:
 
 def describe(+text: String) -> String:
   "peak_source=" ++ field(text,"peak_source") ++ "\npeak_key=" ++ field(text,"peak_key")
-  ++ "\npeak_attempt=" ++ field(text,"peak_attempt") ++ "\n"
+  ++ "\npeak_attempt=" ++ field(text,"peak_attempt") ++ "\npeak_kind=" ++ field(text,"kind") ++ "\n"

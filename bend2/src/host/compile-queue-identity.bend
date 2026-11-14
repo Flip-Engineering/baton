@@ -822,17 +822,45 @@ def CompileQueueIdentity.joined_lines(values: List<&2,String>) -> String:
     case Nil{}: ""
     case value <> rest: value ++ "\n" ++ CompileQueueIdentity.joined_lines(rest)
 
-def CompileQueueIdentity.control_digest(+files: String, cwd: String, root: String, values: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
+def CompileQueueIdentity.control_digest(+files: String, cwd: String, root: String, +values: List<&2,CompileQueueRunValue>, canonical: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     +lines : String <- IO.try(String, CompileQueueIdentity.control_digest_lines(String.lines(files),cwd,root,values))
-    CompileQueueIdentity.text_digest(CompileQueueIdentity.joined_lines(CompileQueueIdentity.sort(CompileQueueIdentity.nonempty(String.lines(lines)))))
+    CompileQueueIdentity.text_digest(CompileQueueIdentity.joined_lines(CompileQueueIdentity.sort(CompileQueueIdentity.nonempty(String.lines(CompileQueueIdentity.mask_run(lines,canonical))))))
+
+def CompileQueueIdentity.family_run_markers(values: List<&2,CompileQueueRunValue>) -> List<&2,CompileQueueRunValue>:
+  match values:
+    case Nil{}: Nil{}
+    case CompileQueueRunValue{value,marker} <> rest:
+      CompileQueueRunValue{marker,"{run}"} <> CompileQueueIdentity.family_run_markers(rest)
+
+def CompileQueueIdentity.family_source_row(parts: List<&2,String>) -> List<&2,CompileQueueRunValue>:
+  match parts:
+    case +source <> destination <> rest:
+      Bool.pick(List<&2,CompileQueueRunValue>,CompileQueueIdentity.workload_source(source),
+        [CompileQueueRunValue{"{in:" ++ destination ++ "}","{source}"}],Nil{})
+    case other: Nil{}
+
+def CompileQueueIdentity.family_sources(rows: List<&2,String>) -> List<&2,CompileQueueRunValue>:
+  match rows:
+    case Nil{}: Nil{}
+    case row <> rest:
+      List.append(&2,CompileQueueRunValue,
+        CompileQueueIdentity.family_source_row(String.split(row,Char.from_u32(9))),
+        CompileQueueIdentity.family_sources(rest))
 
 # The history group retains workload options, toolchain, artifact names,
 # normalized command and stable control paths and digests. Named per-run
 # values become placeholders in options, command and control paths.
-def CompileQueueIdentity.request_group(+kind: String, +cwd: String, +root: String, +entry: String, +compiler: String, +linker: String, +version: String, +inputs: String, +aux: String, +artifacts: String, +options: String, +command: String, per_run: String) -> IO(Result<&1,&1,U32 & String,String>):
+def CompileQueueIdentity.request_group(+kind: String, +cwd: String, +root: String, +entry: String, +inputs: String, +aux: String, +artifacts: String, +options: String, +command: String, per_run: String, toolchain: String, +family: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     +values : List<&2,CompileQueueRunValue> <- IO.pure(List<&2,CompileQueueRunValue>,CompileQueueIdentity.run_values(String.lines(per_run),cwd,root))
-    toolchain : String <- IO.try(String, CompileQueueIdentity.history_compiler(cwd, root, compiler, linker, version, command))
-    +controls : String <- IO.try(String, CompileQueueIdentity.control_digest(CompileQueueIdentity.closure_files(CompileQueueIdentity.input_sources(String.lines(inputs)), aux),cwd,root,values))
-    CompileQueueIdentity.text_digest("baton-compile-queue-history-v4\n" ++ CompileQueueIdentity.material(kind, entry, CompileQueueIdentity.mask_run(options,values), "", controls, toolchain, "", CompileQueueIdentity.artifact_names(String.lines(artifacts)), CompileQueueIdentity.mask_run(command,values)))
+    +canonical : List<&2,CompileQueueRunValue> <- IO.pure(List<&2,CompileQueueRunValue>,Bool.pick(List<&2,CompileQueueRunValue>,family,
+      CompileQueueIdentity.family_run_markers(values),Nil{}))
+    +sources : List<&2,CompileQueueRunValue> <- IO.pure(List<&2,CompileQueueRunValue>,Bool.pick(List<&2,CompileQueueRunValue>,Bool.and(family,String.eq(kind,"cc")),
+      CompileQueueIdentity.family_sources(String.lines(inputs)),Nil{}))
+    +controls : String <- IO.try(String, CompileQueueIdentity.control_digest(CompileQueueIdentity.closure_files(CompileQueueIdentity.input_sources(String.lines(inputs)), aux),cwd,root,values,canonical))
+    +schema : String <- IO.pure(String,Bool.pick(String,family,"baton-compile-queue-family-v1\n","baton-compile-queue-history-v4\n"))
+    CompileQueueIdentity.text_digest(schema ++ CompileQueueIdentity.material(kind, entry,
+      CompileQueueIdentity.mask_run(CompileQueueIdentity.mask_run(options,values),canonical), "", controls, toolchain, "",
+      CompileQueueIdentity.artifact_names(String.lines(artifacts)),
+      CompileQueueIdentity.mask_run(CompileQueueIdentity.mask_run(CompileQueueIdentity.mask_run(command,values),sources),canonical)))

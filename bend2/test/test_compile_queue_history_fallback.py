@@ -42,6 +42,46 @@ class HistoryFallbackTests(HistoryGroupTests):
         self.assertEqual(fields(pathlib.Path(claim["peak_attempt"]) / "result")["status"], "completed")
         self.complete(checking, "checking")
 
+    def test_a_new_deploy_group_uses_its_compatible_family_beside_a_live_check(self):
+        self.measured("deploy-one", "one", **self.deploy_data("first", "abcdef01"))
+        original = fields(self.root / "receipt-deploy-one")["key"]
+        original_attempt, = (self.state / "keys" / original / "runs").iterdir()
+        old_profile = fields(original_attempt / "history-group")
+        # This retained profile has the fields emitted by the previous runner.
+        (original_attempt / "history-group").write_text("group=" + old_profile["group"] + "\n")
+        self.measured("another-family", "two", options=["mode=other"], mb=192)
+        checking = self.request("checking", "one", kind="check")
+        self.until("unmeasured check allocated", lambda: self.allocated("checking"))
+        deployment = self.deploy_data("second", "abcdef02")
+        deployment["per_run"] = [("revision" if role == "commit" else "output", value)
+                                 for role, value in deployment["per_run"]]
+        next_deploy = self.request("deploy-two", "three", **deployment)
+        self.until("deploy allocated beside the live check", lambda: self.allocated("deploy-two"))
+        claim = self.claim("deploy-two")
+        self.assertEqual(claim["peak_source"], "family")
+        self.assertEqual(claim["peak_key"], original)
+        self.assertEqual(claim["peak_attempt"], str(original_attempt))
+        following_attempt, = (self.state / "keys" / claim["key"] / "runs").iterdir()
+        self.assertNotEqual(fields(following_attempt / "history-group")["group"], old_profile["group"])
+        self.assertIsNone(checking.poll())
+        self.complete(next_deploy, "deploy-two")
+        self.complete(checking, "checking")
+
+    def test_changed_retained_controls_use_the_kind_fallback(self):
+        self.measured("observed", "one", aux=[self.helper])
+        original = fields(self.root / "receipt-observed")["key"]
+        original_attempt, = (self.state / "keys" / original / "runs").iterdir()
+        old_profile = fields(original_attempt / "history-group")
+        (original_attempt / "history-group").write_text("group=" + old_profile["group"] + "\n")
+        self.helper.write_text("# changed driver\n")
+        self.source = self.root / "edited.c"
+        changed = self.request("changed", "two", aux=[self.helper])
+        self.until("changed control workload allocated", lambda: self.allocated("changed"))
+        claim = self.claim("changed")
+        self.assertEqual(claim["peak_source"], "kind")
+        self.assertEqual(claim["peak_key"], original)
+        self.complete(changed, "changed")
+
     def test_a_fallback_waits_until_the_recorded_peak_fits(self):
         self.measured("observed", "one")
         (_, peak), = self.group_records().items()

@@ -267,6 +267,7 @@ class HistoryGroupTests(unittest.TestCase):
                 first_key = fields(self.root / ("receipt-" + first_name))["key"]
                 first_attempt, = (self.state / "keys" / first_key / "runs").iterdir()
                 group = fields(first_attempt / "history-group")["group"]
+                self.assertTrue(group, "the completed workload has no reusable history identity")
                 peak = self.group_records()[group]
                 second = self.request(second_name, "two", kind=kind)
                 self.until("edited workload has a claim", lambda: self.claim(second_name) is not None)
