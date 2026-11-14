@@ -66,8 +66,7 @@ class QueueCcOverlapTests(unittest.TestCase):
                 return any(value > 0 for name, value in recorded_samples().items()
                            if name not in before)
 
-            # One measured run per command family, alone: the first request of
-            # an unmeasured family enters when no other claim is live.
+            # Record one successful observation for each command family.
             for label in ("first", "second"):
                 source = root / (label + "-measure.c")
                 source.write_text("int %s_measure(void) { return 0; }\n" % label)
@@ -85,9 +84,7 @@ class QueueCcOverlapTests(unittest.TestCase):
                     time.sleep(0.02)
                 self.assertTrue((control / (label + ".started")).exists(),
                                 "measure run of %s did not start" % label)
-                # Hold the command until the queue writes this run's recorded
-                # sample under admission/usage, so the run records a nonzero
-                # measured peak at a point load cannot decide.
+                # Hold the command until the queue records a nonzero RSS sample.
                 deadline = time.monotonic() + 20
                 while time.monotonic() < deadline:
                     if sampled(samples_before):

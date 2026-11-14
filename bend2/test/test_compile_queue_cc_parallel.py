@@ -84,9 +84,7 @@ class QueueCcParallelTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertTrue((self.control / "job.started").exists(),
                         "the cc command did not run")
-        # Hold the command until the queue writes this run's recorded sample
-        # under admission/usage, so the run records a nonzero measured peak
-        # at a point load cannot decide.
+        # Hold the command until the queue records a nonzero RSS sample.
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if self.sampled(samples_before):
