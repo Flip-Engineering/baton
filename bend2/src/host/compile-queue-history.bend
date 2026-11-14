@@ -45,11 +45,11 @@ def observation(+text: String) -> IO(String):
     do IO<String>:
       +key : String <- IO.pure(String,field(text,"key"))
       +attempt : String <- IO.pure(String,field(text,"attempt"))
-      +result : String <- read(attempt ++ "/result")
-      eligible : Bool <- IO.pure(Bool,Bool.and(Result.CompileQueueResult.recorded_completed(result,key),
-        Bool.not(String.eq(field(result,"external"),"1"))))
+      result : String <- read(attempt ++ "/result")
+      +lines : List<&2,String> <- IO.pure(List<&2,String>,String.lines(result))
+      eligible : Bool <- IO.pure(Bool,Result.CompileQueueResult.recorded_completed_lines(lines,key))
       IO.pure(String,Bool.pick(String,eligible,
-        record(peak(text),"",key,attempt,field(result,"kind")),"")),
+        record(peak(text),"",key,attempt,Result.CompileQueueResult.field_lines(lines,"kind")),"")),
     IO.pure(String,""))
 
 def classify(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
