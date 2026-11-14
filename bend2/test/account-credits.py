@@ -134,17 +134,20 @@ class AccountCredits(unittest.TestCase):
                 ('two words', 'anthropic', 'claude-code', 'subscription', '/fixture/stores/claude'),
                 ('claude-max', '', 'claude-code', 'subscription', '/fixture/stores/claude'),
                 ('claude-max', 'anthropic', 'gemini', 'subscription', '/fixture/stores/claude'),
-                ('claude-max', 'anthropic', 'claude-code', 'trial', '/fixture/stores/claude'),
-                ('claude-max', 'anthropic', 'claude-code', 'subscription', '')):
+                ('claude-max', 'anthropic', 'claude-code', 'trial', '/fixture/stores/claude')):
             refused = self.record(label, provider, harness, funding, secret_ref, ok=False)
             self.assertEqual(refused['code'], 2, refused)
             self.assertIn('No account was recorded', refused['stderr'])
+        refused = self.record('claude-max', 'anthropic', 'claude-code', 'subscription', '', ok=False)
+        self.assertEqual(refused['code'], 2, refused)
+        self.assertIn('unsupported credential reference', refused['stderr'])
+        self.assertIn('absolute store directory', refused['stderr'])
         self.assertEqual(self.send('read')['accounts'], [])
 
     def test_codex_api_key_funding_is_refused(self):
         self.root()
         refused = self.record('codex-api', 'openai', 'codex', 'api_key',
-                              'file:/fixture/secrets/api', ok=False)
+                              '/fixture/stores/codex-api', ok=False)
         self.assertEqual(refused['code'], 2, refused)
         self.assertIn('No account was recorded', refused['stderr'])
         self.assertEqual(self.send('read')['accounts'], [])
