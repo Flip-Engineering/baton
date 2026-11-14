@@ -2551,7 +2551,7 @@ class Receive(unittest.TestCase):
         evidence = evidence if evidence is not None else {}
         evidence.update({'harness': harness, 'retryRequested': retry,
                          'terminalBeforeObserverLoss': terminal_before_loss})
-        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        root_channel = self.attach_root_channel()
         self.player(harness=harness)
         self.prepare_input('first', 'parent', 'The original input must be sent once.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
@@ -2567,7 +2567,8 @@ class Receive(unittest.TestCase):
         original_body = 'Original completion retained through observer loss: ' + harness
         log = self.output_log('parent')
         if terminal_before_loss:
-            self.action(original, body=original_body, hold_exit=True, report_input=True)
+            self.action(original, body=original_body, hold_exit=True, report_input=True,
+                        complete_task=False)
             self.assertEqual(json.loads(original.readline()),
                              {'terminal_written': True, 'input_after_prompt': ''})
             self.eventually(lambda: log.exists() and original_body in log.read_text(),
@@ -2590,7 +2591,8 @@ class Receive(unittest.TestCase):
                         'automatic recovery did not retain output from the original native')
         evidence['postLossOutputRetained'] = True
         if not terminal_before_loss:
-            self.action(original, body=original_body, hold_exit=True, report_input=True)
+            self.action(original, body=original_body, hold_exit=True, report_input=True,
+                        complete_task=False)
             self.assertEqual(json.loads(original.readline()),
                              {'terminal_written': True, 'input_after_prompt': ''})
         evidence['originalPromptRepeated'] = False
@@ -2608,16 +2610,10 @@ class Receive(unittest.TestCase):
         self.action(original)
         self.assertEqual(original.readline(), b'')
 
-        arrivals = {}
-        for _ in range(2):
-            control, event = self.accept_any()
-            self.assertNotIn(event['session'], arrivals, 'duplicate session launched during recovery')
-            arrivals[event['session']] = (control, event)
-        self.assertEqual(set(arrivals), {'parent', 'root'})
-        continuation, resumed = arrivals['parent']
-        parent, notified = arrivals['root']
+        continuation, resumed = self.accept('parent')
+        self.read_root_channel(root_channel, original_body)
         evidence['continuation'] = resumed
-        evidence['parentNotification'] = notified
+        evidence['parentNotification'] = root_channel[1].read_text().splitlines()
         evidence['originalExitedBeforeContinuation'] = not any(
             p['pid'] == started['pid'] for p in self.owned_processes())
         self.assertTrue(evidence['originalExitedBeforeContinuation'])
@@ -2626,19 +2622,11 @@ class Receive(unittest.TestCase):
         self.assertIn('[id: second]', resumed['prompt'])
         self.assertIn('[id: third]', resumed['prompt'])
         self.assertNotIn('[id: first]', resumed['prompt'])
-        self.assertNotIn(original_body, notified['prompt'])
-        self.assertIn('baton read', notified['prompt'])
         evidence['parentNotified'] = True
         follow_up_body = 'Queued inputs completed after recovery: ' + harness
         self.action(continuation, body=follow_up_body)
         self.assertEqual(continuation.readline(), b'')
-        self.action(parent)
-        self.assertEqual(parent.readline(), b'')
-        parent_again, next_notification = self.accept('root')
-        self.assertNotIn(follow_up_body, next_notification['prompt'])
-        self.assertIn('baton read', next_notification['prompt'])
-        self.action(parent_again)
-        self.assertEqual(parent_again.readline(), b'')
+        self.read_root_channel(root_channel, follow_up_body)
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
                         'recovered work or its parent notification remained pending')
         evidence['pendingInputDrained'] = True
