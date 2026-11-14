@@ -91,7 +91,7 @@ def main():
                     break
                 time.sleep(.1)
             signal_text = (args.output / 'signals.txt').read_text()
-            assert code == 137, 'the bounded workload was not killed: ' + str(code)
+            assert code in (-9, 137), 'the bounded workload was not killed: ' + str(code)
             assert identity in signal_text and 'memory-pressure' in signal_text, signal_text
             state['successful'] = True
     finally:
