@@ -2558,6 +2558,7 @@ class Receive(unittest.TestCase):
         original, started = self.accept('parent')
         evidence.update({'firstSupervisor': observer.pid, 'firstNative': started['pid'],
                          'keeper': started['ppid'], 'originalPrompt': started['prompt']})
+        self.connect('parent')
         native = self.eventually(lambda: self.coord('player', 'parent')['native'],
                                  'original native identity was not recorded')
         self.assertEqual(native, started['native'])
