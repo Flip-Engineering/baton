@@ -1,27 +1,14 @@
 """Edited compiler workloads reuse observed peak history (#1310).
 
-The history group of a cc request is its request key without the digest of the
-C-family source files and without the digests of the input rows. The content digest
-of every other input or aux file (a driver script, a helper, a data file) stays in
-it, with the kind, entry, options, toolchain, artifact names and normalized command.
-A command that exits 0 with no signal raises the group record under state/history.
-The tests start commands that touch a fixed amount of memory so that the sampled
-peak is positive, and they compare claim records with the group record, never with
-a fixed number.
+C compilation, C generation and compiler checks retain their kind, entry,
+options, toolchain, artifact names, normalized command and stable control digests
+in a workload group. Source edits change the exact artifact key. Declared per-run
+values retain their placeholders in the workload group.
 
-* An edited C source finds the group record: its claim is a known claim (`history=1`).
-* A later larger successful measurement raises the record; a later smaller one leaves it.
-* A command that does not exit 0 records no group peak.
-* Another option, another command argument, or a changed helper or data file is
-  another group: the claim has no history.
-* An edited source of a measured group starts beside a running claim whose history is
-  known, which a request without history does not.
-* A new group can use an observed kind peak beside a running claim.
-* C generation and checks retain one group across source edits and keep their
-  distinct exact artifact keys.
-* The records are in state/history; the directory peaks/ of the memory-admission
-  executable is not created, and the attempt file `group` of that executable is not
-  written.
+A successful command raises the group peak under state/history. The fixtures
+allocate memory and compare claims with their actual sampled observations.
+New groups can also obtain a recorded bound from a compatible family, compiler
+kind or host. Every owned requester and sampler completes before fixture cleanup.
 """
 import os
 import fcntl
@@ -65,7 +52,14 @@ class HistoryGroupTests(unittest.TestCase):
     def setUpClass(cls):
         cls.candidate = os.environ.get("BATON2_COMPILE_QUEUE_BIN")
         if not cls.candidate:
-            raise unittest.SkipTest("BATON2_COMPILE_QUEUE_BIN is required")
+            root = pathlib.Path(__file__).resolve().parents[2]
+            binary = root / ".scratch/bend2/compile-queue-history-test"
+            built = subprocess.run(["sh", "bend2/scripts/build-native.sh",
+                                    "bend2/src/host/compile-queue.bend", str(binary)],
+                                   cwd=root, capture_output=True, text=True)
+            if built.returncode:
+                raise AssertionError("queue fixture build failed\n" + built.stdout + built.stderr)
+            cls.candidate = str(binary)
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="queue-history-")
@@ -94,6 +88,9 @@ class HistoryGroupTests(unittest.TestCase):
                 child.wait(timeout=60)
             except subprocess.TimeoutExpired:
                 child.kill()
+                child.wait()
+        if (self.state / "heavy.lock").exists():
+            self.wait_for_sampler("cleanup")
 
     def until(self, what, test, seconds=60):
         # This deadline detects a broken fixture; it does not bound a compiler.
