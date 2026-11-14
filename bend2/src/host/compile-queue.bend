@@ -1916,7 +1916,7 @@ def admission_waiters_higher(+state: String, +token: String, +priority: U32, +st
     IO.pure(Bool,Bool.or(heavy,cc))
 
 def admission_publish_claim(+state: String, +kind: String, +key: String, +token: String,
-                            +pid: U32, start: String, need: U32,
+                            +pid: U32, start: String, +need: U32,
                             +measurement: String, +guard: U32, heavy: Maybe<&2,U32>) -> IO(AdmissionGate):
   do IO<AdmissionGate>:
     body : String <- IO.pure(String,
