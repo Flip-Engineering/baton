@@ -627,7 +627,10 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.ids(self.read('worker')), ['finding-3'])
         self.assertEqual(self.ids(self.read('root')), ['finding-3'])
         refused = self.call('promote', 'promotion-1', 'root', 'grand', 'worker', 'finding-3', success=False)
-        self.assertIn('No knowledge row was written', refused.stderr)
+        self.assertEqual(refused.returncode, 2)
+        refusal = json.loads(refused.stderr)
+        self.assertEqual(refusal['reason'], 'destination-owner-required')
+        self.assertEqual((refusal['promoter'], refusal['destinationOwner']), ('root', 'worker'))
         promoted = self.call('promote', 'promotion-1', 'worker', 'grand', 'worker', 'finding-3')
         self.assertEqual(promoted, {'id': 'promotion-1', 'finding': 'finding-3', 'author': 'grand',
                                     'source': 'grand', 'destination': 'worker', 'promotedBy': 'worker'})
@@ -653,7 +656,8 @@ class Knowledge(unittest.TestCase):
         self.assertEqual([p['promotedBy'] for p in seen[0]['promotions']], ['worker', 'root'])
         wrong_source = self.call('promote', 'promotion-6', 'root', 'sibling', 'root', 'finding-6',
                                  success=False)
-        self.assertIn('No knowledge row was written', wrong_source.stderr)
+        self.assertEqual(wrong_source.returncode, 2)
+        self.assertEqual(json.loads(wrong_source.stderr)['reason'], 'source-does-not-hold-finding')
 
     def test_any_registered_destination_owner_can_promote_from_actual_provenance(self):
         self.call('record', 'finding-4', 'worker', 'the lock is held',
@@ -666,7 +670,36 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.read('missing-reader'), [])
         fabricated = self.call('promote', 'promotion-7', 'sibling', 'root', 'sibling', 'finding-4',
                                success=False)
-        self.assertIn('No knowledge row was written', fabricated.stderr)
+        self.assertEqual(fabricated.returncode, 2)
+        self.assertEqual(json.loads(fabricated.stderr)['reason'], 'source-does-not-hold-finding')
+
+    def test_author_promotion_to_parent_reports_the_destination_owner(self):
+        self.call('record', 'authored-finding', 'worker', 'observed result',
+                  self.evidence('authored-evidence', 'worker'), 'one run')
+        refused = self.call('promote-scoped', 'parent-promotion', 'worker',
+                            'session', 'worker', 'session', 'root', 'authored-finding',
+                            success=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(refused.stdout, '')
+        refusal = json.loads(refused.stderr)
+        self.assertEqual(refusal['error'], 'knowledge-promotion-refused')
+        self.assertEqual(refusal['reason'], 'destination-owner-required')
+        self.assertEqual((refusal['id'], refusal['finding'], refusal['findingAuthor']),
+                         ('parent-promotion', 'authored-finding', 'worker'))
+        self.assertEqual((refusal['promoter'], refusal['sourceKind'], refusal['source']),
+                         ('worker', 'session', 'worker'))
+        self.assertEqual((refusal['destinationKind'], refusal['destination'],
+                          refusal['destinationOwner']), ('session', 'root', 'root'))
+        with sqlite3.connect(self.db) as database:
+            self.assertEqual(database.execute(
+                'SELECT id FROM knowledge_promotions WHERE id=?', ('parent-promotion',)
+            ).fetchall(), [])
+        self.assertNotIn('parent-promotion:promotion-notice',
+                         [row['id'] for row in self.call('inbox', 'root')])
+        promoted = self.call('promote-scoped', 'parent-promotion', 'root',
+                             'session', 'worker', 'session', 'root', 'authored-finding')
+        self.assertEqual((promoted['finding'], promoted['promotedBy']),
+                         ('authored-finding', 'root'))
 
     def test_missing_message_citation_resolves_when_the_message_is_retained(self):
         message = "evidence λ ' pending"

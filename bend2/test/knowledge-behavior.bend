@@ -12,6 +12,7 @@
 #        knowledge-behavior DB detail READER ID
 #        knowledge-behavior DB record ID AUTHOR KIND CLAIM EVIDENCE LIMITS
 #        knowledge-behavior DB relate ID AUTHOR SOURCE RELATION TARGET
+#        knowledge-behavior DB promote-scoped ID PROMOTER SOURCE_KIND SOURCE DESTINATION_KIND DESTINATION FINDING
 #        knowledge-behavior DB report ID SENDER BODY
 #        knowledge-behavior DB notice ID AUTHOR CLAIM EVIDENCE LIMITS
 #        knowledge-behavior DB refused SAVED
@@ -113,6 +114,8 @@ def dispatch(+db: String, args: List<String>) -> IO(Unit):
     case "record-plain" <> id <> author <> claim <> evidence <> limits <> Nil{}: Knowledge.record(db,id,author,claim,evidence,limits)
     case "record-linked" <> id <> author <> kind <> claim <> evidence <> limits <> links <> Nil{}: Knowledge.record_linked(db,id,author,kind,claim,evidence,limits,links)
     case "relate" <> id <> author <> source <> relation <> target <> Nil{}: relate(db,id,author,source,relation,target)
+    case "promote-scoped" <> id <> promoter <> source_kind <> source <> destination_kind <> destination <> finding <> Nil{}:
+      Knowledge.promote_scoped(db,id,promoter,source_kind,source,destination_kind,destination,finding)
     case "report" <> id <> sender <> body <> Nil{}: report(db,id,sender,body)
     case "notice" <> id <> author <> claim <> evidence <> limits <> Nil{}: notice(db,id,author,claim,evidence,limits)
     case "inbox" <> id <> Nil{}: inbox(db,id)
