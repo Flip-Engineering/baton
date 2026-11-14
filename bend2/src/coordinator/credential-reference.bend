@@ -18,16 +18,16 @@ def safe_text(text: String) -> Bool:
     case SNil{}: True{}
     case SCon{+head,tail}: Bool.and(Bool.and(Bool.not(U32.is_lt(Char.to_u32(head),32)),Bool.not(U32.is_eq(Char.to_u32(head),127))),safe_text(tail))
 
-def keychain_parts(text: String, service: Bool) -> Bool:
-  match text:
-    case SNil{}: False{}
-    case SCon{head,+tail}: Bool.pick(Bool,Char.is_eq(head,Char.from_u32(47)),Bool.and(service,Bool.not(String.is_empty(tail))),keychain_parts(tail,True{}))
+def keychain_parts(parts: List<&2,String>) -> Bool:
+  match parts:
+    case service <> account <> Nil{}: Bool.and(Bool.not(String.is_empty(service)),Bool.not(String.is_empty(account)))
+    case other: False{}
 
 def form_matches(form: Form, +reference: String) -> Bool:
   match form:
     case ReferenceForm{+kind,+prefix,label,+empty}:
       +payload = String.drop(reference,String.length(prefix))
-      Bool.and(String.starts_with(reference,prefix),Bool.and(Bool.or(empty,Bool.not(String.is_empty(payload))),Bool.or(Bool.not(String.eq(kind,"keychain")),keychain_parts(payload,False{}))))
+      Bool.and(String.starts_with(reference,prefix),Bool.and(Bool.or(empty,Bool.not(String.is_empty(payload))),Bool.or(Bool.not(String.eq(kind,"keychain")),keychain_parts(String.split(payload,Char.from_u32(47))))))
 
 def form_kind(form: Form) -> String:
   match form:

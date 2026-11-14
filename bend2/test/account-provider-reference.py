@@ -143,6 +143,7 @@ print(json.dumps(base))
     def test_unsupported_account_references_name_the_row_and_accepted_forms(self):
         cases = [('bad-omp', 'omp', 'api_key', 'literal-credential-value', 'absolute store directory'),
                  ('bad-claude', 'claude-code', 'api_key', 'keychain:missing-account', 'file:PATH, keychain:SERVICE/ACCOUNT'),
+                 ('bad-keychain', 'claude-code', 'api_key', 'keychain:service/account/extra', 'file:PATH, keychain:SERVICE/ACCOUNT'),
                  ('bad-file', 'claude-code', 'api_key', 'file:', 'file:PATH, keychain:SERVICE/ACCOUNT')]
         for label, harness, funding, reference, forms in cases:
             with self.subTest(label=label):
@@ -178,6 +179,7 @@ print(json.dumps(base))
         for provider, key in [('kimi-code', 'selected-kimi-key'), ('zai', 'selected-zai-key')]:
             with self.subTest(provider=provider):
                 read = self.read_reference(provider, store, key)
+                self.assertEqual(read['state'], 'read', read)
                 self.assertEqual((read['provider'], read['state'], read['windows']), (provider, 'read', WINDOWS))
 
     def test_deepseek_credential_is_read_from_the_selected_omp_store(self):
@@ -187,6 +189,7 @@ print(json.dumps(base))
             db.execute('CREATE TABLE auth_credentials(id INTEGER PRIMARY KEY,provider TEXT,data TEXT,disabled_cause TEXT,updated_at INTEGER)')
             db.execute('INSERT INTO auth_credentials VALUES(1,?,?,NULL,1)', ('deepseek', json.dumps({'key': 'selected-deepseek-key'})))
         read = self.read_reference('deepseek', store, 'selected-deepseek-key')
+        self.assertEqual(read['state'], 'read', read)
         self.assertEqual((read['provider'], read['state'], read['windows']), ('deepseek', 'read', WINDOWS))
 
     def test_provider_429_response_and_reset_remain_observations(self):
