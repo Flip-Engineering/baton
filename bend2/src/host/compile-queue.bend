@@ -6,6 +6,7 @@ import ./compile-queue-lifecycle.bend as L
 import ./compile-queue-identity.bend as Identity
 import ./compile-queue-result.bend as Result
 import ./compile-queue-artifact.bend as Artifact
+import ./compile-queue-history.bend as History
 
 # The identity seat declares schema(), source_closure, source_digest,
 # file_closure, compiler_closure, file_digest, text_digest, key(material) and
@@ -528,11 +529,18 @@ def identity_key_result(+config: Config) -> IO(Result<&1,&1,U32 & String,String>
 def identity_key(config: Config) -> IO(String):
   IO.try(String, identity_key_result(config))
 
-# The history group of a cc request (see CompileQueueIdentity.request_group); empty
-# for every other kind. A cgen or check request is admitted on the record of its
-# exact key only: a changed Bend source can use several times the memory of the
-# source recorded before it, and no property of the source predicts that.
-def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,String>):
+# Workload history retains the kind, entry, toolchain, options and controls.
+# Source bytes remain part of the exact artifact key (#1310).
+def identity_history_compiler(config: Config) -> IO(Result<&1,&1,U32 & String,String>):
+  match config:
+    case Config{+text, command}:
+      +cwd = field(text,"cwd")
+      +root = field(text,"root")
+      +compiler = field(text,"compiler")
+      Identity.CompileQueueIdentity.history_compiler(cwd,root,compiler,field(text,"linker"),field(text,"version"),
+        normalize_command(command,cwd,root,compiler,input_rows(text),artifact_rows(text)))
+
+def identity_profile_result(config: Config, toolchain: String, family: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match config:
     case Config{+text, command}:
       +inputs = input_rows(text)
@@ -540,19 +548,18 @@ def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,Strin
       +cwd = field(text, "cwd")
       +root = field(text, "root")
       +compiler = field(text, "compiler")
-      Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.eq(field(text, "kind"), "cc"),
-        Identity.CompileQueueIdentity.request_group(
-          field(text, "kind"), cwd, root, field(text, "entry"), compiler,
-          field(text, "linker"), field(text, "version"),
-          input_pairs_text(inputs), fields_join("\n", fields_all(text, "aux")),
-          artifact_pairs_text(artifacts),
-          fields_join("\n", fields_all(text, "option")),
-          normalize_command(command, cwd, root, compiler, inputs, artifacts),
-          fields_join("\n", fields_all(text, "per_run"))),
-        IO.pure(Result<&1,&1,U32 & String,String>, Done{""}))
+      Identity.CompileQueueIdentity.request_group(
+        field(text, "kind"), cwd, root, field(text, "entry"),
+        input_pairs_text(inputs), fields_join("\n", fields_all(text, "aux")),
+        artifact_pairs_text(artifacts),
+        fields_join("\n", fields_all(text, "option")),
+        normalize_command(command, cwd, root, compiler, inputs, artifacts),
+        fields_join("\n", fields_all(text, "per_run")),toolchain,family)
 
-def identity_group(config: Config) -> IO(String):
-  IO.try(String, identity_group_result(config))
+def identity_group_result(+config: Config) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    toolchain : String <- IO.try(String,identity_history_compiler(config))
+    identity_profile_result(config,toolchain,False{})
 
 def config_state(config: Config) -> String:
   match config:
@@ -627,6 +634,30 @@ def copy_identity_tokens(args: List<&1,String>, +acc: List<&2,String>) -> List<&
     case Nil{}: List.reverse(&2,String,acc)
     case Con{+token, rest}: copy_identity_tokens(rest, Con{token,acc})
 
+# Retained controls and the original group verify compatibility with the
+# requesting toolchain before an older observation supplies a family bound.
+def retained_family_result(+config: Config, +toolchain: String, recorded: String,
+                           checked: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match checked:
+    case Fail{error}: IO.pure(String,"")
+    case Done{+group}:
+      Bool.pick(IO(String),Bool.and(non_empty(group),Tx.str_eq(group,field(recorded,"group"))),
+        do IO<String>:
+          result : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,True{})
+          IO.pure(String,History.read_value(result)),
+        IO.pure(String,""))
+
+def retained_family(+attempt: String, +toolchain: String) -> IO(String):
+  do IO<String>:
+    +recorded : String <- History.read(attempt ++ "/history-group")
+    Bool.pick(IO(String),String.is_empty(field(recorded,"group")),IO.pure(String,""),
+      do IO<String>:
+        text : String <- History.read(attempt ++ "/identity-config")
+        packed : String <- History.read(attempt ++ "/identity-command")
+        +config : Config <- IO.pure(Config,Config{text,copy_identity_tokens(Tx.split_nul(packed),Nil{})})
+        checked : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,False{})
+        retained_family_result(config,toolchain,recorded,checked))
+
 def priority_text(+text: String) -> String:
   Bool.pick(String, String.is_empty(field(text, "priority")), "0", field(text, "priority"))
 
@@ -668,8 +699,11 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
         wrote_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts)))
         wrote_argv : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_bytes(attempt ++ "/argv", P.argv(command_tokens(command, work, inputs, artifacts))))
         wrote_meta : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
-        +group : String <- identity_group(config)
-        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/history-group", "group=" ++ group ++ "\n"))
+        +toolchain : String <- IO.try(String,identity_history_compiler(config))
+        +group : String <- IO.try(String,identity_profile_result(config,toolchain,False{}))
+        +family : String <- IO.try(String,identity_profile_result(config,toolchain,True{}))
+        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/history-group",
+          "group=" ++ group ++ "\nfamily=" ++ family ++ "\ntoolchain=" ++ toolchain ++ "\n"))
         digest_written : Unit <- Bool.pick(IO(Unit),
           Bool.or(Tx.str_eq(field(text, "kind"), "cgen"), Tx.str_eq(field(text, "kind"), "check")),
           write_attempt_digest(attempt, text), IO.pure(Unit, Unit{}))
@@ -1027,18 +1061,19 @@ def status_number(text: String) -> U32:
 def peak_record(+attempt: String, +peak: U32) -> IO(Unit):
   Bool.pick(IO(Unit),U32.is_gt(peak,0),
     do IO<Unit>:
-      attempt_peak : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
-        attempt ++ "/peak", "peak_kb=" ++ U32.show(peak) ++ "\n")
       meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
       +meta : String <- IO.pure(String,peak_text_result(meta_result))
       +keydir : String <- IO.pure(String,field(meta,"keydir"))
+      +observation : String <- IO.pure(String,"peak_kb=" ++ U32.show(peak)
+        ++ "\nkey=" ++ field(meta,"key") ++ "\nattempt=" ++ attempt ++ "\nkind=" ++ field(meta,"kind") ++ "\n")
+      attempt_peak : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(attempt ++ "/peak",observation)
       old_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/peak")
       +old_text : String <- IO.pure(String,peak_text_result(old_result))
       +prior_peak : U32 <- IO.pure(U32,status_number(field(old_text,"peak_kb")))
       Bool.pick(IO(Unit),U32.is_gt(peak,prior_peak),
         do IO<Unit>:
           ignored : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
-            keydir ++ "/peak","peak_kb=" ++ U32.show(peak) ++ "\n")
+            keydir ++ "/peak",observation)
           IO.pure(Unit,Unit{}),
         IO.pure(Unit,Unit{})),
     IO.pure(Unit,Unit{}))
@@ -1050,13 +1085,10 @@ def peak_record(+attempt: String, +peak: U32) -> IO(Unit):
 def admission_root(+state: String) -> String:
   state ++ "/admission"
 
-# The peak measured for a cc command that exited 0 is recorded for the history
-# group of its request, so a later request that differs only in its C source finds
-# it. The record holds the largest peak seen: a later larger measurement raises it
-# and a smaller one leaves it. The peak of a run that did not exit 0 stays with its
-# own key: it predicts that exact request and says nothing about the request after
-# the source is fixed. The records are in history/, which the memory-admission
-# executable neither reads nor rebuilds (it rebuilds peaks/).
+# A command that exits 0 records its peak for the workload history group.
+# A later larger measurement raises the record. Failed commands retain their
+# observations with the exact key. Group records retain the measured key and
+# attempt under history/.
 def exit_marker_success(+attempt: String) -> IO(Bool):
   do IO<Bool>:
     result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/exit_status")
@@ -1088,22 +1120,12 @@ def group_peak_record(+attempt: String, +peak: U32) -> IO(Unit):
       group_peak_raise(field(meta, "state_root"), group, peak, field(meta,"key"), attempt),
       IO.pure(Unit, Unit{}))
 
-# Admission uses the largest observed peak of the exact key and compatible CC
-# group. A request with unavailable history enters when no other claim is live.
+# Admission selects a recorded workload, kind or host measurement.
 def max_u32(+a: U32, +b: U32) -> U32:
   Bool.pick(U32,U32.is_gt(a,b),a,b)
 
-def admission_history_value(exact: Result<&1,&1,U32 & String,String>, grouped: Result<&1,&1,U32 & String,String>) -> U32:
-  +exact_peak = status_number(field(peak_text_result(exact), "peak_kb"))
-  max_u32(exact_peak, status_number(field(peak_text_result(grouped), "peak_kb")))
-
-def admission_history(+state: String, +key: String, +group: String) -> IO(U32):
-  do IO<U32>:
-    exact : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/keys/" ++ key ++ "/peak")
-    grouped : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>), non_empty(group),
-      L.CompileQueueLifecycle.read_text(state ++ "/history/" ++ group),
-      IO.pure(Result<&1,&1,U32 & String,String>, Done{""}))
-    IO.pure(U32, admission_history_value(exact, grouped))
+def admission_history(state: String, key: String, group: String, kind: String) -> IO(String):
+  History.lookup(retained_family,state,key,group,kind)
 
 # Retained history is imported through the queue's recorded identity and completed
 # result. An unchanged request can reconstruct its group with the current tools.
@@ -1152,7 +1174,7 @@ def history_import_attempt(+state: String, +key: String, +keydir: String,
       status_number(field(peak_text_result(legacy_peak_read),"peak_kb"))))
     +eligible : Bool <- IO.pure(Bool,Bool.and(U32.is_gt(peak,0),
       Bool.and(Result.CompileQueueResult.recorded_completed(result,key),
-        Bool.and(Tx.str_eq(field(result,"kind"),"cc"),Bool.not(Tx.str_eq(field(result,"external"),"1"))))))
+        Bool.not(Tx.str_eq(field(result,"external"),"1")))))
     Bool.pick(IO(Unit),eligible,
       do IO<Unit>:
         config_read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/identity-config")
@@ -1160,7 +1182,7 @@ def history_import_attempt(+state: String, +key: String, +keydir: String,
         +text : String <- IO.pure(String,peak_text_result(config_read))
         +packed : String <- IO.pure(String,peak_text_result(command_read))
         +config : Config <- IO.pure(Config,Config{text,copy_identity_tokens(Tx.split_nul(packed),Nil{})})
-        +valid : Bool <- IO.pure(Bool,Bool.and(Tx.str_eq(field(text,"kind"),"cc"),
+        +valid : Bool <- IO.pure(Bool,Bool.and(Tx.str_eq(field(text,"kind"),field(result,"kind")),
           Bool.and(Tx.str_eq(field(text,"state_root"),state),String.is_empty(validate_config(config,True{})))))
         history_import_config(valid,config,state,key,attempt,peak),
       IO.write("history=unavailable key=" ++ key ++ "\n"))
@@ -1281,14 +1303,15 @@ def claim_add_stats_after_sample(+text: String, +group: String,
                                  current_text: Result<&1,&1,U32 & String,String>) -> IO(ClaimStats):
   match current_text:
     case Fail{error}:
-      IO.pure(ClaimStats, ClaimStats{U32.add(count,1),unspent,U32.add(unknown,1),U32.add(unobserved,1),group_current,reserve,used,U32.add(signature,identity)})
+      +expected = status_number(field(text,"expected_kb"))
+      IO.pure(ClaimStats, ClaimStats{U32.add(count,1),U32.add(unspent,expected),Bool.pick(U32,U32.is_eq(expected,0),U32.add(unknown,1),unknown),U32.add(unobserved,1),group_current,reserve,used,U32.add(signature,identity)})
     case Done{+usage}:
       +current = status_number(field(usage, "kb"))
       +expected = status_number(field(text, "expected_kb"))
       +headroom = Bool.pick(U32, U32.is_gt(expected,current), U32.sub(expected,current), 0)
       +same_group = Bool.and(non_empty(group), Tx.str_eq(field(text,"group"),group))
       +next_group = Bool.pick(U32, same_group, U32.add(group_current,current), group_current)
-      +next_unknown = Bool.pick(U32, U32.is_eq(status_number(field(text,"history")),0), U32.add(unknown,1), unknown)
+      +next_unknown = Bool.pick(U32, U32.is_eq(expected,0), U32.add(unknown,1), unknown)
       IO.pure(ClaimStats, ClaimStats{U32.add(count,1),U32.add(unspent,headroom),next_unknown,unobserved,next_group,reserve,U32.add(used,current),U32.add(signature,identity)})
 
 def claim_add_stats(live: Bool, +text: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
@@ -1328,7 +1351,8 @@ def admission_claim_file(+state: String, +dir: String, +name: String, +group: St
     +is_live : Bool <- IO.pure(Bool, claim_file_live(live, dir, name))
     Bool.pick(IO(ClaimStats), is_live,
       do IO<ClaimStats>:
-        +measured : ClaimStats <- claim_add_stats(True{}, text, group, stats)
+        reserved : String <- History.running_record(retained_family,state,text)
+        +measured : ClaimStats <- claim_add_stats(True{}, reserved, group, stats)
         usage : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(admission_root(state) ++ "/usage/" ++ name)
         now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
         +now_text : String <- IO.pure(String,admission_record_text(now_result))
@@ -1833,26 +1857,24 @@ def admission_can_start(+kind: String, +history: U32, +need: U32, stats: ClaimSt
       # A first unmeasured request may establish its own peak alone when no
       # legacy exclusive job or other claim is running.
       +first_unmeasured = Bool.and(U32.is_eq(history,0),Bool.and(U32.is_eq(count,0),U32.is_eq(legacy_pid,0)))
-      # A measured CC request uses live free memory after the remaining known
-      # growth and observed outside growth have been reserved. The first request
-      # of an unmeasured workload enters when no other claim is live.
       +request_known = Bool.or(U32.is_gt(history,0),first_unmeasured)
-      +measured_cc = Bool.and(Tx.str_eq(kind,"cc"),U32.is_gt(history,0))
-      +history_ok = Bool.and(U32.is_eq(unobserved,0),Bool.and(request_known,Bool.or(measured_cc,U32.is_eq(unknown,0))))
       +reserved = U32.add(unspent,reserve)
       +free_now = Bool.pick(U32,U32.is_gt(available,reserved),U32.sub(available,reserved),0)
       +fits = Bool.pick(Bool, Bool.and(first_unmeasured,Bool.not(Tx.str_eq(kind,"cc"))), True{},
         Bool.pick(Bool, U32.is_gt(need,0), Bool.not(U32.is_gt(need,free_now)), U32.is_gt(free_now,0)))
-      Bool.and(U32.is_eq(legacy_pid,0),Bool.and(history_ok,fits))
+      # A cold running claim remains unbounded until the host records a peak.
+      Bool.and(U32.is_eq(legacy_pid,0),Bool.and(U32.is_eq(unknown,0),Bool.and(request_known,fits)))
 
 def admission_ticket_text(+priority: U32, +pid: U32, +start: String, +key: String, +kind: String, +group: String, +token: String) -> String:
   "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start
   ++ "\nkey=" ++ key ++ "\nkind=" ++ kind ++ "\ngroup=" ++ group ++ "\ntoken=" ++ token ++ "\n"
 
-def admission_waiter_fits(state: String, kind: String, key: String, history_group: String, stats: ClaimStats,
+def admission_waiter_fits(+state: String, kind: String, +key: String, history_group: String, stats: ClaimStats,
                           +available: U32, total: U32, legacy_pid: U32) -> IO(Bool):
   do IO<Bool>:
-    +history : U32 <- admission_history(state,key,history_group)
+    actual_kind : String <- History.request_kind(state,key,"")
+    +measurement : String <- admission_history(state,key,history_group,actual_kind)
+    +history : U32 <- IO.pure(U32,History.peak(measurement))
     IO.pure(Bool,Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)),
       admission_can_start(kind,history,history,stats,available,legacy_pid)))
 
@@ -1896,16 +1918,18 @@ def admission_waiters_higher(+state: String, +token: String, +priority: U32, +st
     IO.pure(Bool,Bool.or(heavy,cc))
 
 def admission_publish_claim(+state: String, +kind: String, +key: String, +token: String,
-                            +pid: U32, start: String, need: U32,
-                            history: U32, +guard: U32, heavy: Maybe<&2,U32>) -> IO(AdmissionGate):
+                            +pid: U32, start: String, +need: U32,
+                            +measurement: String, +guard: U32, heavy: Maybe<&2,U32>) -> IO(AdmissionGate):
   do IO<AdmissionGate>:
     body : String <- IO.pure(String,
       "pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nroot=" ++ U32.show(pid)
       ++ "\nmeasure=session\nkey=" ++ key ++ "\ngroup=" ++ key ++ "\nexpected_kb=" ++ U32.show(need)
-      ++ "\nhistory=" ++ U32.show(Bool.pick(U32,U32.is_gt(history,0),1,0)) ++ "\n")
+      ++ "\nhistory=" ++ U32.show(History.own_history(measurement)) ++ "\nkind=" ++ kind ++ "\n"
+      ++ History.describe(measurement))
     +claim : U32 <- IO.try(U32, L.CompileQueueLifecycle.create_locked(admission_root(state) ++ "/running/" ++ token, body))
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(kind_waiters_dir(state,kind) ++ "/" ++ token))
     removed_admission : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(admission_root(state) ++ "/waiting/" ++ token))
+    reported : Unit <- IO.write("admission key=" ++ key ++ " expected_kb=" ++ U32.show(need) ++ "\n" ++ History.describe(measurement))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
     IO.pure(AdmissionGate, AdmissionAccounted{claim,heavy})
 
@@ -1989,7 +2013,7 @@ def acquire_accounted_after_heavy(~again: (@+attempt: String -> @+keydir: String
                                  +attempt: String, +keydir: String, +state: String, +kind: String,
                                  +key: String, +group: String, +token: String, +priority: U32,
                                  +pid: U32, +start: String, +delay: U32, +guard: U32,
-                                 heavy: Maybe<&2,U32>, +need: U32, +history: U32) -> IO(AdmissionGate):
+                                 heavy: Maybe<&2,U32>, +need: U32, +measurement: String) -> IO(AdmissionGate):
   match heavy:
     case None{}:
       do IO<AdmissionGate>:
@@ -1997,7 +2021,7 @@ def acquire_accounted_after_heavy(~again: (@+attempt: String -> @+keydir: String
         slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
         again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000))
     case Some{+shared}:
-      admission_publish_claim(state,kind,key,token,pid,start,need,history,guard,Some{shared})
+      admission_publish_claim(state,kind,key,token,pid,start,need,measurement,guard,Some{shared})
 
 @unsafe
 def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state: String -> @+kind: String -> @+key: String -> @+group: String -> @+token: String -> @+priority: U32 -> @+pid: U32 -> @+start: String -> @+delay: U32 -> IO(AdmissionGate)),
@@ -2014,13 +2038,14 @@ def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state:
     +legacy_pid : U32 <- IO.pure(U32,admission_legacy_pid(legacy_result))
     higher : Bool <- admission_waiters_higher(state,token,priority,stats,available,total,legacy_pid)
     +history_group : String <- attempt_group(attempt)
-    +history : U32 <- admission_history(state,key,history_group)
+    +measurement : String <- admission_history(state,key,history_group,kind)
+    +history : U32 <- IO.pure(U32,History.peak(measurement))
     +need : U32 <- IO.pure(U32,admission_need(history,stats))
     +fits : Bool <- IO.pure(Bool, Bool.and(Bool.not(higher),Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)), admission_can_start(kind,history,need,stats,available,legacy_pid))))
     Bool.pick(IO(AdmissionGate), fits,
       do IO<AdmissionGate>:
         heavy : Maybe<&2,U32> <- IO.try(Maybe<&2,U32>, L.CompileQueueLifecycle.lock_shared_try(state ++ "/heavy.lock"))
-        acquire_accounted_after_heavy(again,attempt,keydir,state,kind,key,group,token,priority,pid,start,delay,guard,heavy,need,history),
+        acquire_accounted_after_heavy(again,attempt,keydir,state,kind,key,group,token,priority,pid,start,delay,guard,heavy,need,measurement),
       do IO<AdmissionGate>:
         released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
         slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
