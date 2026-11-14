@@ -1,0 +1,5 @@
+# Record every process, including processes idle during the sample interval.
+LOGOPTS="-a"
+LOGINTERVAL=60
+LOGGENERATIONS=28
+LOGPATH=/mnt/nvme4tb/host-history/atop
