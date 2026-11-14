@@ -53,7 +53,7 @@ def observation(+text: String) -> IO(String):
       record(peak(text),"",key,attempt,field(result,"kind")),""))
 
 def classify(+text: String, +kind: String, +family: String, toolchain: String,
-             derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
+             ~derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
   Bool.pick(IO(String),Bool.and(U32.is_gt(peak(text),0),
     Bool.and(String.eq(field(text,"kind"),kind),Bool.not(String.is_empty(family)))),
     do IO<String>:
@@ -72,7 +72,7 @@ def add(+text: String, +kind: String, +family: String, candidates: Candidates) -
         larger(text,host)}
 
 def history_records(files: List<&1,String>, +state: String, +kind: String, +family: String, +toolchain: String,
-                    +derive: (@+attempt: String -> @+toolchain: String -> IO(String)), candidates: Candidates) -> IO(Candidates):
+                    ~derive: (@+attempt: String -> @+toolchain: String -> IO(String)), candidates: Candidates) -> IO(Candidates):
   match files:
     case Nil{}: IO.pure(Candidates,candidates)
     case name <> rest: do IO<Candidates>:
@@ -103,7 +103,7 @@ def completed_peak(+state: String, +key: String) -> IO(String):
       IO.pure(String,""))
 
 def key_records(keys: List<&1,String>, +state: String, +kind: String, +family: String, +toolchain: String,
-                +derive: (@+attempt: String -> @+toolchain: String -> IO(String)), candidates: Candidates) -> IO(Candidates):
+                ~derive: (@+attempt: String -> @+toolchain: String -> IO(String)), candidates: Candidates) -> IO(Candidates):
   match keys:
     case Nil{}: IO.pure(Candidates,candidates)
     case key <> rest: do IO<Candidates>:
@@ -120,7 +120,7 @@ def selected(candidates: Candidates) -> String:
         field(chosen,"peak_key"),field(chosen,"peak_attempt"),field(chosen,"kind"))
 
 def fallback(+state: String, +kind: String, +profile: String,
-             +derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
+             ~derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
   do IO<String>:
     +family : String <- IO.pure(String,field(profile,"family"))
     +toolchain : String <- IO.pure(String,field(profile,"toolchain"))
@@ -146,7 +146,7 @@ def profile(+state: String, +key: String, +group: String) -> IO(String):
       profile_from_attempts(Tx.split_nul(files),keydir,group))
 
 def lookup(+state: String, +key: String, +group: String, +kind: String,
-           derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
+           ~derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
   do IO<String>:
     +exact : String <- read(state ++ "/keys/" ++ key ++ "/peak")
     group_text : String <- Bool.pick(IO(String),String.is_empty(group),IO.pure(String,""),
@@ -179,7 +179,7 @@ def request_kind(+state: String, +key: String, +supplied: String) -> IO(String):
 # Existing claims keep their recorded reservation. A claim written with no peak
 # obtains its reservation from the retained measurement evidence on each scan.
 def running_record(+state: String, +text: String,
-                   derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
+                   ~derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
   Bool.pick(IO(String),U32.is_gt(number(U32.read(field(text,"expected_kb"))),0),IO.pure(String,text),
     do IO<String>:
       +key : String <- IO.pure(String,field(text,"key"))
