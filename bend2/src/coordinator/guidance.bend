@@ -43,8 +43,8 @@ def forwarded_high(db: String, +attempt: String) -> IO(String):
       IO.pure(String,Tx.trim_nl(value))),
     IO.pure(String,"0"))
 
-# The position a replay resumes guidance from: the send cursor, unless this
-# attempt already forwarded more.
+# Reattachment selects the maximum of the checkpoint cursor and the highest
+# forwarded sequence. The observer retains that position across commit notices.
 def replay_cursor(+db: String, +attempt: String, +cursor: String) -> IO(String):
   do IO<String>:
     high : String <- forwarded_high(db,attempt)
@@ -238,9 +238,7 @@ def drain_pending(+db: String, +player: String, +handle: U32, +attempt: String, 
 def awake_pending(+db: String, player: String, handle: U32, +attempt: String, +cursor: String, woke: Bool) -> IO(String):
   match woke:
     case False{}: IO.pure(String,cursor)
-    case True{}: do IO<String>:
-      start : String <- replay_cursor(db,attempt,cursor)
-      drain_pending(db,player,handle,attempt,start)
+    case True{}: drain_pending(db,player,handle,attempt,cursor)
 
 def terminal_sql(+value: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal(value) ++ " THEN 1 ELSE 0 END;"

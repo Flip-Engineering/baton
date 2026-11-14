@@ -183,6 +183,15 @@ def read_recorded(db, ident, recipient=None):
     return bool(message_reads(db, ident, recipient))
 
 
+def owed_messages(db, recipient):
+    with sqlite3.connect(f'{pathlib.Path(db).as_uri()}?mode=ro', uri=True) as database:
+        database.row_factory = sqlite3.Row
+        return [dict(row) for row in database.execute(
+            'SELECT m.* FROM messages m WHERE recipient=? AND NOT EXISTS('
+            'SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient) '
+            'ORDER BY seq', (recipient,))]
+
+
 COMPLETION_EXCHANGE = r'''import pathlib,sqlite3
 session=os.environ.get('BATON_SESSION',model)
 def coordinator(*arguments):
@@ -455,9 +464,10 @@ if config.get('early_failure'):
     sys.exit(1)
 native='native-'+model
 if omp:
-    json.loads(sys.stdin.readline())
-    state=json.loads(sys.stdin.readline())
-    prompt=json.loads(sys.stdin.readline())['message']
+    frames=[json.loads(sys.stdin.readline())]
+    while frames[-1]['type']!='prompt': frames.append(json.loads(sys.stdin.readline()))
+    state=next(frame for frame in frames if frame['type']=='get_state')
+    prompt=frames[-1]['message']
     storage=pathlib.Path(args[args.index('--session-dir')+1])
     storage.mkdir(parents=True,exist_ok=True)
     if resume:
@@ -808,7 +818,7 @@ class Receive(unittest.TestCase):
     def process_names(self):
         """Process names of this run: the coordinator, its sibling entries and
         the executables the run writes."""
-        return {path.name[:15] for path in [*EXE.parent.iterdir(), *self.directory.iterdir()]}
+        return {path.name[:15] for path in [*EXE.parent.iterdir(), *self.directory.iterdir()]} | {'exe'}
 
     def owned_processes(self):
         return [{key: process[key] for key in ('pid', 'ppid', 'status', 'command')}
@@ -863,6 +873,61 @@ class Receive(unittest.TestCase):
         """Recruit the session into a fixture repository of this run."""
         return self.coord('recruit', name, 'root', harness, name, 'low', str(self.repo),
                           name + '-branch', str(self.checkouts / name), self.base)
+
+    def attach_root_channel(self):
+        received = self.directory / 'root-notifications'
+        script = self.directory / 'mcp-conductor.mjs'
+        script.write_text("import net from 'node:net';\n"
+                          "const s=net.createConnection(process.argv[7]);\n"
+                          "s.on('connect',()=>s.end(process.argv[8]));\n"
+                          "s.on('error',e=>{console.error(e);process.exitCode=1});\n")
+        listener_code = ("import socket,sys\n"
+                         "s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n"
+                         "s.bind(sys.argv[1]);s.listen();print('listening',flush=True)\n"
+                         "while True:\n"
+                         " c,_=s.accept()\n"
+                         " with c,c.makefile('rb') as stream:data=stream.read()\n"
+                         " if data:\n"
+                         "  with open(sys.argv[2],'ab') as output:output.write(data+b'\\n')\n")
+        listener = subprocess.Popen([sys.executable, '-c', listener_code,
+                                     'root-channel.sock', str(received)], cwd=self.directory,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(listener)
+        self.assertEqual(listener.stdout.readline(), 'listening\n')
+        endpoint = json.dumps(['node', str(script), str(self.db), str(EXE),
+                               '--session', 'root', '--deliver', 'root-channel.sock'])
+        self.coord('connect', 'root', 'native-root', endpoint)
+        return endpoint, received
+
+    def read_root_channel(self, channel, expected_body):
+        endpoint, received = channel
+        def report_committed():
+            with sqlite3.connect(self.db) as database:
+                return database.execute(
+                    "SELECT id FROM messages WHERE recipient='root' "
+                    "AND kind='report' AND body=?", (expected_body,)).fetchone()
+        report_id, = self.eventually(report_committed,
+                                     'The completed turn report did not reach the root inbox.')
+        self.eventually(lambda: received.exists() and report_id in received.read_text().splitlines(),
+                        'The root channel did not receive the completed report identity.')
+        with sqlite3.connect(self.db) as database:
+            database.row_factory = sqlite3.Row
+            pending = database.execute(
+                "SELECT id,body FROM messages m WHERE recipient='root' AND NOT EXISTS("
+                'SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient) '
+                'ORDER BY m.rowid').fetchall()
+        for message in pending:
+            ident = message['id']
+            context = json.dumps({'ready': True, 'database': str(self.db), 'session': 'root',
+                                  'harness': 'codex', 'native': 'native-root', 'endpoint': endpoint,
+                                  'thread': 'native-root', 'connection': 'receive-root-channel',
+                                  'readMessage': ident})
+            environment = os.environ | {'BATON_SESSION': 'root', 'BATON_DATABASE': str(self.db),
+                                        'BATON_MCP_INPUT': context, 'CODEX_THREAD_ID': 'native-root'}
+            accepted, = self.coord('read', ident, environment=environment)
+            self.assertEqual(accepted['status'], 'found', accepted)
+            self.assertEqual(accepted['delivery']['body'], message['body'])
+            self.assertTrue(read_recorded(self.db, ident))
 
     def receive_args(self, session, executable=None):
         return ['receive', session, str(executable or self.fixture), session, 'low',
@@ -1239,8 +1304,8 @@ class Receive(unittest.TestCase):
                     'INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
                     (f'guidance-{index}', 'root', 'parent', 'guidance',
                      body + f' marker-{index}'))
+        # The committed task's delivery starts the connected endpoint's receive.
         self.connect('parent')
-        observer = self.spawn(*self.receive_args('parent'))
         native, started = self.accept('parent')
         prompt = started['prompt']
         self.assertIn('[id: task-836-guidance]', prompt)
@@ -1253,7 +1318,8 @@ class Receive(unittest.TestCase):
         self.assertLess(len(prompt), 100_000,
                         'pending guidance bodies were expanded into the prompt')
         self.action(native, exit_fixture=True)
-        self.finish(observer, ok=False)
+        self.eventually(lambda: self.execution('parent')[0] == 'exited',
+                        'the delivered receive did not settle the native exit')
         pending = [row['id'] for row in self.coord('inbox', 'parent')]
         self.assertIn('guidance-0', pending)
         self.assertEqual(self.coord('delivery', 'guidance-0')['body'], body + ' marker-0')
@@ -2495,28 +2561,32 @@ class Receive(unittest.TestCase):
         evidence = evidence if evidence is not None else {}
         evidence.update({'harness': harness, 'retryRequested': retry,
                          'terminalBeforeObserverLoss': terminal_before_loss})
-        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        root_channel = self.attach_root_channel()
         self.player(harness=harness)
-        self.prepare_input('first', 'parent', 'The original input must be sent once.', kind='task')
+        self.coord('account', 'read', *[''] * 8)
+        with sqlite3.connect(self.db) as database:
+            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
+                             ('first', 'root', 'parent', 'task', 'The original input must be sent once.'))
         observer = self.spawn(*self.receive_args('parent'))
-        original, started = self.accept('parent')
+        original, started = self.accept_child(observer, 'parent')
         evidence.update({'firstSupervisor': observer.pid, 'firstNative': started['pid'],
                          'keeper': started['ppid'], 'originalPrompt': started['prompt']})
+        self.connect('parent')
         native = self.eventually(lambda: self.coord('player', 'parent')['native'],
                                  'original native identity was not recorded')
         self.assertEqual(native, started['native'])
         evidence['recordedNativeId'] = native
-        # Reports remain queued while OMP is active; guidance may be steered live.
-        self.coord('message', 'second', 'root', 'parent', 'report', 'Queued before observer loss.')
         original_body = 'Original completion retained through observer loss: ' + harness
         log = self.output_log('parent')
         if terminal_before_loss:
-            self.action(original, body=original_body, hold_exit=True, report_input=True)
+            self.action(original, body=original_body, hold_exit=True, report_input=True,
+                        complete_task=False)
             self.assertEqual(json.loads(original.readline()),
                              {'terminal_written': True, 'input_after_prompt': ''})
             self.eventually(lambda: log.exists() and original_body in log.read_text(),
                             'terminal event was not observed before killing the observer')
             evidence['turnsBeforeLoss'] = self.coord('turns', 'parent')
+            self.coord('message', 'second', 'root', 'parent', 'report', 'Queued before native exit.')
         observer.kill()
         observer.wait()
         evidence['supervisorExit'] = observer.returncode
@@ -2526,7 +2596,6 @@ class Receive(unittest.TestCase):
             queued = self.coord(*self.receive_args('parent'))
             evidence['retryReceive'] = queued['receive']
             self.assertEqual(queued['receive'], 'none')
-        self.coord('message', 'third', 'root', 'parent', 'report', 'Queued after observer loss.')
         marker = 'output from original native after observer loss: ' + harness
         self.action(original, progress=marker)
         self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
@@ -2534,9 +2603,12 @@ class Receive(unittest.TestCase):
                         'automatic recovery did not retain output from the original native')
         evidence['postLossOutputRetained'] = True
         if not terminal_before_loss:
-            self.action(original, body=original_body, hold_exit=True, report_input=True)
+            self.action(original, body=original_body, hold_exit=True, report_input=True,
+                        complete_task=False)
             self.assertEqual(json.loads(original.readline()),
                              {'terminal_written': True, 'input_after_prompt': ''})
+            self.coord('message', 'second', 'root', 'parent', 'report', 'Queued before native exit.')
+        self.coord('message', 'third', 'root', 'parent', 'report', 'Queued after observer loss.')
         evidence['originalPromptRepeated'] = False
         self.eventually(lambda: original_body in log.read_text(), 'original terminal output was lost')
         evidence['duplicateNativeSession'] = bool(select.select([self.server], [], [], 0)[0])
@@ -2547,21 +2619,15 @@ class Receive(unittest.TestCase):
             evidence['retryAfterTerminalReceive'] = after_terminal['receive']
             self.assertEqual(after_terminal['receive'], 'none')
             self.assert_no_start()
-        evidence['pendingBeforeNativeExit'] = self.coord('inbox', 'parent')
+        evidence['pendingBeforeNativeExit'] = owed_messages(self.db, 'parent')
         self.assertEqual([m['id'] for m in evidence['pendingBeforeNativeExit']], ['second', 'third'])
         self.action(original)
         self.assertEqual(original.readline(), b'')
 
-        arrivals = {}
-        for _ in range(2):
-            control, event = self.accept_any()
-            self.assertNotIn(event['session'], arrivals, 'duplicate session launched during recovery')
-            arrivals[event['session']] = (control, event)
-        self.assertEqual(set(arrivals), {'parent', 'root'})
-        continuation, resumed = arrivals['parent']
-        parent, notified = arrivals['root']
+        continuation, resumed = self.accept('parent')
+        self.read_root_channel(root_channel, original_body)
         evidence['continuation'] = resumed
-        evidence['parentNotification'] = notified
+        evidence['parentNotification'] = root_channel[1].read_text().splitlines()
         evidence['originalExitedBeforeContinuation'] = not any(
             p['pid'] == started['pid'] for p in self.owned_processes())
         self.assertTrue(evidence['originalExitedBeforeContinuation'])
@@ -2570,19 +2636,11 @@ class Receive(unittest.TestCase):
         self.assertIn('[id: second]', resumed['prompt'])
         self.assertIn('[id: third]', resumed['prompt'])
         self.assertNotIn('[id: first]', resumed['prompt'])
-        self.assertNotIn(original_body, notified['prompt'])
-        self.assertIn('baton read', notified['prompt'])
         evidence['parentNotified'] = True
         follow_up_body = 'Queued inputs completed after recovery: ' + harness
         self.action(continuation, body=follow_up_body)
         self.assertEqual(continuation.readline(), b'')
-        self.action(parent)
-        self.assertEqual(parent.readline(), b'')
-        parent_again, next_notification = self.accept('root')
-        self.assertNotIn(follow_up_body, next_notification['prompt'])
-        self.assertIn('baton read', next_notification['prompt'])
-        self.action(parent_again)
-        self.assertEqual(parent_again.readline(), b'')
+        self.read_root_channel(root_channel, follow_up_body)
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
                         'recovered work or its parent notification remained pending')
         evidence['pendingInputDrained'] = True
@@ -3245,7 +3303,7 @@ class Receive(unittest.TestCase):
                                         missing_output=True)
 
     def test_completed_omp_attempt_replay_leaves_guidance_for_current_native(self):
-        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        root_channel = self.attach_root_channel()
         self.player(harness='omp')
         self.prepare_input('first', 'parent', 'Original work.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
@@ -3255,18 +3313,19 @@ class Receive(unittest.TestCase):
                 "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
             ).fetchone()[0])
         self.coord('message', 'second', 'root', 'parent', 'task', 'Work queued before original completion.')
-        self.action(original, body='Original report survives completed-attempt replay.')
+        self.action(original, body='Original report survives completed-attempt replay.',
+                    complete_task=False)
         self.assertEqual(original.readline(), b'')
-        arrivals = {}
-        for _ in range(2):
-            stream, started = self.accept_any()
-            self.assertNotIn(started['session'], arrivals)
-            arrivals[started['session']] = (stream, started)
-        self.assertEqual(set(arrivals), {'root', 'parent'})
-        parent, notification = arrivals['root']
-        current, second = arrivals['parent']
-        self.assertIn('Original report survives completed-attempt replay.', notification['prompt'])
+        current, second = self.accept('parent')
+        self.read_root_channel(root_channel, 'Original report survives completed-attempt replay.')
+        report = self.coord('turns', 'parent')[0]
+        self.assertEqual(self.coord('delivery', report['id'])['body'],
+                         'Original report survives completed-attempt replay.')
         self.assertEqual(second['native'], first['native'])
+        self.action(current, read_steer=True)
+        continuation = json.loads(current.readline())['steer_received']
+        self.assertEqual(continuation['id'], report['id'] + ':task-continuation')
+        self.assertIn(self.coord('delivery', continuation['id'])['body'], continuation['message'])
         marker = 'current native state observed before observer loss'
         self.action(current, progress=marker)
         self.assertEqual(json.loads(current.readline()), {'progress_written': marker})
@@ -3282,12 +3341,9 @@ class Receive(unittest.TestCase):
         self.eventually(lambda: (attempt / 'acknowledged').exists(),
                         'completed OMP attempt was not acknowledged while guidance was pending')
         self.assertTrue(any(p['pid'] == second['pid'] for p in self.owned_processes()))
-        self.assertIn('later-guidance', [m['id'] for m in self.coord('inbox', 'parent')])
         marker = 'recovery processed the current native response'
-        barrier = {'type': 'response', 'command': 'fixture_barrier', 'success': True,
-                   'id': marker}
-        self.action(current, native_request=barrier)
-        self.assertEqual(json.loads(current.readline()), {'request_written': barrier})
+        self.action(current, emit_checkpoint_message=marker)
+        self.assertEqual(json.loads(current.readline()), {'checkpoint_message_written': marker})
         current_attempt = pathlib.Path(self.execution('parent')[2])
         def recovered_barrier():
             output = log.read_bytes()
@@ -3311,21 +3367,22 @@ class Receive(unittest.TestCase):
                       'recovery processed the native response without forwarding pending guidance')
         accepted = steered['steer_received']
         self.assertEqual(accepted['id'], 'later-guidance')
-        self.assertEqual(accepted['message'], 'Guidance belongs to the current native process.')
-        marker = 'guidance accepted before recipient handling'
+        self.assertEqual(accepted['message'],
+                         'Message (guidance) from root [id: later-guidance]:\n'
+                         'Guidance belongs to the current native process.')
+        marker = 'guidance received by the current native'
         self.action(current, progress=marker)
         self.assertEqual(json.loads(current.readline()), {'progress_written': marker})
         self.eventually(lambda: marker in log.read_text(),
                         'the observer did not read past the steer response')
-        self.assertFalse(read_recorded(self.db, 'later-guidance'))
+        reads = message_reads(self.db, 'later-guidance', 'parent')
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            current_id, = database.execute("SELECT id FROM executions WHERE session='parent'").fetchone()
+        self.assertEqual({(row['attempt'], row['native']) for row in reads},
+                         {(current_id, second['native'])})
         self.action(current, body='Current task completed after accepting guidance.')
         self.assertEqual(current.readline(), b'')
-        self.action(parent)
-        self.assertEqual(parent.readline(), b'')
-        parent_again, notification = self.accept('root')
-        self.assertIn('Current task completed after accepting guidance.', notification['prompt'])
-        self.action(parent_again)
-        self.assertEqual(parent_again.readline(), b'')
+        self.read_root_channel(root_channel, 'Current task completed after accepting guidance.')
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
                         'replayed completion or current work remained pending')
         turns = self.coord('turns', 'parent')
@@ -3338,14 +3395,15 @@ class Receive(unittest.TestCase):
         self.shutdown_idle_database_owner('keeper or recovery did not exit after replay')
 
     def test_omp_recovery_after_input_closes_defers_guidance_until_native_exit(self):
-        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        root_channel = self.attach_root_channel()
         self.player(harness='omp')
         self.prepare_input('original', 'parent', 'Original work.', kind='task')
         observer = self.spawn(*self.receive_args('parent'))
         original, started = self.accept('parent')
         original_body = ('Original OMP result before observer loss.\n'
                          'The second line must reach the parent unchanged.')
-        self.action(original, body=original_body, hold_exit=True, report_input=True)
+        self.action(original, body=original_body, hold_exit=True, report_input=True,
+                    complete_task=False)
         # The fixture reports this only after reading EOF from native stdin.
         self.assertEqual(json.loads(original.readline()),
                          {'terminal_written': True, 'input_after_prompt': ''})
@@ -3364,35 +3422,24 @@ class Receive(unittest.TestCase):
         self.assertTrue(any(p['pid'] == started['pid'] for p in self.owned_processes()))
         self.assert_receive_has_no_attempt(self.coord(*self.receive_args('parent')))
         self.assert_no_start()
-        self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['pending-guidance'])
+        self.assertEqual([m['id'] for m in owed_messages(self.db, 'parent')], ['pending-guidance'])
         self.assertEqual(list(self.directory.glob('state.db.attempt-*/observer-error')), [])
         for recovery_log in self.directory.glob('state.db.attempt-*/observer.log'):
             self.assertNotIn('Broken pipe', recovery_log.read_text())
         self.action(original)
         self.assertEqual(original.readline(), b'')
 
-        arrivals = {}
-        for _ in range(2):
-            control, event = self.accept_any()
-            self.assertNotIn(event['session'], arrivals)
-            arrivals[event['session']] = (control, event)
-        self.assertEqual(set(arrivals), {'parent', 'root'})
-        continuation, resumed = arrivals['parent']
-        parent, notification = arrivals['root']
+        continuation, resumed = self.accept('parent')
+        self.read_root_channel(root_channel, original_body)
         self.assertFalse(any(p['pid'] == started['pid'] for p in self.owned_processes()))
         self.assertEqual(resumed['native'], started['native'])
         self.assertIn('[id: pending-guidance]', resumed['prompt'])
         self.assertNotIn('[id: original]', resumed['prompt'])
-        self.assertIn(original_body, notification['prompt'])
+        self.assertEqual(self.coord('delivery', original_report['id'])['body'], original_body)
         follow_up_body = 'Pending guidance completed by the next native invocation.'
         self.action(continuation, body=follow_up_body)
         self.assertEqual(continuation.readline(), b'')
-        self.action(parent)
-        self.assertEqual(parent.readline(), b'')
-        parent_again, notification = self.accept('root')
-        self.assertIn(follow_up_body, notification['prompt'])
-        self.action(parent_again)
-        self.assertEqual(parent_again.readline(), b'')
+        self.read_root_channel(root_channel, follow_up_body)
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
                         'pending guidance or its parent notification was not acknowledged')
         turns = self.coord('turns', 'parent')
@@ -5495,19 +5542,20 @@ class Receive(unittest.TestCase):
         self.action(control, stdout_fragment=fragment)
         self.assertEqual(json.loads(control.readline()), {'fragment_written': fragment})
         self.action(control, read_steer=True, signal_steer_wait=True,
-                    check_steer_read=True, finish_fragment='-completed"}')
+                    finish_fragment='-completed"}')
         self.assertEqual(json.loads(control.readline()), {'waiting_for_steer': True})
         body = 'Guidance received during the silent wait λ.'
         self.message('silent-guidance', 'parent', body)
         accepted = json.loads(control.readline())['steer_received']
         self.assertEqual((accepted['type'], accepted['id'], accepted['message']),
-                         ('steer', 'silent-guidance', body))
-        marker = 'silent guidance accepted before recipient handling'
+                         ('steer', 'silent-guidance',
+                          'Message (guidance) from root [id: silent-guidance]:\n' + body))
+        marker = 'silent guidance received by the native'
         self.action(control, progress=marker)
         self.assertEqual(json.loads(control.readline()), {'progress_written': marker})
         self.eventually(lambda: marker in self.output_log('parent').read_text(),
                         'the observer did not read past the steer response')
-        self.assertFalse(read_recorded(self.db, 'silent-guidance'))
+        self.assertTrue(read_recorded(self.db, 'silent-guidance'))
         self.assert_no_start()
         self.action(control, body=body)
         self.finish(observer)
@@ -5523,6 +5571,7 @@ class Receive(unittest.TestCase):
 
     def test_output_only_frames_replay_from_durable_checkpoint(self):
         self.player(harness='omp')
+        self.coord('logs', 'parent', 'diagnostic')
         self.prepare_input('output-replay-task', 'parent', 'Replay output from the last semantic checkpoint.')
         observer = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
@@ -5646,48 +5695,32 @@ class Receive(unittest.TestCase):
                 self.assertTrue((directory / 'acknowledged').exists())
                 self.assert_no_start()
 
-    def test_failed_continuation_retains_queued_guidance_for_retry(self):
-        """Accepted steering remains owed through a provider failure, and the
-        same actor handles it during an explicit retry.
+    def test_forwarded_guidance_stays_read_after_provider_failure(self):
+        """A successful native input write records a complete read that remains
+        recorded when the provider later fails.
         """
         self.player(harness='omp')
-        self.prepare_input('original', 'parent')
+        self.prepare_input('original', 'parent', kind='task')
         first = self.spawn(*self.receive_args('parent'))
         control, original = self.accept('parent')
         self.assertIn('[id: original]', original['prompt'])
         self.message('owed', 'parent', 'Guidance queued after the original prompt.')
         self.assertNotIn('[id: owed]', original['prompt'])
-        self.action(control, ack=False, complete_task=False)
-        continued, resumed = self.accept_or_child_exit(
-            first, 'successful turn did not continue the newly queued input')
-        self.assertEqual(resumed['native'], original['native'])
-        self.assertIn('[id: owed]', resumed['prompt'])
-        self.assertNotIn('[id: original]', resumed['prompt'])
-        self.assertTrue(read_recorded(self.db, 'original'))
-        self.action(continued, read_steer=True, check_steer_read=True)
-        accepted = json.loads(continued.readline())['steer_received']
+        self.action(control, read_steer=True)
+        accepted = json.loads(control.readline())['steer_received']
         self.assertEqual(accepted['id'], 'owed')
         marker = 'steer accepted before provider failure'
-        self.action(continued, progress=marker)
-        self.assertEqual(json.loads(continued.readline()), {'progress_written': marker})
+        self.action(control, progress=marker)
+        self.assertEqual(json.loads(control.readline()), {'progress_written': marker})
         self.eventually(lambda: marker in self.output_log('parent').read_text(),
                         'the observer did not read past the accepted steer')
-        self.assertFalse(read_recorded(self.db, 'owed'))
-        self.action(continued, fail=True, ack=False)
-        self.finish(first, ok=False)
-        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
-        self.assertFalse(read_recorded(self.db, 'owed'))
-        self.assertEqual(len(self.coord('turns', 'parent')), 2)
-        self.assert_no_start()
-        retry = self.spawn(*self.receive_args('parent'))
-        retried, replay = self.accept('parent')
-        self.assertEqual(replay['native'], original['native'])
-        self.assertIn('[id: owed]', replay['prompt'])
-        self.action(retried, body='Original guidance handled after provider recovery.')
-        self.finish(retry)
         self.assertTrue(read_recorded(self.db, 'owed'))
-        self.assertEqual(self.coord('inbox', 'parent'), [])
-        self.assertEqual(len(self.coord('turns', 'parent')), 3)
+        self.action(control, fail=True, ack=False)
+        self.finish(first, ok=False)
+        self.assertTrue(read_recorded(self.db, 'owed'))
+        self.assertNotIn('owed', [row['id'] for row in owed_messages(self.db, 'parent')])
+        self.assertEqual(len(self.coord('turns', 'parent')), 1)
+        self.assertEqual(self.coord('player', 'parent')['native'], original['native'])
         self.assert_no_start()
 
     def test_concurrent_sends_preserve_both_inputs_and_start_one_continuation(self):

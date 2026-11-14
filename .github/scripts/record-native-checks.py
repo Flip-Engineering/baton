@@ -18,6 +18,7 @@ SELECTED = (
     'control.py', 'control-identity.py', 'configure.py', 'account-credits.py',
     'omp-completion-extension.py', 'package-licenses.py', 'stop.py', 'stop-dsh.py',
     'root-channel.py', 'root-inbox-delivery.py', 'launch-store-retained.py', 'pending-guidance-replay.py',
+    'receive-notice-memory.py',
 )
 
 
