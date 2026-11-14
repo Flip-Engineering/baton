@@ -10,7 +10,6 @@ import json
 import os
 import pathlib
 import sys
-import time
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -108,12 +107,13 @@ class NoticeMemory(receive.Receive):
         self.assertEqual(self.execution('parent')[0], 'exited')
         self.assertIn(cause, (attempt / 'native.stderr').read_text())
         self.assertEqual([message['id'] for message in self.coord('inbox', 'parent')], ['task'])
-        # Each recovery the keeper starts and loses appends to observer-error.
-        time.sleep(2)
+        # The keeper's normal poll waits indefinitely for native-exit,
+        # observer/control or spool readiness. Recovery runs from those events.
+        # This helper waits for the owner process to exit after its attempt retires.
+        self.shutdown_idle_database_owner('failed attempt processes did not exit naturally')
         errors = attempt / 'observer-error'
         self.assertFalse(errors.exists() and errors.read_text(),
                          'The keeper started recovery for a settled attempt.')
-        self.shutdown_idle_database_owner('failed attempt processes did not exit naturally')
 
 
 def load_tests(loader, tests, pattern):
