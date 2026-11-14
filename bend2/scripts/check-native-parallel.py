@@ -92,7 +92,7 @@ def main():
     scratch = seed / '.scratch/bend2'
     scratch.mkdir(parents=True)
     for name in ('baton2', 'process-test', 'process-test.c', 'codex-proxy-test', 'instance-test', 'git-test', 'land-test', 'stop-hook-entry', 'prompt-status-entry',
-                 'account-order-entry', 'usage-read'):
+                 'account-order-entry', 'usage-read', 'compile-queue-test'):
         shutil.copy2(ROOT / '.scratch/bend2' / name, scratch / name)
     python = sys.argv[1]
     queue = [{'label': path.name, 'argv': [python, 'bend2/test/' + path.name]}
@@ -141,6 +141,8 @@ def main():
                                XDG_RUNTIME_DIR=str(runtime / 'runtime'),
                                BATON2_STOP_HOOK_FIXTURE=str(source / '.scratch/bend2/stop-hook-entry'),
                                FINAL_NATIVE_CONTEXT_EVIDENCE=str(native_evidence))
+            if spec['label'] in ('test_compile_queue_history_group.py', 'test_compile_queue_history_fallback.py'):
+                environment['BATON2_COMPILE_QUEUE_BIN'] = str(source / '.scratch/bend2/compile-queue-test')
             # The inherited Python shim records each selected suite in its original output directory.
             with (evidence / 'stdout').open('wb') as stdout, (evidence / 'stderr').open('wb') as stderr:
                 child = subprocess.Popen(spec['argv'], cwd=source, env=environment,

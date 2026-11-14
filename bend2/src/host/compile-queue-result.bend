@@ -91,16 +91,22 @@ def CompileQueueResult.read_rows(+path: String) -> IO(Result<&1,&1,U32 & String,
     read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
     CompileQueueResult.read_rows_result(read)
 
-def CompileQueueResult.completed(+result: String) -> Bool:
-  Bool.and(String.eq(CompileQueueResult.field(result, "status"), "completed"),
-    Bool.or(String.eq(CompileQueueResult.field(result, "kind"), "check"),
-      Bool.not(String.is_empty(CompileQueueResult.artifact_rows(result)))))
+def CompileQueueResult.completed_lines(+lines: List<&2,String>) -> Bool:
+  Bool.and(String.eq(CompileQueueResult.field_lines(lines, "status"), "completed"),
+    Bool.or(String.eq(CompileQueueResult.field_lines(lines, "kind"), "check"),
+      Bool.not(String.is_empty(CompileQueueResult.artifact_lines(lines,"")))))
 
-def CompileQueueResult.base_verified(+result: String, +key: String) -> Bool:
-  Bool.and(String.eq(CompileQueueResult.field(result, "schema"), CompileQueueResult.schema()),
-    Bool.and(String.eq(CompileQueueResult.field(result, "identity_schema"), CompileQueueResult.identity_schema()),
-      Bool.and(String.eq(CompileQueueResult.field(result, "key"), key),
-        String.eq(CompileQueueResult.field(result, "verified"), "1"))))
+def CompileQueueResult.completed(result: String) -> Bool:
+  CompileQueueResult.completed_lines(String.lines(result))
+
+def CompileQueueResult.base_verified_lines(+lines: List<&2,String>, key: String) -> Bool:
+  Bool.and(String.eq(CompileQueueResult.field_lines(lines, "schema"), CompileQueueResult.schema()),
+    Bool.and(String.eq(CompileQueueResult.field_lines(lines, "identity_schema"), CompileQueueResult.identity_schema()),
+      Bool.and(String.eq(CompileQueueResult.field_lines(lines, "key"), key),
+        String.eq(CompileQueueResult.field_lines(lines, "verified"), "1"))))
+
+def CompileQueueResult.base_verified(result: String, key: String) -> Bool:
+  CompileQueueResult.base_verified_lines(String.lines(result),key)
 
 def CompileQueueResult.external_verified(+result: String, +command: String, +process: String, +inputs_sha256: String, +output: String, +artifacts: String) -> Bool:
   Bool.and(String.eq(CompileQueueResult.field(result, "external"), "1"),
@@ -184,15 +190,21 @@ def CompileQueueResult.verify_rows(+rows: List<&2,String>, +keydir: String) -> I
 # the artifact tree. Content qualification stays with verify and
 # reusable, which compare the recorded artifact rows against the
 # actual files before any reuse or adoption.
-def CompileQueueResult.acceptable(+result: String, +key: String, +rows: String) -> Bool:
-  Bool.and(String.eq(CompileQueueResult.field(result, "external"), "0"),
-    Bool.and(CompileQueueResult.base_verified(result, key),
-      Bool.and(CompileQueueResult.completed(result),
-        Bool.pick(Bool, String.eq(CompileQueueResult.field(result, "kind"), "check"),
+def CompileQueueResult.acceptable_lines(+lines: List<&2,String>, key: String, +rows: String) -> Bool:
+  Bool.and(String.eq(CompileQueueResult.field_lines(lines, "external"), "0"),
+    Bool.and(CompileQueueResult.base_verified_lines(lines, key),
+      Bool.and(CompileQueueResult.completed_lines(lines),
+        Bool.pick(Bool, String.eq(CompileQueueResult.field_lines(lines, "kind"), "check"),
           String.is_empty(rows), Bool.not(String.is_empty(rows))))))
 
-def CompileQueueResult.recorded_completed(+result: String, +key: String) -> Bool:
-  CompileQueueResult.acceptable(result, key, CompileQueueResult.artifact_rows(result))
+def CompileQueueResult.acceptable(result: String, key: String, rows: String) -> Bool:
+  CompileQueueResult.acceptable_lines(String.lines(result),key,rows)
+
+def CompileQueueResult.recorded_completed_lines(+lines: List<&2,String>, key: String) -> Bool:
+  CompileQueueResult.acceptable_lines(lines,key,CompileQueueResult.artifact_lines(lines,""))
+
+def CompileQueueResult.recorded_completed(result: String, key: String) -> Bool:
+  CompileQueueResult.recorded_completed_lines(String.lines(result),key)
 
 def CompileQueueResult.verify_result_read(read: Result<&1,&1,U32 & String,String>, +keydir: String, +key: String) -> IO(Bool):
   match read:
