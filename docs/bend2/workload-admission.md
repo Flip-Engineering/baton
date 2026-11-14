@@ -29,7 +29,7 @@ that condition separately.
 
 The scope covers the queue wait, test, database cleanup and evidence collection.
 The launcher retains a receipt and full queue diagnostics under the caller's
-`.scratch/workloads/`. It prints the test's complete stdout and stderr after the
-queue completes, and returns its exit status. Native execution logs and measured
+`.scratch/workloads/`. It streams the test's complete stdout and stderr as they are
+written, and returns its exit status. Native execution logs and measured
 peaks remain in the shared queue. A failed submission reports the queue error.
 An unavailable systemd manager, queue or cgroup counter is an execution failure.

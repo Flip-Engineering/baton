@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 
 
@@ -53,29 +54,46 @@ def main():
         '--option', 'invocation=' + invocation, '--per-run', 'invocation=' + invocation,
         '--input', str(script), '--', *command]
     print('workload evidence: ' + str(evidence), file=sys.stderr, flush=True)
-    with (evidence / 'queue.stdout').open('wb') as out, (evidence / 'queue.stderr').open('wb') as err:
-        completed = subprocess.run(request, stdout=out, stderr=err)
-    result = fields(receipt)
-    key = result.get('key')
-    if key:
-        keydir = state / 'keys' / key
-        if completed.returncode == 0:
-            terminal = fields(keydir / 'completed' / 'result')
-        else:
-            attempts = sorted((keydir / 'runs').iterdir(), key=lambda p: int(p.name.split('-')[0]))
-            terminal = fields(attempts[-1] / 'result') if attempts else {}
+    keyed = subprocess.run([request[0], '--', 'key', *request[3:]], capture_output=True)
+    if keyed.returncode:
+        sys.stdout.buffer.write(keyed.stdout)
+        sys.stderr.buffer.write(keyed.stderr)
+        return keyed.returncode
+    keydir = state / 'keys' / keyed.stdout.decode().strip()
+    offsets = {'stdout': 0, 'stderr': 0}
+    attempt = None
+
+    def drain():
+        nonlocal attempt
+        if attempt is None:
+            attempts = list(keydir.glob('runs/*'))
+            if attempts:
+                attempt = attempts[0]
+        if attempt is None:
+            return
         for name, stream in (('stdout', sys.stdout.buffer), ('stderr', sys.stderr.buffer)):
-            path = terminal.get(name)
-            if path and Path(path).is_file():
-                with Path(path).open('rb') as source:
+            try:
+                with (attempt / name).open('rb') as source:
+                    source.seek(offsets[name])
                     shutil.copyfileobj(source, stream)
+                    offsets[name] = source.tell()
                 stream.flush()
-    if completed.returncode and not key:
+            except FileNotFoundError:
+                pass
+
+    with (evidence / 'queue.stdout').open('wb') as out, (evidence / 'queue.stderr').open('wb') as err:
+        child = subprocess.Popen(request, stdout=out, stderr=err)
+        while child.poll() is None:
+            drain()
+            time.sleep(.1)
+        code = child.wait()
+    drain()
+    if code and (attempt is None or not (attempt / 'result').exists()):
         for name, stream in (('queue.stdout', sys.stdout.buffer), ('queue.stderr', sys.stderr.buffer)):
             with (evidence / name).open('rb') as source:
                 shutil.copyfileobj(source, stream)
             stream.flush()
-    return completed.returncode
+    return code
 
 
 if __name__ == '__main__':
