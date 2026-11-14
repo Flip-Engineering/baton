@@ -1,8 +1,8 @@
 """Workloads retain execution, session-detached memory and shared admission."""
-import json
 import os
 from pathlib import Path
 import subprocess
+import re
 import sys
 import tempfile
 import time
@@ -76,7 +76,7 @@ class WorkloadAdmission(unittest.TestCase):
         self.addCleanup(self.stop, process)
         self.wait_for(lambda: (self.root / 'child-started').exists(), process)
         self.wait_for(lambda: any(int(fields(p).get('kb', '0')) >= 64*1024
-            for p in self.state.glob('keys/*/runs/*/usage')), process)
+            for p in self.state.glob('admission/usage/*')), process)
         out, err = self.finish(process)
         self.assertIn('workload-output', out)
         self.assertIn('workload-error-output', err)
@@ -92,8 +92,8 @@ class WorkloadAdmission(unittest.TestCase):
             (self.root / 'child-started').unlink()
             (self.root / 'release').unlink()
         self.assertEqual((self.root / 'executions').read_text().splitlines(), ['ran', 'ran'])
-        claims = [fields(p) for p in self.state.glob('keys/*/runs/*/admission')]
-        self.assertTrue(any(int(p.get('expected_kb', '0')) > 0 for p in claims), claims)
+        claims = [p.read_text() for p in self.root.glob('.scratch/workloads/*/queue.stdout')]
+        self.assertTrue(any(any(int(value) > 0 for value in re.findall(r'expected_kb=(\d+)', text)) for text in claims), claims)
 
     def test_a_measured_workload_waits_for_available_host_memory(self):
         first = self.launch()
