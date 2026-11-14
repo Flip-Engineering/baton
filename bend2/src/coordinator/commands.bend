@@ -574,12 +574,31 @@ def completion_pending_sql(+player: String) -> String:
 def completion_oldest_sql(+player: String) -> String:
   "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(q(player)) ++ " AND NOT " ++ task_closed_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
 
+# A terminal report whose body equals the newest report the session already
+# sent the same recipient repeats known text (#723). The observation writes no
+# second report row; the recipient keeps the report it already holds and the
+# native log retains the event. Every argument is a SQL expression.
+def unchanged_report_sql(+sender: String, +recipient: String, +id: String, +body: String) -> String:
+  "EXISTS(SELECT 1 FROM messages previous WHERE previous.sender=" ++ sender ++ " AND previous.recipient=" ++ recipient ++ " AND previous.kind='report' AND previous.id<>" ++ id ++ " AND previous.body=" ++ body ++ " AND previous.seq=(SELECT max(latest.seq) FROM messages latest WHERE latest.sender=" ++ sender ++ " AND latest.recipient=" ++ recipient ++ " AND latest.kind='report' AND latest.id<>" ++ id ++ "))"
+
+# The completion report is staged once, so the report insert, the turn insert
+# and the answer read the derived recipient and terminal body without
+# repeating their expressions. A withheld terminal writes no report row and no
+# turn row; its native log retains the event.
+def completion_report_stage_sql(+id: String, +player: String, +event: String) -> String:
+  +dest = historical_recipient_sql(id,player,"report",report_recipient(q(player)))
+  "DROP TABLE IF EXISTS temp.baton_completion_report;"
+  ++ "CREATE TEMP TABLE baton_completion_report(id TEXT NOT NULL,sender TEXT NOT NULL,recipient TEXT,body TEXT);"
+  ++ "INSERT INTO temp.baton_completion_report(id,sender,recipient,body) SELECT " ++ q(id) ++ ",id," ++ dest ++ "," ++ terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ dest ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ ";"
+
 def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
   +dest = historical_recipient_sql(id,player,"report",report_recipient(q(player)))
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ dest ++ ",'report'," ++ terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ dest ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ message_upsert() ++ message_conflict_sql(q(id),q(player),dest,"'report'",terminal_body_expr(event),dest ++ " IS NOT NULL AND " ++ terminal_expr(event))
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ event ++ " WHERE " ++ dest ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ " AND sender=" ++ q(player) ++ " AND recipient=" ++ dest ++ " AND kind='report' AND body=" ++ terminal_body_expr(event) ++ ") ON CONFLICT(id) DO NOTHING;"
+  completion_report_stage_sql(id,player,event)
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT staged.id,staged.sender,staged.recipient,'report',staged.body FROM temp.baton_completion_report staged WHERE NOT " ++ unchanged_report_sql("staged.sender","staged.recipient","staged.id","staged.body") ++ message_upsert() ++ message_conflict_sql(q(id),q(player),dest,"'report'",terminal_body_expr(event),dest ++ " IS NOT NULL AND " ++ terminal_expr(event))
+  ++ "INSERT INTO turns(id,worker,event) SELECT staged.id,staged.sender," ++ event ++ " FROM temp.baton_completion_report staged WHERE EXISTS(SELECT 1 FROM messages recorded WHERE recorded.id=staged.id AND recorded.sender=staged.sender AND recorded.recipient=staged.recipient AND recorded.kind='report' AND recorded.body=staged.body) ON CONFLICT(id) DO NOTHING;"
   ++ "INSERT INTO repl_context_turns(turn,owner,cell,version) SELECT t.id,t.worker,b.cell,b.version FROM turns t LEFT JOIN repl_context_bindings b ON b.owner=t.worker WHERE changes()=1 AND t.id=" ++ q(id) ++ " AND t.worker=" ++ q(player) ++ " ON CONFLICT(turn) DO NOTHING;"
-  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ event ++ ",'$.type'),json_extract(" ++ event ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ dest ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
+  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ event ++ ",'$.type'),json_extract(" ++ event ++ ",'$.payload_type')),'reportId',CASE WHEN EXISTS(SELECT 1 FROM messages recorded JOIN temp.baton_completion_report staged ON recorded.id=staged.id AND recorded.sender=staged.sender AND recorded.kind='report' AND recorded.body=staged.body) THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
+  ++ "DROP TABLE temp.baton_completion_report;"
 
 # The SQL query owns this temporary frame relation for its complete transaction.
 # Identity, report and turn statements read the same complete valid JSON frame.
