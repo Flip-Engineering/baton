@@ -9,6 +9,7 @@ keeper does not start recovery for it again (#1443).
 import json
 import os
 import pathlib
+import sqlite3
 import sys
 import unittest
 
@@ -99,7 +100,10 @@ class NoticeMemory(receive.Receive):
         cause = 'Error: Provider unavailable for this fixture'
         config.update({'early_failure': cause})
         config_path.write_text(json.dumps(config))
-        self.coord('message', 'task', 'root', 'parent', 'task', 'Input stays owed.')
+        self.coord('account', 'read', *[''] * 8)
+        with sqlite3.connect(self.db) as database:
+            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
+                             ('task', 'root', 'parent', 'task', 'Input stays owed.'))
         observer = self.spawn(*self.receive_args('parent'))
         stdout, stderr = observer.communicate(timeout=60)
         self.assertNotIn('malformed JSON', stdout + stderr)

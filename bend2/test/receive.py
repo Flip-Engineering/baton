@@ -818,7 +818,7 @@ class Receive(unittest.TestCase):
     def process_names(self):
         """Process names of this run: the coordinator, its sibling entries and
         the executables the run writes."""
-        return {path.name[:15] for path in [*EXE.parent.iterdir(), *self.directory.iterdir()]}
+        return {path.name[:15] for path in [*EXE.parent.iterdir(), *self.directory.iterdir()]} | {'exe'}
 
     def owned_processes(self):
         return [{key: process[key] for key in ('pid', 'ppid', 'status', 'command')}
