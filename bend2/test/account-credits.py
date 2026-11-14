@@ -83,8 +83,10 @@ class AccountCredits(unittest.TestCase):
             "    prompt=frames[-1]['message']"))
 
     def recruit(self, session, harness='omp', model='kimi-code/k3', effort='low'):
-        return self.call('recruit', session, 'root', harness, model, effort, self.repo,
-                         session + '-branch', self.checkouts / session, self.base)
+        assignment = self.call('recruit', session, 'root', harness, model, effort, self.repo,
+                               session + '-branch', self.checkouts / session, self.base)
+        self.call('receiver', session, self.fixture, self.directory / (session + '.native.jsonl'))
+        return assignment
 
     def store(self, name):
         path = self.directory / 'stores' / name
