@@ -41,16 +41,16 @@ def larger(+candidate: String, +current: String) -> String:
 
 # A cross-request measurement retains its successful result and original identity.
 def observation(+text: String) -> IO(String):
-  do IO<String>:
-    +key : String <- IO.pure(String,field(text,"key"))
-    +attempt : String <- IO.pure(String,field(text,"attempt"))
-    +result : String <- read(attempt ++ "/result")
-    +eligible : Bool <- IO.pure(Bool,Bool.and(U32.is_gt(peak(text),0),
-      Bool.and(Bool.not(String.is_empty(attempt)),
-        Bool.and(Result.CompileQueueResult.recorded_completed(result,key),
-          Bool.not(String.eq(field(result,"external"),"1"))))))
-    IO.pure(String,Bool.pick(String,eligible,
-      record(peak(text),"",key,attempt,field(result,"kind")),""))
+  Bool.pick(IO(String),Bool.and(U32.is_gt(peak(text),0),Bool.not(String.is_empty(field(text,"attempt")))),
+    do IO<String>:
+      +key : String <- IO.pure(String,field(text,"key"))
+      +attempt : String <- IO.pure(String,field(text,"attempt"))
+      +result : String <- read(attempt ++ "/result")
+      eligible : Bool <- IO.pure(Bool,Bool.and(Result.CompileQueueResult.recorded_completed(result,key),
+        Bool.not(String.eq(field(result,"external"),"1"))))
+      IO.pure(String,Bool.pick(String,eligible,
+        record(peak(text),"",key,attempt,field(result,"kind")),"")),
+    IO.pure(String,""))
 
 def classify(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
              +text: String, +kind: String, +family: String, toolchain: String) -> IO(String):
@@ -88,16 +88,12 @@ def sole(files: List<&1,String>) -> Bool:
 
 def attempt_peak(+state: String, +key: String, +attempt: String, is_sole: Bool) -> IO(String):
   do IO<String>:
-    result : String <- read(attempt ++ "/result")
-    Bool.pick(IO(String),Result.CompileQueueResult.recorded_completed(result,key),
-      do IO<String>:
-        +own : String <- read(attempt ++ "/peak")
-        # A sole legacy run identifies the source of its key-level observation.
-        raw : String <- Bool.pick(IO(String),U32.is_gt(peak(own),0),IO.pure(String,own),
-          Bool.pick(IO(String),is_sole,
-            read(state ++ "/keys/" ++ key ++ "/peak"),IO.pure(String,"")))
-        observation("key=" ++ key ++ "\nattempt=" ++ attempt ++ "\n" ++ raw),
-      IO.pure(String,""))
+    +own : String <- read(attempt ++ "/peak")
+    # A sole legacy run identifies the source of its key-level observation.
+    raw : String <- Bool.pick(IO(String),U32.is_gt(peak(own),0),IO.pure(String,own),
+      Bool.pick(IO(String),is_sole,
+        read(state ++ "/keys/" ++ key ++ "/peak"),IO.pure(String,"")))
+    observation("key=" ++ key ++ "\nattempt=" ++ attempt ++ "\n" ++ raw)
 
 def attempt_records(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
                     files: List<&1,String>, +state: String, +key: String, +kind: String,
