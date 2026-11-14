@@ -1,6 +1,7 @@
 """Account funding routes, the organization credit pool and the attempt funding record."""
 import importlib.util
 import json
+import os
 import pathlib
 import unittest
 
@@ -52,6 +53,7 @@ class AccountCredits(unittest.TestCase):
     rows = identity.ControlIdentity.rows
     eventually = identity.ControlIdentity.eventually
     exited = identity.ControlIdentity.exited
+    process_rows = identity.ControlIdentity.process_rows
     close_fixtures = identity.ControlIdentity.close_fixtures
 
     def setUp(self):
@@ -61,6 +63,13 @@ class AccountCredits(unittest.TestCase):
         settings = json.loads(config.read_text())
         settings['sessions'] = {'kimi-code/k3': 'leaf'}
         config.write_text(json.dumps(settings))
+        commands = self.directory / 'bin'
+        commands.mkdir()
+        (commands / 'omp').symlink_to(self.fixture)
+        self.environment['PATH'] = str(commands) + os.pathsep + self.environment.get('PATH', '')
+        self.fixture.write_text(self.fixture.read_text().replace(
+            "session=config.get('sessions',{}).get(model,model)",
+            "session=os.environ['BATON_SESSION']"))
 
     def recruit(self, session, harness='omp', model='kimi-code/k3', effort='low'):
         return self.call('recruit', session, 'root', harness, model, effort, self.repo,
