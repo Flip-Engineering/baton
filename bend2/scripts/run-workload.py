@@ -25,6 +25,7 @@ def main():
     script = Path(__file__).resolve()
     invocation = uuid.uuid4().hex
     if not args.inside:
+        os.environ.setdefault('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid()))
         os.execvp('systemd-run', ['systemd-run', '--user', '--scope', '--quiet',
             '--unit=baton-workload-' + invocation, '--slice=baton-workloads.slice',
             '--property=MemoryAccounting=yes', '--', sys.executable, str(script),
