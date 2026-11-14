@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import sqlite3
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -348,10 +349,9 @@ class AccountCredits(unittest.TestCase):
         self.assertEqual([row['session'] for row in attempts], ['leaf', 'leaf'])
         self.assertEqual(attempts[1]['secretRef'], self.store('omp-b'))
         handoff = [row for row in self.rows(
-            "SELECT body FROM messages WHERE body LIKE 'account handoff:%'")]
+            "SELECT body FROM messages WHERE kind='report' AND recipient='root' AND body LIKE 'account move:%'")]
         self.assertEqual(len(handoff), 1, handoff)
-        self.assertIn('refused account=omp-main', handoff[0]['body'])
-        self.assertIn('bound account=omp-next', handoff[0]['body'])
+        self.assertIn('from omp-main to omp-next', handoff[0]['body'])
         self.assertIn(cause, handoff[0]['body'])
 
     def test_the_last_account_exhaustion_records_the_fact_and_wakes_the_conductor(self):
@@ -367,10 +367,10 @@ class AccountCredits(unittest.TestCase):
         attempts = self.send('attempts', session='leaf')['attempts']
         self.assertEqual([row['account'] for row in attempts], ['omp-only'], attempts)
         exhausted = [row for row in self.rows(
-            "SELECT body FROM messages WHERE body LIKE 'accounts exhausted:%'")]
+            "SELECT body FROM messages WHERE kind='report' AND recipient='root' AND body LIKE 'account order held:%'")]
         self.assertEqual(len(exhausted), 1, exhausted)
-        self.assertIn('account=omp-only', exhausted[0]['body'])
-        self.assertIn('no later selectable operator-recorded account remains', exhausted[0]['body'])
+        self.assertIn('omp-only refused:', exhausted[0]['body'])
+        self.assertIn('has no available account in the operator order', exhausted[0]['body'])
         self.assertIn(cause, exhausted[0]['body'])
 
 
@@ -384,8 +384,9 @@ class AccountCredits(unittest.TestCase):
         self.send('bind', id='omp-main', session='leaf')
         self.send('bind', id='omp-two', session='leaf2')
         self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
-        self.call('message', 'isolated-task', 'root', 'leaf2', 'task', self.task.read_text())
         first, started = self.accept('leaf')
+        self.call('message', 'isolated-task', 'root', 'leaf2', 'task', self.task.read_text())
+        third, started2 = self.accept('leaf2')
         cause = "You've hit your session limit. Try again later."
         self.finish(first, body=cause, fail=True)
         second, resumed = self.accept('leaf')
@@ -394,13 +395,12 @@ class AccountCredits(unittest.TestCase):
         self.exited('leaf')
         self.assertEqual([row['account'] for row in self.send('attempts', session='leaf')['attempts']],
                          ['omp-main', 'omp-next'])
-        third, started2 = self.accept('leaf2')
         self.finish(third)
         self.exited('leaf2')
         self.assertEqual([row['account'] for row in self.send('attempts', session='leaf2')['attempts']],
                          ['omp-two'])
         self.assertEqual(self.rows("SELECT account FROM account_attempts WHERE session='leaf2'"),
-                         [('omp-two',)])
+                         [{'account': 'omp-two'}])
 
 
     def test_exhaustion_delivers_owed_input_to_the_continuation_without_guidance(self):
@@ -413,18 +413,22 @@ class AccountCredits(unittest.TestCase):
         self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         first, started = self.accept('leaf')
         self.assertIn(self.task.read_text(), started['prompt'])
-        self.call('message', 'owed-task', 'root', 'leaf', 'task', owed)
+        # Commit input that has not been delivered to the current native turn.
+        with sqlite3.connect(self.db) as database:
+            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) '
+                             "VALUES('owed-task','root','leaf','task',?)", (owed,))
         cause = "You've hit your session limit. Try again later."
         self.finish(first, body=cause, fail=True)
         second, resumed = self.accept('leaf')
         self.assertEqual(resumed['native'], started['native'])
-        self.assertIn(owed, resumed['prompt'])
+        self.assertIn('owed-task', resumed['prompt'])
+        self.assertEqual(self.action(second, read_message='owed-task'), {'read': 'owed-task'})
         self.assertNotIn(self.task.read_text(), resumed['prompt'])
         guidance = [row for row in self.rows(
             "SELECT body FROM messages WHERE recipient='leaf' AND kind='guidance'")]
         self.assertEqual(guidance, [], guidance)
         handoff = [row for row in self.rows(
-            "SELECT body FROM messages WHERE body LIKE 'account handoff:%'")]
+            "SELECT body FROM messages WHERE kind='report' AND recipient='root' AND body LIKE 'account move:%'")]
         self.assertEqual(len(handoff), 1, handoff)
         owed_rows = self.rows(
             "SELECT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id "
