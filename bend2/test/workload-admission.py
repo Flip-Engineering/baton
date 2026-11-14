@@ -1,5 +1,6 @@
 """Workloads retain execution, session-detached memory and shared admission."""
 import os
+import fcntl
 from pathlib import Path
 import subprocess
 import re
@@ -64,6 +65,8 @@ class WorkloadAdmission(unittest.TestCase):
         (self.root / 'release').touch()
         out, err = process.communicate(timeout=60)
         self.assertEqual(process.returncode, expected, (out, err))
+        with (self.state / 'heavy.lock').open('rb') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
         return out, err
 
     def stop(self, process):
