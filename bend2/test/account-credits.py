@@ -90,8 +90,7 @@ class AccountCredits(unittest.TestCase):
     def accept(self, session, child=None):
         stream, start = identity.ControlIdentity.accept(self, session, child)
         self.eventually(lambda: self.rows(
-            'SELECT native FROM sessions WHERE id=?', (session,)) == [{'native': start['native']}],
-            'The observer did not record the fixture native identity.')
+            'SELECT native FROM sessions WHERE id=?', (session,)) == [{'native': start['native']}])
         return stream, start
 
     def store(self, name):
