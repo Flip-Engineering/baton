@@ -368,6 +368,7 @@ class HistoryGroupTests(unittest.TestCase):
     def test_measured_waiter_preserves_headroom_and_cancellation_preserves_the_check(self):
         self.measured("measured", "one")
         (_, peak), = self.group_records().items()
+        self.state.joinpath("meminfo").write_text("total_kb=%d\navailable_kb=%d\n" % (peak * 8, peak * 8))
         running = self.request("checking", "one", kind="check")
         self.until("check allocated", lambda: self.allocated("checking"))
         self.until("check has a claim", lambda: self.claim("checking") is not None)
@@ -388,7 +389,7 @@ class HistoryGroupTests(unittest.TestCase):
         self.assertFalse(self.allocated("waiting"))
         self.assertIsNone(running.poll(), "canceling the waiter changed the valid check owner")
         self.assertEqual(self.claim("checking")["history"], "0")
-        (self.state / "meminfo").unlink()
+        self.state.joinpath("meminfo").write_text("total_kb=%d\navailable_kb=%d\n" % (peak * 8, peak * 8))
         following = self.request("following", "three")
         self.until("measured CC starts when headroom is available", lambda: self.allocated("following"))
         self.assertNotIn("end checking", self.log_lines())
