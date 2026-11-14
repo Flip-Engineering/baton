@@ -3367,8 +3367,10 @@ class Receive(unittest.TestCase):
                       'recovery processed the native response without forwarding pending guidance')
         accepted = steered['steer_received']
         self.assertEqual(accepted['id'], 'later-guidance')
-        self.assertEqual(accepted['message'], 'Guidance belongs to the current native process.')
-        marker = 'guidance accepted before recipient handling'
+        self.assertEqual(accepted['message'],
+                         'Message (guidance) from root [id: later-guidance]:\n'
+                         'Guidance belongs to the current native process.')
+        marker = 'guidance received by the current native'
         self.action(current, progress=marker)
         self.assertEqual(json.loads(current.readline()), {'progress_written': marker})
         self.eventually(lambda: marker in log.read_text(),
@@ -5540,19 +5542,20 @@ class Receive(unittest.TestCase):
         self.action(control, stdout_fragment=fragment)
         self.assertEqual(json.loads(control.readline()), {'fragment_written': fragment})
         self.action(control, read_steer=True, signal_steer_wait=True,
-                    check_steer_read=True, finish_fragment='-completed"}')
+                    finish_fragment='-completed"}')
         self.assertEqual(json.loads(control.readline()), {'waiting_for_steer': True})
         body = 'Guidance received during the silent wait λ.'
         self.message('silent-guidance', 'parent', body)
         accepted = json.loads(control.readline())['steer_received']
         self.assertEqual((accepted['type'], accepted['id'], accepted['message']),
-                         ('steer', 'silent-guidance', body))
-        marker = 'silent guidance accepted before recipient handling'
+                         ('steer', 'silent-guidance',
+                          'Message (guidance) from root [id: silent-guidance]:\n' + body))
+        marker = 'silent guidance received by the native'
         self.action(control, progress=marker)
         self.assertEqual(json.loads(control.readline()), {'progress_written': marker})
         self.eventually(lambda: marker in self.output_log('parent').read_text(),
                         'the observer did not read past the steer response')
-        self.assertFalse(read_recorded(self.db, 'silent-guidance'))
+        self.assertTrue(read_recorded(self.db, 'silent-guidance'))
         self.assert_no_start()
         self.action(control, body=body)
         self.finish(observer)
