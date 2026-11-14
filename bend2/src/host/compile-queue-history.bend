@@ -52,8 +52,8 @@ def observation(+text: String) -> IO(String):
     IO.pure(String,Bool.pick(String,eligible,
       record(peak(text),"",key,attempt,field(result,"kind")),""))
 
-def classify(+text: String, +kind: String, +family: String, toolchain: String,
-             ~derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
+def classify(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
+             +text: String, +kind: String, +family: String, toolchain: String) -> IO(String):
   Bool.pick(IO(String),Bool.and(U32.is_gt(peak(text),0),
     Bool.and(String.eq(field(text,"kind"),kind),Bool.not(String.is_empty(family)))),
     do IO<String>:
@@ -71,15 +71,15 @@ def add(+text: String, +kind: String, +family: String, candidates: Candidates) -
         Bool.pick(String,String.eq(field(text,"kind"),kind),larger(text,same),same),
         larger(text,host)}
 
-def history_records(files: List<&1,String>, +state: String, +kind: String, +family: String, +toolchain: String,
-                    ~derive: (@+attempt: String -> @+toolchain: String -> IO(String)), candidates: Candidates) -> IO(Candidates):
+def history_records(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
+                    files: List<&1,String>, +state: String, +kind: String, +family: String, +toolchain: String, candidates: Candidates) -> IO(Candidates):
   match files:
     case Nil{}: IO.pure(Candidates,candidates)
     case name <> rest: do IO<Candidates>:
       text : String <- read(state ++ "/history/" ++ name)
       measured : String <- observation(text)
-      classified : String <- classify(measured,kind,family,toolchain,derive)
-      history_records(rest,state,kind,family,toolchain,derive,add(classified,kind,family,candidates))
+      classified : String <- classify(derive,measured,kind,family,toolchain)
+      history_records(derive,rest,state,kind,family,toolchain,add(classified,kind,family,candidates))
 
 def sole(files: List<&2,String>) -> Bool:
   match files:
@@ -102,14 +102,14 @@ def completed_peak(+state: String, +key: String) -> IO(String):
         observation("key=" ++ key ++ "\nattempt=" ++ attempt ++ "\n" ++ raw),
       IO.pure(String,""))
 
-def key_records(keys: List<&1,String>, +state: String, +kind: String, +family: String, +toolchain: String,
-                ~derive: (@+attempt: String -> @+toolchain: String -> IO(String)), candidates: Candidates) -> IO(Candidates):
+def key_records(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
+                keys: List<&1,String>, +state: String, +kind: String, +family: String, +toolchain: String, candidates: Candidates) -> IO(Candidates):
   match keys:
     case Nil{}: IO.pure(Candidates,candidates)
     case key <> rest: do IO<Candidates>:
       measured : String <- completed_peak(state,key)
-      classified : String <- classify(measured,kind,family,toolchain,derive)
-      key_records(rest,state,kind,family,toolchain,derive,add(classified,kind,family,candidates))
+      classified : String <- classify(derive,measured,kind,family,toolchain)
+      key_records(derive,rest,state,kind,family,toolchain,add(classified,kind,family,candidates))
 
 def selected(candidates: Candidates) -> String:
   match candidates:
@@ -119,15 +119,15 @@ def selected(candidates: Candidates) -> String:
       record(peak(chosen),Bool.pick(String,U32.is_gt(peak(chosen),0),source,"bootstrap"),
         field(chosen,"peak_key"),field(chosen,"peak_attempt"),field(chosen,"kind"))
 
-def fallback(+state: String, +kind: String, +profile: String,
-             ~derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
+def fallback(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
+             +state: String, +kind: String, +profile: String) -> IO(String):
   do IO<String>:
     +family : String <- IO.pure(String,field(profile,"family"))
     +toolchain : String <- IO.pure(String,field(profile,"toolchain"))
     files : String <- names(state ++ "/history")
-    grouped : Candidates <- history_records(Tx.split_nul(files),state,kind,family,toolchain,derive,Candidates{"","",""})
+    grouped : Candidates <- history_records(derive,Tx.split_nul(files),state,kind,family,toolchain,Candidates{"","",""})
     keys : String <- names(state ++ "/keys")
-    candidates : Candidates <- key_records(Tx.split_nul(keys),state,kind,family,toolchain,derive,grouped)
+    candidates : Candidates <- key_records(derive,Tx.split_nul(keys),state,kind,family,toolchain,grouped)
     IO.pure(String,selected(candidates))
 
 def profile_from_attempts(files: List<&1,String>, +keydir: String, +group: String) -> IO(String):
@@ -145,8 +145,8 @@ def profile(+state: String, +key: String, +group: String) -> IO(String):
       files : String <- names(keydir ++ "/runs")
       profile_from_attempts(Tx.split_nul(files),keydir,group))
 
-def lookup(+state: String, +key: String, +group: String, +kind: String,
-           ~derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
+def lookup(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
+           +state: String, +key: String, +group: String, +kind: String) -> IO(String):
   do IO<String>:
     +exact : String <- read(state ++ "/keys/" ++ key ++ "/peak")
     group_text : String <- Bool.pick(IO(String),String.is_empty(group),IO.pure(String,""),
@@ -159,7 +159,7 @@ def lookup(+state: String, +key: String, +group: String, +kind: String,
     Bool.pick(IO(String),U32.is_gt(peak(direct),0),IO.pure(String,direct),
       do IO<String>:
         current : String <- profile(state,key,group)
-        fallback(state,kind,current,derive))
+        fallback(derive,state,kind,current))
 
 def kind_from_attempts(files: List<&1,String>, +keydir: String) -> IO(String):
   match files:
@@ -178,13 +178,13 @@ def request_kind(+state: String, +key: String, +supplied: String) -> IO(String):
 
 # Existing claims keep their recorded reservation. A claim written with no peak
 # obtains its reservation from the retained measurement evidence on each scan.
-def running_record(+state: String, +text: String,
-                   ~derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
+def running_record(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
+                   +state: String, +text: String) -> IO(String):
   Bool.pick(IO(String),U32.is_gt(number(U32.read(field(text,"expected_kb"))),0),IO.pure(String,text),
     do IO<String>:
       +key : String <- IO.pure(String,field(text,"key"))
       kind : String <- request_kind(state,key,field(text,"kind"))
-      measurement : String <- lookup(state,key,field(text,"history_group"),kind,derive)
+      measurement : String <- lookup(derive,state,key,field(text,"history_group"),kind)
       IO.pure(String,"expected_kb=" ++ U32.show(peak(measurement)) ++ "\n" ++ text))
 
 def own_history(text: String) -> U32:

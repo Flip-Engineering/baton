@@ -1123,7 +1123,7 @@ def max_u32(+a: U32, +b: U32) -> U32:
   Bool.pick(U32,U32.is_gt(a,b),a,b)
 
 def admission_history(state: String, key: String, group: String, kind: String) -> IO(String):
-  History.lookup(state,key,group,kind,retained_family)
+  History.lookup(retained_family,state,key,group,kind)
 
 # Retained history is imported through the queue's recorded identity and completed
 # result. An unchanged request can reconstruct its group with the current tools.
@@ -1349,7 +1349,7 @@ def admission_claim_file(+state: String, +dir: String, +name: String, +group: St
     +is_live : Bool <- IO.pure(Bool, claim_file_live(live, dir, name))
     Bool.pick(IO(ClaimStats), is_live,
       do IO<ClaimStats>:
-        reserved : String <- History.running_record(state,text,retained_family)
+        reserved : String <- History.running_record(retained_family,state,text)
         +measured : ClaimStats <- claim_add_stats(True{}, reserved, group, stats)
         usage : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(admission_root(state) ++ "/usage/" ++ name)
         now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
