@@ -571,7 +571,7 @@ def retained_family_result(+config: Config, +toolchain: String, recorded: String
       Bool.pick(IO(String),Bool.and(non_empty(group),Tx.str_eq(group,field(recorded,"group"))),
         do IO<String>:
           result : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,True{})
-          IO.pure(String,peak_text_result(result)),
+          IO.pure(String,History.read_value(result)),
         IO.pure(String,""))
 
 def retained_family(+attempt: String, +toolchain: String) -> IO(String):
