@@ -1171,13 +1171,6 @@ def bind_admitted(+db: String, +id: String, +session: String, present: Bool) -> 
       appended : Unit <- IO.try(Unit,Text.Text.append(Tx.trim_nl(path),id ++ "\n"))
       IO.print("{\"account\":\"bound\",\"session\":" ++ J.string_literal(session) ++ ",\"accountId\":" ++ J.string_literal(id) ++ "}")
 
-def bind(+db: String, +id: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
-    harness_row : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    account : Maybe<&2,AccountRecord> <- account_by_label(db,id,Tx.trim_nl(harness_row))
-    compatible : Maybe<&2,AccountRecord> <- for_seat_provider(db,session,account)
-    bind_admitted(db,id,session,account_present(compatible))
-
 def account_present(account: Maybe<&2,AccountRecord>) -> Bool:
   match account:
     case None{}: False{}
@@ -1199,6 +1192,13 @@ def account_by_label(+db: String, +label: String, +harness: String) -> IO(Maybe<
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
     IO.pure(Maybe<&2,AccountRecord>,named_account(accounts,label,harness))
+
+def bind(+db: String, +id: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    harness_row : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    account : Maybe<&2,AccountRecord> <- account_by_label(db,id,Tx.trim_nl(harness_row))
+    compatible : Maybe<&2,AccountRecord> <- for_seat_provider(db,session,account)
+    bind_admitted(db,id,session,account_present(compatible))
 
 def current_account(+db: String, +session: String, +harness: String) -> IO(Maybe<&2,AccountRecord>):
   do IO<Maybe<&2,AccountRecord>>:
