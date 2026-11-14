@@ -206,8 +206,46 @@ static int posix_meminfo_text(char **out) {
 #endif
 }
 
+/* #1503: a test's PostgreSQL and shard children start separate sessions.
+   The workload launcher puts the complete lifetime in one dedicated scope. */
+static int posix_workload_kb(u32 root, char **out) {
+#ifdef __linux__
+  char path[4096], line[4096];
+  snprintf(path, sizeof path, "/proc/%u/cgroup", root);
+  FILE *file = fopen(path, "r");
+  if (!file) return errno;
+  char *group = NULL;
+  while (fgets(line, sizeof line, file)) {
+    if (!strncmp(line, "0::/", 4)) { group = line + 3; break; }
+  }
+  if (!group) { fclose(file); return ENOENT; }
+  group[strcspn(group, "\n")] = 0;
+  char *name = strrchr(group, '/');
+  if (!name || strncmp(name, "/baton-workload-", 16) ||
+      !strstr(name, ".scope")) { fclose(file); return ENOENT; }
+  int length = snprintf(path, sizeof path, "/sys/fs/cgroup%s/memory.current", group);
+  fclose(file);
+  if (length < 0 || (size_t)length >= sizeof path) return EOVERFLOW;
+  file = fopen(path, "r");
+  if (!file) return errno;
+  unsigned long long bytes = 0;
+  int valid = fscanf(file, "%llu", &bytes) == 1;
+  fclose(file);
+  if (!valid) return EIO;
+  char text[96];
+  snprintf(text, sizeof text, "kb=%llu\n", (bytes + 1023) / 1024);
+  *out = strdup(text);
+  return *out ? 0 : ENOMEM;
+#else
+  (void)root; (void)out;
+  return ENOSYS;
+#endif
+}
+
 static int posix_session_kb(u32 root, char **out) {
 #ifdef __linux__
+  int workload = posix_workload_kb(root, out);
+  if (workload != ENOENT) return workload;
   char root_path[64];
   snprintf(root_path, sizeof root_path, "/proc/%u/stat", root);
   FILE *root_file = fopen(root_path, "r");
