@@ -47,7 +47,6 @@ class AccountCredits(unittest.TestCase):
     call = identity.ControlIdentity.call
     root = identity.ControlIdentity.root
     dispatch = identity.ControlIdentity.dispatch
-    accept = identity.ControlIdentity.accept
     accept_any = identity.ControlIdentity.accept_any
     capture_child_output = identity.ControlIdentity.capture_child_output
     child_communication = identity.ControlIdentity.child_communication
@@ -87,6 +86,13 @@ class AccountCredits(unittest.TestCase):
                                session + '-branch', self.checkouts / session, self.base)
         self.call('receiver', session, self.fixture, self.directory / (session + '.native.jsonl'))
         return assignment
+
+    def accept(self, session, child=None):
+        stream, start = identity.ControlIdentity.accept(self, session, child)
+        self.eventually(lambda: self.rows(
+            'SELECT native FROM sessions WHERE id=?', (session,)) == [{'native': start['native']}],
+            'The observer did not record the fixture native identity.')
+        return stream, start
 
     def store(self, name):
         path = self.directory / 'stores' / name
