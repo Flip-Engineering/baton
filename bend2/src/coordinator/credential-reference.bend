@@ -4,7 +4,7 @@ import Base
 type Form is Data:
   ReferenceForm{kind: String, prefix: String, label: String, empty: Bool}
 
-def forms() -> List<Form>:
+def forms() -> List<&2,Form>:
   [ReferenceForm{"store","/","absolute store directory",True{}},
    ReferenceForm{"omp-models","omp-models:","omp-models:BLOCK",False{}},
    ReferenceForm{"omp-auth","omp-auth:","omp-auth:PROVIDER",False{}},
@@ -33,7 +33,7 @@ def form_kind(form: Form) -> String:
   match form:
     case ReferenceForm{kind,prefix,label,empty}: kind
 
-def kind_from(remaining: List<Form>, +reference: String) -> String:
+def kind_from(remaining: List<&2,Form>, +reference: String) -> String:
   match remaining:
     case Nil{}: ""
     case +form <> rest: Bool.pick(String,form_matches(form,reference),form_kind(form),kind_from(rest,reference))
@@ -41,27 +41,27 @@ def kind_from(remaining: List<Form>, +reference: String) -> String:
 def kind(+reference: String) -> String:
   Bool.pick(String,safe_text(reference),kind_from(forms(),reference),"")
 
-def member(+needle: String, values: List<String>) -> Bool:
+def member(+needle: String, values: List<&2,String>) -> Bool:
   match values:
     case Nil{}: False{}
     case value <> rest: Bool.or(String.eq(needle,value),member(needle,rest))
 
-def account_kinds(harness: String, funding: String) -> List<String>:
-  Bool.pick(List<String>,Bool.and(String.eq(harness,"claude-code"),String.eq(funding,"api_key")),["file","keychain"],["store"])
+def account_kinds(harness: String, funding: String) -> List<&2,String>:
+  Bool.pick(List<&2,String>,Bool.and(String.eq(harness,"claude-code"),String.eq(funding,"api_key")),["file","keychain"],["store"])
 
-def http_kinds() -> List<String>:
+def http_kinds() -> List<&2,String>:
   ["store","omp-models","omp-auth","claude-oauth","file"]
 
 def accepted_account(harness: String, funding: String, reference: String) -> Bool:
   member(kind(reference),account_kinds(harness,funding))
 
-def labels_from(remaining: List<Form>, +kinds: List<String>, +separator: String) -> String:
+def labels_from(remaining: List<&2,Form>, +kinds: List<&2,String>, +separator: String) -> String:
   match remaining:
     case Nil{}: ""
     case ReferenceForm{kind,prefix,+label,empty} <> +rest:
       Bool.pick(String,member(kind,kinds),separator ++ label ++ labels_from(rest,kinds,", "),labels_from(rest,kinds,separator))
 
-def describe(kinds: List<String>) -> String:
+def describe(kinds: List<&2,String>) -> String:
   labels_from(forms(),kinds,"")
 
 def account_forms(harness: String, funding: String) -> String:
