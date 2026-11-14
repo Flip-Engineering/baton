@@ -121,12 +121,13 @@ def idle_stop_submits_no_signal(db,session,attempt,directory):
 
 # Stop acceptance writes its current state after control submission. Native
 # exit and parent report delivery are performed by the retained observer.
-def accepted_stop(+db: String, +session: String, id: String, reason: String, force: Bool) -> IO(Unit):
+def accepted_stop(+db: String, +session: String, +id: String, +reason: String, +force: Bool) -> IO(Unit):
   do IO<Unit>:
     error : String <- IO.try(String,Stop.request(db,session,id,reason,force))
     checked : Unit <- Stop.validate(error)
     released : Unit <- Stop.release_starting(db,session)
     reconciled : Unit <- Stop.reconcile_request(db,session)
+    announced : Unit <- Stop.announce_ended(db,id,force)
     runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
     result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
     IO.write(result)
@@ -177,7 +178,7 @@ law stopped_completion_reports_to_the_recorded_upstream_recipient:
   {Stop.exited_sql(session,attempt,status,event,error,log) == (
   "BEGIN IMMEDIATE;UPDATE executions SET phase='exited',status=" ++ C.q(status) ++ " WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ ";"
   ++ "UPDATE session_stops SET outcome='stopped',native_status=" ++ C.q(status) ++ " WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ ";"
-  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT st.report_id,s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stopped','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',st.native_status,'nativeEvent',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'observationError',nullif(" ++ C.q(error) ++ ",''),'output'," ++ C.q(log) ++ ",'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ C.q(session) ++ " AND st.attempt=" ++ C.q(attempt) ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ "COMMIT;") : String}
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT st.report_id,s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stopped','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',st.native_status,'nativeEvent',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL WHEN json_valid(" ++ C.q(event) ++ ") THEN json(" ++ C.q(event) ++ ") ELSE " ++ C.q(event) ++ " END,'observationError',nullif(" ++ C.q(error) ++ ",''),'output'," ++ C.q(log) ++ ",'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ C.q(session) ++ " AND st.attempt=" ++ C.q(attempt) ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ "COMMIT;") : String}
 
 def stopped_completion_reports_to_the_recorded_upstream_recipient(session,attempt,status,event,error,log):
   {==}

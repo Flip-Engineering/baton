@@ -1,7 +1,9 @@
 import Base
 import ../src/coordinator/guidance.bend as Guidance
+import ../src/coordinator/commands.bend as C
 import ../src/coordinator/store.bend as Store
 import ../src/host/sqlite.bend as DB
+import ../src/host/process.bend as P
 import ../src/git/text.bend as Tx
 
 # Reproduce the rejected-checkpoint replay condition without a native process:
@@ -52,22 +54,45 @@ def run(+db: String, +attempt: String, +fresh: String) -> IO(Unit):
     check("fresh attempt cursor", "0", fresh_start)
     +first : String <- select(db,fresh_start)
     check("fresh attempt first pending", "1", first)
-    # Everything is forwarded: the query answers with the cursor itself and a
-    # trailing newline, which is the same position, so nothing is sent again. Raw
-    # text comparison re-sent the last message on every wake (#1443).
-    last : Unit <- Guidance.record_forwarded(attempt,"4")
-    +caught_up : String <- Guidance.replay_cursor(db,attempt,"0")
-    check("caught up cursor", "4", caught_up)
-    +answer : String <- IO.try(String,DB.Sql.query(db,Guidance.pending_sql("player",caught_up)))
-    check("query repeats the cursor with a newline", "4\n", answer)
-    check("caught up is one position", "same", Bool.pick(String,Guidance.same_position(caught_up,answer),"same","different"))
-    check("later input is another position", "different", Bool.pick(String,Guidance.same_position("3","4\n"),"same","different"))
     +owed : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient='player' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient);"))
     check("pending queue preserved", "4\n", owed)
     IO.pure(Unit,Unit{})
 
+@unsafe
+def print_frames(+handle: U32, line: Maybe<String>) -> IO(Unit):
+  match line:
+    case None{}: do IO<Unit>:
+      status : String <- IO.try(String,P.ProcessChild.wait(handle))
+      IO.print(status)
+    case Some{text}: do IO<Unit>:
+      printed : Unit <- IO.print(text)
+      next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      print_frames(handle,next)
+
+# A completed read remains complete while an observer wakes repeatedly.
+# The child echoes actual native stdin frames so the caller can check delivery.
+def forward_probe(+db: String, +attempt: String, harness: String, +scenario: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : Unit <- Store.ensure_before_begin(db)
+    seeded : String <- IO.try(String,DB.Sql.query(db,
+      "INSERT INTO sessions(id,parent,harness) VALUES('root',NULL,'operator'),('player','root'," ++ C.q(harness) ++ ");"
+      ++ "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('original','root','player','task','Already read task.');"
+      ++ "INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture','original','player','native','fixture');"))
+    added : String <- IO.try(String,DB.Sql.query(db,
+      "INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'new','root','player','guidance','new complete input' || char(10) || 'second line' WHERE " ++ C.q(scenario) ++ "='new';"))
+    +handle : U32 <- IO.try(U32,P.ProcessChild.spawn(P.argv(["/bin/cat"]),".",attempt ++ "/native.stderr"))
+    +first : String <- Guidance.awake_pending(db,"player",handle,attempt,"1",True{})
+    read : String <- IO.try(String,DB.Sql.query(db,
+      "INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT 'fixture',id,recipient,'native','fixture' FROM messages WHERE id='new';"))
+    +second : String <- Guidance.awake_pending(db,"player",handle,attempt,first,True{})
+    third : String <- Guidance.awake_pending(db,"player",handle,attempt,second,True{})
+    closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
+    line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+    print_frames(handle,line)
+
 def run_args(args: List<String>) -> IO(Unit):
   match args:
+    case "forward" <> db <> attempt <> harness <> scenario <> Nil{}: forward_probe(db,attempt,harness,scenario)
     case db <> attempt <> fresh <> Nil{}: run(db,attempt,fresh)
     case other: IO.die(Unit,2,"usage: pending-guidance-replay DB ATTEMPT_DIR FRESH_DIR")
 

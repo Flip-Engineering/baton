@@ -66,9 +66,15 @@ class AccountOrderFallback(unittest.TestCase):
     def entry(self, *arguments):
         return subprocess.run([str(self.executable), str(self.db), *arguments], capture_output=True, text=True)
 
+    def credit_reference(self, label):
+        # The fake usage helper reads fixture windows from the directory that
+        # holds an API-key account's key file, so each credit entry's live
+        # read can be held, open or unreadable per test.
+        return 'file:' + str(pathlib.Path(self.store(label)) / 'key')
+
     def record_order(self):
         for priority, (label, funding, secret) in enumerate(ORDER, start=1):
-            reference = secret if funding == 'api_key' else self.store(secret)
+            reference = self.credit_reference(label) if funding == 'api_key' else self.store(secret)
             completed = self.entry('account', 'record', label, 'anthropic', 'claude-code', funding, reference, '', '', '')
             self.assertEqual(completed.returncode, 0, completed.stderr)
             columns = [row[1] for row in self.query('PRAGMA table_info(accounts)')]
@@ -90,7 +96,7 @@ class AccountOrderFallback(unittest.TestCase):
     def reports(self, suffix):
         return self.query("SELECT recipient,body FROM messages WHERE id LIKE ? ORDER BY seq", ('%' + suffix,))
 
-    def test_exhausted_credit_account_moves_to_max_incognito(self):
+    def test_exhausted_credit_account_moves_to_the_next_credit_account(self):
         self.record_order()
         self.riff_profiles()
         completed = self.entry('handoff', 'leaf', 'turn-leaf', CREDIT_EVENT)
@@ -98,16 +104,36 @@ class AccountOrderFallback(unittest.TestCase):
         exhausted = self.reports(':profile-exhausted') + self.reports(':account-exhausted')
         self.assertEqual((completed.stdout.strip(), exhausted), ('advanced', []),
                          'observed sequence: handoff={!r} reports={!r}'.format(completed.stdout.strip(), exhausted))
-        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        self.assertEqual(self.current('leaf'), 'claude-credit-incognito')
         moves = self.query("SELECT recipient,body FROM messages WHERE kind='report' AND body LIKE 'account move:%'")
         self.assertIn('root', [recipient for recipient, body in moves])
         body = moves[0][1]
-        for text in ('from claude-credit-primary to claude-max-incognito', 'Credit balance is too low',
-                     'claude-credit-incognito not launchable: promotional-credit guard is false'):
+        for text in ('from claude-credit-primary to claude-credit-incognito', 'Credit balance is too low',
+                     '2 claude-credit-incognito usage unreadable'):
             self.assertIn(text, body)
+        self.assertNotIn('not launchable', body)
+
+    def test_credit_account_held_by_a_live_read_moves_to_max_incognito(self):
+        self.record_order()
+        self.riff_profiles()
+        self.windows('claude-credit-incognito', EXHAUSTED)
+        self.windows('max-incognito', OPEN)
+        self.assertEqual(self.handoff_with(CREDIT_EVENT), 'advanced')
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        moves = self.query("SELECT body FROM messages WHERE kind='report' AND body LIKE 'account move:%'")
+        self.assertIn('from claude-credit-primary to claude-max-incognito', moves[0][0])
+        self.assertIn('2 claude-credit-incognito held by live read', moves[0][0])
 
     def windows(self, store, document):
         (pathlib.Path(self.store(store)) / 'usage-windows.json').write_text(document)
+
+    def hold_credit_accounts(self):
+        # With the promotional-credit guard on, the credit entries at the
+        # head of the order are decided by their live reads. Tests that
+        # exercise the subscription entries hold both credit entries so the
+        # scan reaches them.
+        self.windows('claude-credit-primary', EXHAUSTED)
+        self.windows('claude-credit-incognito', EXHAUSTED)
 
     def bind(self, label, session='leaf'):
         completed = self.entry('account', 'bind', label, '', '', '', '', '', '', session)
@@ -126,6 +152,7 @@ class AccountOrderFallback(unittest.TestCase):
     def test_max_incognito_exhausted_by_a_live_read_moves_to_max_primary(self):
         self.record_order()
         self.bind('claude-max-incognito')
+        self.hold_credit_accounts()
         self.windows('max-incognito', EXHAUSTED)
         self.windows('max-primary', OPEN)
         self.assertEqual(self.handoff_with(LIMIT_EVENT), 'advanced')
@@ -141,6 +168,7 @@ class AccountOrderFallback(unittest.TestCase):
     def test_the_last_entry_is_not_taken_on_an_unreadable_read(self):
         self.record_order()
         self.bind('claude-max-incognito')
+        self.hold_credit_accounts()
         self.windows('max-incognito', EXHAUSTED)
         self.assertEqual(self.handoff_with(LIMIT_EVENT), 'exhausted')
         self.assertEqual(self.current('leaf'), 'claude-max-incognito')
@@ -151,6 +179,7 @@ class AccountOrderFallback(unittest.TestCase):
     def all_held(self):
         self.record_order()
         self.bind('claude-max-incognito')
+        self.hold_credit_accounts()
         self.windows('max-incognito', EXHAUSTED)
         self.windows('max-primary', EXHAUSTED)
         self.assertEqual(self.handoff_with(LIMIT_EVENT), 'exhausted')
@@ -160,7 +189,8 @@ class AccountOrderFallback(unittest.TestCase):
         self.assertEqual(self.current('leaf'), 'claude-max-incognito')
         holds = self.query("SELECT recipient,body FROM messages WHERE kind='report' AND body LIKE 'account order held:%'")
         self.assertIn('root', [recipient for recipient, body in holds])
-        for text in ('2 claude-credit-incognito not launchable: promotional-credit guard is false',
+        for text in ('1 claude-credit-primary held by live read',
+                     '2 claude-credit-incognito held by live read',
                      '3 claude-max-incognito refused', '4 claude-max-primary held by live read'):
             self.assertIn(text, holds[0][1])
         self.assertEqual(self.reports(':route-unavailable') + self.reports(':profile-exhausted') + self.reports(':account-exhausted'), [])
@@ -196,9 +226,9 @@ class AccountOrderFallback(unittest.TestCase):
     def deployed_order(self, incognito_last=False):
         # These rows are shared by Riff, render-fframes and flip-brusharena.
         rows = (
-            ('claude-credit-incognito', 'api_key', 'file:/fixture/keys/credit-incognito', '2'),
+            ('claude-credit-incognito', 'api_key', self.credit_reference('claude-credit-incognito'), '2'),
             ('claude-max-incognito', 'subscription', self.store('max-incognito'), '3'),
-            ('claude-credit-normal', 'api_key', 'file:/fixture/keys/credit-normal', ''),
+            ('claude-credit-normal', 'api_key', self.credit_reference('claude-credit-normal'), ''),
         )
         for label, funding, reference, priority in rows:
             completed = self.entry('account', 'record', label, 'anthropic', 'claude-code',
@@ -209,9 +239,29 @@ class AccountOrderFallback(unittest.TestCase):
             self.execute("UPDATE accounts SET priority='1' WHERE id='claude-credit-normal'")
         self.riff_profiles()
         helper = self.directory / 'claude-reader'
-        helper.write_text('#!/bin/sh\nexec {} --fixture-usage-read "$@"\n'.format(shlex.quote(str(ENTRY))))
+        # The subscription entry goes through the real fixture Claude reader.
+        # A credit entry with fixture windows beside its key file reads those
+        # windows, so a test can hold the credit entries and reach the
+        # subscription entry. A credit entry without fixture windows keeps
+        # the real reader's unreadable answer.
+        helper.write_text(
+            '#!/bin/sh\n'
+            'case "$2" in\n'
+            '  file:*)\n'
+            '    store=$(dirname "${2#file:}")\n'
+            '    if [ -f "$store/usage-windows.json" ]; then\n'
+            '      now=$(date +%s)000\n'
+            '      printf \'{"schema":"baton2-usage-read-v1","provider":"%s","source":"fixture %s","observedAt":%s,"state":"read","windows":%s}\\n\' "$1" "$store" "$now" "$(cat "$store/usage-windows.json")"\n'
+            '      exit 0\n'
+            '    fi ;;\n'
+            'esac\n'
+            'exec ' + shlex.quote(str(ENTRY)) + ' --fixture-usage-read "$@"\n')
         helper.chmod(0o755)
         return str(helper)
+
+    def hold_deployed_credit_accounts(self):
+        self.windows('claude-credit-incognito', EXHAUSTED)
+        self.windows('claude-credit-normal', EXHAUSTED)
 
     def claude_response(self, utilization, expired=False):
         store = pathlib.Path(self.store('max-incognito'))
@@ -223,6 +273,7 @@ class AccountOrderFallback(unittest.TestCase):
 
     def test_deployed_accounts_use_the_live_claude_reader(self):
         helper = self.deployed_order()
+        self.hold_deployed_credit_accounts()
         self.claude_response(12)
         completed = self.entry('handoff-with', 'leaf', 'deployed-open', CREDIT_EVENT, helper)
         self.assertEqual((completed.returncode, completed.stdout.strip()), (0, 'advanced'), completed.stderr)
@@ -233,10 +284,11 @@ class AccountOrderFallback(unittest.TestCase):
 
     def test_deployed_held_incognito_retains_input(self):
         helper = self.deployed_order()
+        self.hold_deployed_credit_accounts()
         self.claude_response(100)
-        expected_account = [('claude-credit-primary', 'file:/fixture/keys/credit-normal')]
+        expected_account = [('claude-credit-primary', self.credit_reference('claude-credit-normal'))]
         self.assertEqual(self.query("SELECT secret_ref FROM accounts WHERE id='claude-credit-normal'"),
-                         [('file:/fixture/keys/credit-normal',)])
+                         [(self.credit_reference('claude-credit-normal'),)])
         self.assertEqual(self.current('leaf'), 'claude-credit-primary')
         self.assertEqual(self.query("SELECT id,secret_ref FROM accounts WHERE id='claude-credit-primary'"),
                          expected_account)
@@ -260,6 +312,7 @@ class AccountOrderFallback(unittest.TestCase):
 
     def expired_deployment(self, incognito_last):
         helper = self.deployed_order(incognito_last=incognito_last)
+        self.hold_deployed_credit_accounts()
         self.claude_response(12, expired=True)
         completed = self.entry('handoff-with', 'leaf', 'deployed-expired', CREDIT_EVENT, helper)
         self.assertEqual((completed.returncode, completed.stdout.strip()), (0, 'advanced'), completed.stderr)
@@ -277,6 +330,7 @@ class AccountOrderFallback(unittest.TestCase):
     def test_unknown_primary_is_reserved_before_incognito(self):
         self.record_order()
         self.riff_profiles()
+        self.windows('claude-credit-incognito', EXHAUSTED)
         self.execute("UPDATE accounts SET priority='2' WHERE id='claude-max-primary'")
         self.assertEqual(self.handoff_with(CREDIT_EVENT), 'advanced')
         self.assertEqual(self.current('leaf'), 'claude-max-incognito')
@@ -286,6 +340,7 @@ class AccountOrderFallback(unittest.TestCase):
     def launch_failure_setup(self):
         self.record_order()
         self.bind('claude-max-incognito')
+        self.hold_credit_accounts()
         self.windows('max-incognito', EXHAUSTED)
         self.windows('max-primary', OPEN)
         completed = self.entry('read', 'leaf', 'claude-max-incognito', HELPER)
@@ -338,6 +393,7 @@ class AccountOrderFallback(unittest.TestCase):
         self.riff_profiles()
         self.execute("INSERT INTO sessions(id,parent,harness,model) VALUES('middle','root','claude-code','claude-opus-5-5')")
         self.execute("UPDATE sessions SET parent='middle' WHERE id='leaf'")
+        self.windows('claude-credit-incognito', EXHAUSTED)
         self.windows('max-incognito', OPEN)
         before = self.current('leaf')
         self.execute("""CREATE TRIGGER reject_root_move BEFORE INSERT ON messages

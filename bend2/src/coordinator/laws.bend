@@ -18,6 +18,7 @@ import ./subscription-fallback.bend as Subs
 import ./agent-input.bend as AgentInput
 import ../coordinator/message-status.bend as MessageStatus
 import ../coordinator/commands.bend as C
+import ../coordinator/repl-schema.bend as ReplSchema
 import ./receive.bend as Receive
 import ./guidance.bend as Guidance
 import ./land.bend as Land
@@ -151,7 +152,7 @@ def m5_bind_preserves_parentage_and_placement(id, native, harness, model, effort
 # the caller's body cannot make a record terminal.
 law m11_terminal_reads_the_records_own_event:
   for +event: String
-  {C.terminal_expr(event) == "(json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1))" : String}
+  {C.terminal_expr(event) == "CASE WHEN json_valid(" ++ event ++ ") THEN (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1)) ELSE 0 END" : String}
 
 def m11_terminal_reads_the_records_own_event(event):
   {==}
@@ -500,7 +501,7 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
 # session. The store's own schema declares that reference, so the database
 # refuses a message from an unknown sender.
 law m7_the_store_validates_the_sender_it_records:
-  {C.schema() == C.wake_claim_schema() ++ C.task_input_schema() ++ C.usage_windows_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);" ++ "CREATE INDEX IF NOT EXISTS messages_sender_kind_seq ON messages(sender,kind,seq);" ++ "CREATE INDEX IF NOT EXISTS messages_recipient_kind_seq ON messages(recipient,kind,seq);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');" ++ MessageStatus.schema() ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() ++ C.log_schema() : String}
+  {C.schema() == C.wake_claim_schema() ++ C.task_input_schema() ++ C.usage_windows_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);" ++ "CREATE INDEX IF NOT EXISTS messages_sender_kind_seq ON messages(sender,kind,seq);" ++ "CREATE INDEX IF NOT EXISTS messages_recipient_kind_seq ON messages(recipient,kind,seq);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');" ++ MessageStatus.schema() ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ ReplSchema.schema() ++ C.messaging_schema() ++ C.log_schema() : String}
 
 def m7_the_store_validates_the_sender_it_records():
   {==}
@@ -1075,7 +1076,7 @@ def principal_reports_use_the_recorded_upstream_recipient(session):
 law terminal_reports_preserve_the_native_result:
   for +event: String
   {C.terminal_body_expr(event) == (
-  "coalesce(" ++ C.omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ C.assistant_text_sql_expr(event) ++ "," ++ event ++ ") END)") : String}
+  "CASE WHEN json_valid(" ++ event ++ ") THEN coalesce(" ++ C.omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ C.assistant_text_sql_expr(event) ++ "," ++ event ++ ") END) ELSE " ++ event ++ " END") : String}
 
 def terminal_reports_preserve_the_native_result(event):
   {==}
@@ -1188,7 +1189,8 @@ law completion_preparation_checks_the_upstream_recipient:
     +generation : String <- IO.pure(String,Turn.generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    AgentInput.record_initial_reads(db,player,id)) : IO(Unit)}
+    reads : Unit <- AgentInput.record_initial_reads(db,player,id)
+    Turn.recovery_observe(db,player,id,outcome)) : IO(Unit)}
 
 def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
   {==}
@@ -1196,12 +1198,14 @@ def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr
 law completion_delivery_checks_the_upstream_recipient:
   for +db: String
   for +player: String
-  for id: String
+  for +id: String
   for log: String
-  for outcome: Turn.Outcome
+  for +outcome: Turn.Outcome
   {Turn.finish(db,player,id,log,outcome,False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),False{})) : IO(Result<&1,&1,U32 & String,Unit>)}
+    finished : Result<&1,&1,U32 & String,Unit> <- Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),False{})
+    recovered : Unit <- Turn.recovery_after(db,player,id,outcome)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,finished)) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completion_delivery_checks_the_upstream_recipient(db,player,id,log,outcome):
   {==}
