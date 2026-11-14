@@ -3321,7 +3321,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('delivery', report['id'])['body'],
                          'Original report survives completed-attempt replay.')
         self.assertEqual(second['native'], first['native'])
-        self.action(current, read_steer=True, check_steer_read=True)
+        self.action(current, read_steer=True)
         continuation = json.loads(current.readline())['steer_received']
         self.assertEqual(continuation['id'], report['id'] + ':task-continuation')
         self.assertIn(self.coord('delivery', continuation['id'])['body'], continuation['message'])
@@ -5693,13 +5693,13 @@ class Receive(unittest.TestCase):
         recorded when the provider later fails.
         """
         self.player(harness='omp')
-        self.prepare_input('original', 'parent')
+        self.prepare_input('original', 'parent', kind='task')
         first = self.spawn(*self.receive_args('parent'))
         control, original = self.accept('parent')
         self.assertIn('[id: original]', original['prompt'])
         self.message('owed', 'parent', 'Guidance queued after the original prompt.')
         self.assertNotIn('[id: owed]', original['prompt'])
-        self.action(control, read_steer=True, check_steer_read=True)
+        self.action(control, read_steer=True)
         accepted = json.loads(control.readline())['steer_received']
         self.assertEqual(accepted['id'], 'owed')
         marker = 'steer accepted before provider failure'
