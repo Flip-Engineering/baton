@@ -3,7 +3,7 @@ import importlib.util
 import json
 import os
 import pathlib
-import sqlite3
+import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -404,19 +404,35 @@ class AccountCredits(unittest.TestCase):
 
 
     def test_exhaustion_delivers_owed_input_to_the_continuation_without_guidance(self):
+        owed = 'Second retained task: finish the λ review before the handoff report.'
+        # The usage helper commits this input after the first native has ended
+        # and its provider refusal has been recorded, before account selection.
+        helper = self.prefix / 'libexec/baton2/usage-read'
+        helper.unlink()
+        helper.write_text('#!' + sys.executable + '\n'
+                          + 'database_path=' + repr(str(self.db)) + '\n'
+                          + 'owed=' + repr(owed) + '\n' + r'''
+import json,sqlite3,sys,time
+with sqlite3.connect(database_path) as database:
+    refused = database.execute(
+        "SELECT EXISTS(SELECT 1 FROM usage_windows WHERE provider='kimi-code' "
+        "AND reset_source='provider-message')").fetchone()[0]
+    if refused:
+        database.execute("INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) "
+                         "VALUES('owed-task','root','leaf','task',?)", (owed,))
+print(json.dumps({'schema':'baton2-usage-read-v1','provider':sys.argv[1],
+                  'source':'account continuation fixture','observedAt':int(time.time()*1000),
+                  'state':'unreadable','reason':'fixture has no provider usage endpoint'}))
+''')
+        helper.chmod(0o700)
         self.root()
         self.recruit('leaf')
-        owed = 'Second retained task: finish the λ review before the handoff report.'
         self.record('omp-main', 'kimi-code', 'omp', 'subscription', self.store('omp-a'))
         self.record('omp-next', 'kimi-code', 'omp', 'subscription', self.store('omp-b'))
         self.send('bind', id='omp-main', session='leaf')
         self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
         first, started = self.accept('leaf')
         self.assertIn(self.task.read_text(), started['prompt'])
-        # Commit input that has not been delivered to the current native turn.
-        with sqlite3.connect(self.db) as database:
-            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) '
-                             "VALUES('owed-task','root','leaf','task',?)", (owed,))
         cause = "You've hit your session limit. Try again later."
         self.finish(first, body=cause, fail=True)
         second, resumed = self.accept('leaf')
