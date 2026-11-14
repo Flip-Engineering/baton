@@ -111,6 +111,14 @@ def key_records(keys: List<&1,String>, +state: String, +kind: String, +family: S
       classified : String <- classify(measured,kind,family,toolchain,derive)
       key_records(rest,state,kind,family,toolchain,derive,add(classified,kind,family,candidates))
 
+def selected(candidates: Candidates) -> String:
+  match candidates:
+    case Candidates{+compatible,+same,+host}:
+      +chosen = Bool.pick(String,U32.is_gt(peak(compatible),0),compatible,Bool.pick(String,U32.is_gt(peak(same),0),same,host))
+      +source = Bool.pick(String,U32.is_gt(peak(compatible),0),"family",Bool.pick(String,U32.is_gt(peak(same),0),"kind","host"))
+      record(peak(chosen),Bool.pick(String,U32.is_gt(peak(chosen),0),source,"bootstrap"),
+        field(chosen,"peak_key"),field(chosen,"peak_attempt"),field(chosen,"kind"))
+
 def fallback(+state: String, +kind: String, +profile: String,
              +derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
   do IO<String>:
@@ -120,12 +128,7 @@ def fallback(+state: String, +kind: String, +profile: String,
     grouped : Candidates <- history_records(Tx.split_nul(files),state,kind,family,toolchain,derive,Candidates{"","",""})
     keys : String <- names(state ++ "/keys")
     candidates : Candidates <- key_records(Tx.split_nul(keys),state,kind,family,toolchain,derive,grouped)
-    match candidates:
-      case Candidates{+compatible,+same,+host}:
-        +selected = Bool.pick(String,U32.is_gt(peak(compatible),0),compatible,Bool.pick(String,U32.is_gt(peak(same),0),same,host))
-        +source = Bool.pick(String,U32.is_gt(peak(compatible),0),"family",Bool.pick(String,U32.is_gt(peak(same),0),"kind","host"))
-        IO.pure(String,record(peak(selected),Bool.pick(String,U32.is_gt(peak(selected),0),source,"bootstrap"),
-          field(selected,"peak_key"),field(selected,"peak_attempt"),field(selected,"kind")))
+    IO.pure(String,selected(candidates))
 
 def profile_from_attempts(files: List<&1,String>, +keydir: String, +group: String) -> IO(String):
   match files:
