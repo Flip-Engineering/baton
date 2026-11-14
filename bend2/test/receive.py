@@ -3341,7 +3341,6 @@ class Receive(unittest.TestCase):
         self.eventually(lambda: (attempt / 'acknowledged').exists(),
                         'completed OMP attempt was not acknowledged while guidance was pending')
         self.assertTrue(any(p['pid'] == second['pid'] for p in self.owned_processes()))
-        self.assertIn('later-guidance', [m['id'] for m in owed_messages(self.db, 'parent')])
         marker = 'recovery processed the current native response'
         self.action(current, emit_checkpoint_message=marker)
         self.assertEqual(json.loads(current.readline()), {'checkpoint_message_written': marker})
@@ -3374,7 +3373,9 @@ class Receive(unittest.TestCase):
         self.assertEqual(json.loads(current.readline()), {'progress_written': marker})
         self.eventually(lambda: marker in log.read_text(),
                         'the observer did not read past the steer response')
-        self.assertTrue(read_recorded(self.db, 'later-guidance'))
+        reads = message_reads(self.db, 'later-guidance', 'parent')
+        self.assertEqual({(row['attempt'], row['native']) for row in reads},
+                         {(self.execution('parent')[1], second['native'])})
         self.action(current, body='Current task completed after accepting guidance.')
         self.assertEqual(current.readline(), b'')
         self.read_root_channel(root_channel, 'Current task completed after accepting guidance.')
