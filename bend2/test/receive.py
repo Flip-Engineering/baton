@@ -895,9 +895,12 @@ class Receive(unittest.TestCase):
         def report_committed():
             with sqlite3.connect(self.db) as database:
                 return database.execute(
-                    "SELECT EXISTS(SELECT 1 FROM messages WHERE recipient='root' "
-                    "AND kind='report' AND body=?)", (expected_body,)).fetchone()[0]
-        self.eventually(report_committed, 'The completed turn report did not reach the root inbox.')
+                    "SELECT id FROM messages WHERE recipient='root' "
+                    "AND kind='report' AND body=?", (expected_body,)).fetchone()
+        report_id, = self.eventually(report_committed,
+                                     'The completed turn report did not reach the root inbox.')
+        self.eventually(lambda: received.exists() and report_id in received.read_text().splitlines(),
+                        'The root channel did not receive the completed report identity.')
         with sqlite3.connect(self.db) as database:
             database.row_factory = sqlite3.Row
             pending = database.execute(
@@ -906,8 +909,6 @@ class Receive(unittest.TestCase):
                 'ORDER BY m.rowid').fetchall()
         for message in pending:
             ident = message['id']
-            self.eventually(lambda: received.exists() and ident in received.read_text(),
-                            'The root channel did not receive the report identity.')
             context = json.dumps({'ready': True, 'database': str(self.db), 'session': 'root',
                                   'harness': 'codex', 'native': 'native-root', 'endpoint': endpoint,
                                   'thread': 'native-root', 'connection': 'receive-root-channel',
