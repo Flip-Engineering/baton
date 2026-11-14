@@ -42,6 +42,44 @@ class HistoryFallbackTests(HistoryGroupTests):
         self.assertEqual(fields(pathlib.Path(claim["peak_attempt"]) / "result")["status"], "completed")
         self.complete(checking, "checking")
 
+    def test_a_new_family_uses_the_largest_recorded_peak_of_its_kind(self):
+        self.measured("small", "one", options=["mode=small"])
+        self.measured("large", "two", options=["mode=large"], mb=192)
+        original = fields(self.root / "receipt-large")["key"]
+        expected = int(fields(self.state / "keys" / original / "peak")["peak_kb"])
+        unknown = self.request("unknown", "three", options=["mode=unknown"])
+        self.until("new family allocated", lambda: self.allocated("unknown"))
+        claim = self.claim("unknown")
+        self.assertEqual(claim["peak_source"], "kind")
+        self.assertEqual(claim["peak_key"], original)
+        self.assertEqual(int(claim["expected_kb"]), expected)
+        self.complete(unknown, "unknown")
+
+    def test_a_running_legacy_zero_peak_claim_uses_the_recorded_bound(self):
+        self.measured("observed", "one", mb=256)
+        original = fields(self.root / "receipt-observed")["key"]
+        peak = int(fields(self.state / "keys" / original / "peak")["peak_kb"])
+        running = self.request("legacy", "two", options=["mode=legacy"], mb=16)
+        self.until("legacy command allocated", lambda: self.allocated("legacy"))
+        claim = self.claim("legacy")
+        path, = (p for p in (self.state / "admission/running").iterdir()
+                 if fields(p)["key"] == claim["key"])
+        old = "".join(name + "=" + value + "\n" for name, value in claim.items()
+                      if name not in ("expected_kb", "history", "kind", "history_group")
+                      and not name.startswith("peak_")) + "expected_kb=0\nhistory=0\n"
+        path.write_text(old)
+        (self.state / "meminfo").write_text("total_kb=%d\navailable_kb=%d\n" % (peak * 8, peak * 3 // 2))
+        checking = self.request("checking", "three", kind="check")
+        self.until("check waiting for reserved memory", lambda: self.waiting_count() == 1)
+        self.assertFalse(self.allocated("checking"))
+        (self.state / "meminfo").write_text("total_kb=%d\navailable_kb=%d\n" % (peak * 8, peak * 8))
+        self.until("check allocated beside the legacy command", lambda: self.allocated("checking"))
+        self.assertEqual(path.read_text(), old)
+        self.assertEqual(self.claim("checking")["peak_source"], "host")
+        self.assertIsNone(running.poll())
+        self.complete(checking, "checking")
+        self.complete(running, "legacy")
+
     def test_a_new_deploy_group_uses_its_compatible_family_beside_a_live_check(self):
         self.measured("deploy-one", "one", **self.deploy_data("first", "abcdef01"))
         original = fields(self.root / "receipt-deploy-one")["key"]
