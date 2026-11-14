@@ -3,7 +3,6 @@ import os
 import fcntl
 from pathlib import Path
 import subprocess
-import re
 import sys
 import tempfile
 import time
@@ -87,16 +86,18 @@ class WorkloadAdmission(unittest.TestCase):
         self.assertTrue(any(int(p.get('peak_kb', '0')) >= 64*1024 for p in peaks), peaks)
 
     def test_repeated_work_executes_again_and_uses_its_measured_history(self):
-        for _ in range(2):
+        for iteration in range(2):
             process = self.launch()
             self.addCleanup(self.stop, process)
             self.wait_for(lambda: (self.root / 'child-started').exists(), process)
+            if iteration:
+                claims = [fields(p) for p in self.state.glob('admission/running/*')]
+                self.assertTrue(any(int(p['expected_kb']) > 0 and
+                    p.get('peak_source') == 'workload' for p in claims), claims)
             self.finish(process)
             (self.root / 'child-started').unlink()
             (self.root / 'release').unlink()
         self.assertEqual((self.root / 'executions').read_text().splitlines(), ['ran', 'ran'])
-        claims = [p.read_text() for p in self.root.glob('.scratch/workloads/*/queue.stdout')]
-        self.assertTrue(any(any(int(value) > 0 for value in re.findall(r'expected_kb=(\d+)', text)) for text in claims), claims)
 
     def test_a_measured_workload_waits_for_available_host_memory(self):
         first = self.launch()
