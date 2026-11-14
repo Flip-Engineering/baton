@@ -2567,7 +2567,7 @@ class Receive(unittest.TestCase):
             database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
                              ('first', 'root', 'parent', 'task', 'The original input must be sent once.'))
         observer = self.spawn(*self.receive_args('parent'))
-        original, started = self.accept('parent')
+        original, started = self.accept_child(observer, 'parent')
         evidence.update({'firstSupervisor': observer.pid, 'firstNative': started['pid'],
                          'keeper': started['ppid'], 'originalPrompt': started['prompt']})
         self.connect('parent')
