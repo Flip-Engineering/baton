@@ -2395,8 +2395,7 @@ def run_config_locked(parsed: Config, +text: String, +key: String) -> IO(Unit):
     active : U32 <- active_state(keydir)
     cleaned : Unit <- clean_stale_active(keydir)
     pruned : Unit <- prune_stale_owners(keydir)
-    completed : Bool <- Bool.pick(IO(Bool), Tx.str_eq(field(text,"kind"),"workload"),
-      IO.pure(Bool,False{}), IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir)))
+    completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
     run_completed_result(completed, active, text, parsed, key, keydir, owner, wait_start, present, lock)
 
 def run_parsed_config(+parsed: Config, key: String) -> IO(Unit):
