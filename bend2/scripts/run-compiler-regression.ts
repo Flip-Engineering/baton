@@ -1,6 +1,6 @@
 // Supported runner for the compiler regression tests of issues #1390-1393.
 // Usage: bun --smol bend2/scripts/run-compiler-regression.ts [REPOSITORY_ROOT]
-//   [--artifact-dir DIR] [--private-fs DIR] [--timeout-ms N]
+//   [--artifact-dir DIR] [--private-fs DIR]
 //
 // Frozen source snapshots qualify with this runner: it supplies every
 // required argument, establishes the private-filesystem precondition the
@@ -18,14 +18,13 @@
 // 2 when only setup errors remain.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
 const SELF = "run-compiler-regression";
 
 function usage(): string {
   return `usage: bun --smol bend2/scripts/${SELF}.ts [REPOSITORY_ROOT] `
-    + `[--artifact-dir DIR] [--private-fs DIR] [--timeout-ms N]`;
+    + `[--artifact-dir DIR] [--private-fs DIR]`;
 }
 
 const argv = process.argv.slice(2);
@@ -49,15 +48,6 @@ for (let i = 0; i < argv.length; i++) {
 
 const root = path.resolve(positional[0]
   ?? path.join(import.meta.dir, "..", ".."));
-// No default per-test timeout: the calling job's timeout bounds the run.
-// --timeout-ms sets a per-test timeout only when the caller supplies one.
-const timeoutMs = flags.has("--timeout-ms")
-  ? Number(flags.get("--timeout-ms")) : undefined;
-if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
-  console.error(`${SELF}: --timeout-ms needs a positive millisecond count`);
-  process.exit(2);
-}
-
 function fail(message: string): never {
   console.error(`${SELF}: ${message}\n${usage()}`);
   process.exit(2);
@@ -80,7 +70,7 @@ const artifactDir = flags.get("--artifact-dir") !== undefined
   : fs.mkdtempSync(path.join(scratchDir, "compiler-regression-"));
 fs.mkdirSync(artifactDir, { recursive: true });
 
-type Verdict = "PASS" | "FAIL" | "SETUP-ERROR" | "TIMEOUT";
+type Verdict = "PASS" | "FAIL" | "SETUP-ERROR";
 interface Outcome {
   name: string;
   verdict: Verdict;
@@ -96,31 +86,37 @@ function record(name: string, verdict: Verdict, detail: string,
 }
 
 function runTest(name: string, file: string, args: string[]): void {
-  const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), `${name}-cache-`));
-  const child = spawnSync(process.execPath, ["--smol",
-    path.join(testDir, file), ...args], {
-    encoding: "utf8",
-    timeout: timeoutMs,
-    maxBuffer: 1 << 30,
-    env: {
-      ...process.env,
-      XDG_CACHE_HOME: cacheHome,
-      BEND_NO_TELEMETRY: "1",
-      BUN_JSC_maxPerThreadStackUsage: "67108864",
-    },
-  });
-  fs.rmSync(cacheHome, { recursive: true, force: true });
-  const tail = (child.stderr || child.stdout || "").trim().split("\n")
-    .slice(-3).join(" | ").slice(0, 300);
-  if (child.error !== undefined
-    && (child.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-    record(name, "TIMEOUT", `no result after ${timeoutMs} ms`);
-  } else if (child.status === 0) {
-    record(name, "PASS", tail, 0);
+  const cacheHome = fs.mkdtempSync(path.join(artifactDir, `${name}-cache-`));
+  const stdout = path.join(artifactDir, `${name}.stdout`);
+  const stderr = path.join(artifactDir, `${name}.stderr`);
+  const output = fs.openSync(stdout, "w");
+  const errors = fs.openSync(stderr, "w");
+  let child;
+  try {
+    child = spawnSync(process.execPath, ["--smol",
+      path.join(testDir, file), ...args], {
+      stdio: ["ignore", output, errors],
+      env: {
+        ...process.env,
+        TMPDIR: artifactDir,
+        XDG_CACHE_HOME: cacheHome,
+        BEND_NO_TELEMETRY: "1",
+        BUN_JSC_maxPerThreadStackUsage: "67108864",
+      },
+    });
+  } finally {
+    fs.closeSync(output);
+    fs.closeSync(errors);
+    fs.rmSync(cacheHome, { recursive: true, force: true });
+  }
+  const detail = `stdout=${stdout} stderr=${stderr}`;
+  if (child.status === 0) {
+    record(name, "PASS", detail, 0);
   } else if (child.status === 2) {
-    record(name, "SETUP-ERROR", tail || "exit 2", 2);
+    record(name, "SETUP-ERROR", detail, 2);
   } else {
-    record(name, "FAIL", tail || `exit ${child.status}`, child.status);
+    record(name, "FAIL", `${detail} exit=${child.status} `
+      + `signal=${child.signal} error=${child.error ?? ""}`, child.status);
   }
 }
 
@@ -137,7 +133,7 @@ function privateFilesystem(): string | null {
     return fs.statSync(dir).dev !== fs.statSync(path.dirname(dir)).dev
       ? dir : null;
   }
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "compiler-pressure-fs-"));
+  const dir = fs.mkdtempSync(path.join(artifactDir, "compiler-pressure-fs-"));
   const mount = spawnSync("mount",
     ["-t", "tmpfs", "-o", "size=512M,nr_inodes=1M", "tmpfs", dir],
     { encoding: "utf8" });
@@ -191,8 +187,7 @@ const summary = {
   tests: outcomes,
   artifact_dir: artifactDir,
   passed: outcomes.filter((o) => o.verdict === "PASS").length,
-  product_failures: outcomes.filter((o) => o.verdict === "FAIL"
-    || o.verdict === "TIMEOUT").map((o) => o.name),
+  product_failures: outcomes.filter((o) => o.verdict === "FAIL").map((o) => o.name),
   setup_errors: outcomes.filter((o) => o.verdict === "SETUP-ERROR")
     .map((o) => o.name),
 };
