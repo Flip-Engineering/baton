@@ -16,7 +16,7 @@ a fixed number.
   another group: the claim has no history.
 * An edited source of a measured group starts beside a running claim whose history is
   known, which a request without history does not.
-* A request of a group that was never measured waits beside a running claim.
+* A new group can use an observed kind peak beside a running claim.
 * C generation and checks retain one group across source edits and keep their
   distinct exact artifact keys.
 * The records are in state/history; the directory peaks/ of the memory-admission
@@ -543,19 +543,24 @@ class HistoryGroupTests(unittest.TestCase):
         self.assertIn("history=identity-changed", rebuilt.stdout)
         self.assertEqual(self.group_records(), {})
 
-    def test_a_group_that_was_never_measured_waits_beside_a_running_claim(self):
+    def test_a_new_group_uses_a_kind_measurement_beside_a_running_claim(self):
         self.measured("a1", "one")
+        measured_key = fields(self.root / "receipt-a1")["key"]
         running = self.request("a2", "two")
         self.until("a2 allocated", lambda: self.allocated("a2"))
         self.until("a2 has a claim", lambda: self.claim("a2") is not None)
         unmeasured = self.request("fresh", "one", options=["mode=fresh"])
-        self.until("fresh has a ticket", lambda: self.waiting_count() == 1)
-        time.sleep(3)
-        self.assertFalse(self.allocated("fresh"), "a request without history started beside a running claim")
+        self.until("fresh allocated beside the running claim", lambda: self.allocated("fresh"))
+        claim = self.claim("fresh")
+        self.assertIsNotNone(claim)
+        self.assertEqual(claim["history"], "0")
+        self.assertEqual(claim["peak_source"], "kind")
+        self.assertEqual(claim["peak_key"], measured_key)
+        self.assertGreater(int(claim["expected_kb"]), 0)
+        self.assertIsNone(running.poll())
         self.holds["a2"].touch()
         out, err = running.communicate(timeout=60)
         self.assertEqual(running.returncode, 0, out + err)
-        self.until("fresh started after the claim ended", lambda: self.allocated("fresh"))
         self.holds["fresh"].touch()
         out, err = unmeasured.communicate(timeout=60)
         self.assertEqual(unmeasured.returncode, 0, out + err)
