@@ -49,8 +49,11 @@ for (let i = 0; i < argv.length; i++) {
 
 const root = path.resolve(positional[0]
   ?? path.join(import.meta.dir, "..", ".."));
-const timeoutMs = Number(flags.get("--timeout-ms") ?? "1200000");
-if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+// No default per-test timeout: the calling job's timeout bounds the run.
+// --timeout-ms sets a per-test timeout only when the caller supplies one.
+const timeoutMs = flags.has("--timeout-ms")
+  ? Number(flags.get("--timeout-ms")) : undefined;
+if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
   console.error(`${SELF}: --timeout-ms needs a positive millisecond count`);
   process.exit(2);
 }
@@ -69,10 +72,12 @@ if (!fs.existsSync(testDir)) fail(`no compiler tests under ${testDir}`);
 const compilerDir = compilerCandidates.some((p) => fs.existsSync(p))
   ? root : null;
 
+const scratchDir = path.join(root, ".scratch");
+fs.mkdirSync(scratchDir, { recursive: true });
 const artifactDir = flags.get("--artifact-dir") !== undefined
   && flags.get("--artifact-dir") !== ""
   ? path.resolve(flags.get("--artifact-dir") as string)
-  : fs.mkdtempSync(path.join(os.tmpdir(), "compiler-regression-"));
+  : fs.mkdtempSync(path.join(scratchDir, "compiler-regression-"));
 fs.mkdirSync(artifactDir, { recursive: true });
 
 type Verdict = "PASS" | "FAIL" | "SETUP-ERROR" | "TIMEOUT";
