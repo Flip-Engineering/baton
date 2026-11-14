@@ -248,10 +248,11 @@ def default_credential_ref(+provider: String) -> String:
     case "deepseek": "omp-auth:deepseek"
     case "codex": "codex-home:"
     case "claude": "claude-oauth:"
+    case "muse": "muse-auth:"
     case _: ""
 
 def credential_ref_sql(+account: String) -> String:
-  "SELECT coalesce((SELECT CASE WHEN funding='api_key' THEN secret_ref WHEN harness='codex' THEN 'codex-home:'||secret_ref WHEN harness='claude-code' THEN 'claude-oauth:'||secret_ref||'/.credentials.json' ELSE '' END FROM accounts WHERE id=" ++ C.q(account) ++ "),'');"
+  "SELECT coalesce((SELECT CASE WHEN funding='api_key' THEN secret_ref WHEN harness='codex' THEN 'codex-home:'||secret_ref WHEN harness='claude-code' THEN 'claude-oauth:'||secret_ref||'/.credentials.json' WHEN harness='muse' THEN 'muse-auth:'||secret_ref||'/muse/auth.json' ELSE '' END FROM accounts WHERE id=" ++ C.q(account) ++ "),'');"
 
 def credential_ref_of(+provider: String, recorded: Result<&1,&1,U32 & String,String>) -> String:
   match recorded:
