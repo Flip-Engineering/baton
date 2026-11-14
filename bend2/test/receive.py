@@ -3337,10 +3337,8 @@ class Receive(unittest.TestCase):
         self.assertTrue(any(p['pid'] == second['pid'] for p in self.owned_processes()))
         self.assertIn('later-guidance', [m['id'] for m in self.coord('inbox', 'parent')])
         marker = 'recovery processed the current native response'
-        barrier = {'type': 'response', 'command': 'fixture_barrier', 'success': True,
-                   'id': marker}
-        self.action(current, native_request=barrier)
-        self.assertEqual(json.loads(current.readline()), {'request_written': barrier})
+        self.action(current, emit_checkpoint_message=marker)
+        self.assertEqual(json.loads(current.readline()), {'checkpoint_message_written': marker})
         current_attempt = pathlib.Path(self.execution('parent')[2])
         def recovered_barrier():
             output = log.read_bytes()
