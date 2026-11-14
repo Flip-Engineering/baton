@@ -225,7 +225,7 @@ print(json.dumps(base))
     def test_unreadable_report_describes_the_recorded_unknown_state(self):
         self.record('unreadable-kimi', 'kimi-code')
         self.entry('account', 'bind', 'unreadable-kimi', '', '', '', '', '', '', 'worker')
-        self.entry('read', 'worker', 'unreadable-kimi', self.helper)
+        self.wake()
         reports = [body for body, in self.rows("SELECT body FROM messages WHERE kind='report'")]
         self.assertTrue(any('current provider-window state is unknown' in body for body in reports), reports)
         self.assertFalse(any('keeps any hold' in body for body in reports), reports)
