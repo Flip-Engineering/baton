@@ -68,6 +68,15 @@ codex mcp add baton-riff -- node RELAY/bend2/scripts/codex-root-relay.mjs --ssh 
 codex mcp add baton-film -- node RELAY/bend2/scripts/codex-root-relay.mjs --ssh homelab --database DATABASE --coordinator COORDINATOR --conductor CONDUCTOR --session operator --thread ROOT_THREAD
 ```
 
+`--ssh` may be repeated. The relay connects through the first host that
+answers and tries the remaining hosts in order when one is unreachable, so a
+LAN address and a Tailscale address for the same database host keep delivery
+up when one route is down:
+
+```sh
+codex mcp add baton-runtime -- node RELAY/bend2/scripts/codex-root-relay.mjs --ssh atari-homelab-lan --ssh atari-homelab --database DATABASE --coordinator COORDINATOR --conductor CONDUCTOR --session operator --thread ROOT_THREAD
+```
+
 Set each command's `DATABASE` to the matching table row. Set `COORDINATOR` and
 `CONDUCTOR` to the installed executable and `mcp-conductor.mjs` paths on the
 database host. Start the managed app-server and resume the selected root thread:
@@ -116,17 +125,33 @@ exchanges masked JSON text frames, answering pings. The relay then:
 
 1. Waits until `thread/loaded/list` contains the root thread. It queues nothing
    before that.
-2. Reads the thread's newest turn and its item IDs with `thread/turns/list`.
-3. Runs `codex queue` with the complete notification.
-4. Reads the thread's turns until a `userMessage` item that was not present in
-   step 2 contains the complete notification text.
-5. Calls the conductor's `baton2_root_delivery` with the thread, the complete
+2. Takes the per-thread lock and reads the thread's newest turn and its item
+   IDs with `thread/turns/list`.
+3. Still under the lock, scans the turns for a copy of the notification left by
+   an earlier attempt. The scan stops after the turn of the last recorded read,
+   which the relay stores per database and thread; a leftover copy is always
+   newer than that turn, so the scan does not grow with the age of the thread.
+4. Runs `codex queue` with the complete notification when no copy was found and
+   no relay has recorded a queue for this notice. Queued input is stored
+   durably by the app-server, so the relay records each accepted queue and
+   later attempts for the same notice do not queue it again.
+5. Releases the lock, then reads the thread's turns until a `userMessage` item
+   that was not present in step 2 contains the complete notification text.
+6. Calls the conductor's `baton2_root_delivery` with the thread, the complete
    notification, and the turn and item IDs that returned it.
 
 The conductor then sends the relay a `baton/rootThreadItem` request with those
 IDs. The relay reads that item from the thread and returns its type and text.
 The conductor records the read only when the item is a `userMessage` that holds
-the complete notification. This advances delivery to the next unread message.
+the complete notification. The relay then records the delivered turn as the
+scan boundary for later deliveries. This advances delivery to the next unread
+message.
+
+If the connection to the app-server is lost during the locked section (steps
+2-4), the section fails, the lock is released, and the delivery retries from
+the unread message. A connection lost at any other step is opened again and
+the delivery continues, for as long as the SSH conductor is open. Other relay
+contexts waiting on the lock proceed while a delivery waits in step 5 or 6.
 
 When the conductor names a different conversation, for example after a
 re-binding, the relay stops the delivery that is waiting on the previous
@@ -135,8 +160,7 @@ conductor does not record a read that arrives from the previous conversation,
 and the relay does not treat that refusal as a failed delivery when the
 conversation changed while it waited for the answer.
 
-If the connection to the app-server is lost at any step, the relay opens the
-proxy again and continues for as long as the SSH conductor is open. If the SSH
+If the SSH
 conductor connection is lost after it was established, the relay opens it again
 every 2 seconds while Codex keeps the relay running, and the conductor sends the
 oldest unread message on each new connection, including a connection lost
