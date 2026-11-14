@@ -21,6 +21,7 @@ fi
     sh bend2/scripts/check-entry.sh bend2/src/coordinator/laws.bend
 )
 sh bend2/scripts/build-native.sh
+sh bend2/scripts/build-native.sh bend2/src/host/compile-queue.bend .scratch/bend2/compile-queue-test
 BATON_ROOT_TEST_BINARY="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/root-inbox-delivery.py
 sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry
 sh bend2/scripts/build-native.sh bend2/test/prompt-status-entry.bend .scratch/bend2/prompt-status-entry
