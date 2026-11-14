@@ -811,8 +811,10 @@ def CompileQueueIdentity.control_digest_lines(files: List<&2,String>, +cwd: Stri
         +normalized : String <- IO.pure(String,CompileQueueIdentity.control_path(path,cwd,root))
         +masked : String <- IO.pure(String,CompileQueueIdentity.mask_run(normalized,values))
         +per_run : Bool <- IO.pure(Bool,Bool.not(String.eq(masked,normalized)))
-        +digest : String <- Bool.pick(IO(String),Bool.or(skip,per_run),IO.pure(String,""),
-          IO.try(String,CompileQueueIdentity.file_digest(path)))
+        +digest : String <- IO.try(String,
+          Bool.pick(IO(Result<&1,&1,U32 & String,String>),Bool.or(skip,per_run),
+            IO.pure(Result<&1,&1,U32 & String,String>,Done{""}),
+            CompileQueueIdentity.file_digest(path)))
         +more : String <- IO.try(String, CompileQueueIdentity.control_digest_lines(rest,cwd,root,values))
         IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String,skip,more,
           masked ++ Bool.pick(String,per_run,"","\t" ++ digest) ++ "\n" ++ more)})

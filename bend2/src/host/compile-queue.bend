@@ -649,12 +649,14 @@ def retained_family_result(+config: Config, +toolchain: String, recorded: String
 
 def retained_family(+attempt: String, +toolchain: String) -> IO(String):
   do IO<String>:
-    text : String <- History.read(attempt ++ "/identity-config")
-    packed : String <- History.read(attempt ++ "/identity-command")
-    +config : Config <- IO.pure(Config,Config{text,copy_identity_tokens(Tx.split_nul(packed),Nil{})})
-    recorded : String <- History.read(attempt ++ "/history-group")
-    checked : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,False{})
-    retained_family_result(config,toolchain,recorded,checked)
+    +recorded : String <- History.read(attempt ++ "/history-group")
+    Bool.pick(IO(String),String.is_empty(field(recorded,"group")),IO.pure(String,""),
+      do IO<String>:
+        text : String <- History.read(attempt ++ "/identity-config")
+        packed : String <- History.read(attempt ++ "/identity-command")
+        +config : Config <- IO.pure(Config,Config{text,copy_identity_tokens(Tx.split_nul(packed),Nil{})})
+        checked : Result<&1,&1,U32 & String,String> <- identity_profile_result(config,toolchain,False{})
+        retained_family_result(config,toolchain,recorded,checked))
 
 def priority_text(+text: String) -> String:
   Bool.pick(String, String.is_empty(field(text, "priority")), "0", field(text, "priority"))

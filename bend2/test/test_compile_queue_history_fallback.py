@@ -135,6 +135,21 @@ class HistoryFallbackTests(HistoryGroupTests):
         self.assertGreaterEqual(int(claim["expected_kb"]), peak)
         self.complete(waiting, "different")
 
+    def test_missing_retained_controls_use_the_kind_fallback(self):
+        self.measured("observed", "one", aux=[self.helper])
+        original = fields(self.root / "receipt-observed")["key"]
+        original_attempt, = (self.state / "keys" / original / "runs").iterdir()
+        old_profile = fields(original_attempt / "history-group")
+        (original_attempt / "history-group").write_text("group=" + old_profile["group"] + "\n")
+        self.helper.unlink()
+        self.source = self.root / "edited.c"
+        changed = self.request("changed", "two")
+        self.until("workload allocated with an unavailable older control", lambda: self.allocated("changed"))
+        claim = self.claim("changed")
+        self.assertEqual(claim["peak_source"], "kind")
+        self.assertEqual(claim["peak_key"], original)
+        self.complete(changed, "changed")
+
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(HistoryFallbackTests(name) for name in sorted(
