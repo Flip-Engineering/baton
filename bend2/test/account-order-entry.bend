@@ -116,12 +116,15 @@ def binding_lines(values: List<String>) -> IO(Unit):
       shown : Unit <- IO.print(head)
       binding_lines(tail)
 
+def show_binding(binding: Maybe<List<String>>) -> IO(Unit):
+  match binding:
+    case None{}: IO.print("no binding")
+    case Some{values}: binding_lines(values)
+
 def provider_binding(+db: String, +session: String, +harness: String) -> IO(Unit):
   do IO<Unit>:
     account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
-    match A.account_binding(harness,account,None{},"/fixture/default"):
-      case None{}: IO.print("no binding")
-      case Some{values}: binding_lines(values)
+    show_binding(A.account_binding(harness,account,None{},"/fixture/default"))
 
 def expected_request(key: String, expected: String, status: String, body: String) -> IO(Result<&1,&1,U32 & String,String & String>):
   IO.pure(Result<&1,&1,U32 & String,String & String>,Bool.pick(Result<&1,&1,U32 & String,String & String>,String.eq(key,expected),Done{(status,body)},Fail{(1,"The fixture received another credential.")}))
