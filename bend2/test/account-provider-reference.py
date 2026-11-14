@@ -89,6 +89,26 @@ print(json.dumps(base))
     def test_zai_cannot_move_to_an_openai_account(self):
         self.different_provider_supplies_no_account_move('zai', 'zai/glm-5.3-flash')
 
+    def test_no_compatible_account_reports_the_zai_refusal_to_the_conductor(self):
+        self.sql("UPDATE sessions SET model='zai/glm-5.3-flash' WHERE id='worker'")
+        self.record('openai-account', 'openai')
+        cause = ('429 Usage limit reached for 5 hour. Your limit will reset at 2026-11-14 09:10:07\n'
+                 'Usage limit reached for 5 hour. Your limit will reset at 2026-11-14 09:10:07 (type=1308)')
+        event = json.dumps({'type': 'agent_end', 'isTerminal': True, 'messages': [{
+            'role': 'assistant', 'provider': 'zai', 'model': 'glm-5.3-flash',
+            'stopReason': 'error', 'errorMessage': cause}]})
+        ended = self.entry('handoff-with', 'worker', 'refused-no-match', event, self.helper)
+        self.assertEqual(ended.stdout.strip(), 'exhausted')
+        self.assertEqual(self.current(), '')
+        self.assertEqual(self.rows("SELECT id FROM messages WHERE body LIKE 'account move:%'"), [])
+        reports = self.rows("SELECT recipient,body FROM messages WHERE id='refused-no-match:account-provider-unavailable' AND kind='report'")
+        self.assertEqual(len(reports), 1, reports)
+        recipient, body = reports[0]
+        self.assertEqual(recipient, 'root')
+        for text in ['Provider zai ended this attempt', 'No recorded omp account serves this provider',
+                     'current store and unfinished work remain recorded', cause]:
+            self.assertIn(text, body)
+
     def test_account_order_and_attempt_use_the_matching_provider(self):
         self.record('openai-account', 'openai')
         self.record('kimi-account', 'kimi-code')

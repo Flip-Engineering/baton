@@ -1579,10 +1579,16 @@ def organization_refused(+db: String, +session: String, +id: String, +label: Str
     reported : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),Subs.report_body(db,session,id,"organization-api-unavailable","Provider " ++ provider ++ " refused this attempt on account " ++ from_text(label) ++ ". Provider response: " ++ cause))
     IO.pure(Bool,False{})
 
+def no_provider_account(+db: String, +session: String, +id: String, +harness: String, cause: String) -> IO(Bool):
+  do IO<Bool>:
+    +provider : String <- UW.seat_provider_io(db,session)
+    reported : Unit <- Subs.report_body(db,session,id,"account-provider-unavailable","Provider " ++ Bool.pick(String,String.is_empty(provider),"(unrecorded)",provider) ++ " ended this attempt with a refusal. No recorded " ++ harness ++ " account serves this provider. The current store and unfinished work remain recorded. Provider response: " ++ cause)
+    IO.pure(Bool,False{})
+
 def handoff_ordered(+db: String, +session: String, +id: String, +event: String, +native: String, +cmd: String, +cwd: String, +cause: String, +harness: String, +label: String, +helper: String, +bound: Maybe<&2,AccountRecord>, +ordered: List<&2,AccountRecord>, registered: Bool) -> IO(Bool):
   Bool.pick(IO(Bool),organization_route(bound),organization_refused(db,session,id,label,cause),Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),Bool.not(registered)),
     handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound),
-    Bool.pick(IO(Bool),accounts_empty(ordered),IO.pure(Bool,False{}),advance_in_order(db,session,id,harness,label,native,cmd,cwd,cause,helper,bound,ordered))))
+    Bool.pick(IO(Bool),accounts_empty(ordered),no_provider_account(db,session,id,harness,cause),advance_in_order(db,session,id,harness,label,native,cmd,cwd,cause,helper,bound,ordered))))
 
 # --- the order at a wake and at a launch ------------------------------------------
 #
