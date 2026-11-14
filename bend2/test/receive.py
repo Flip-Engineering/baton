@@ -3301,7 +3301,8 @@ class Receive(unittest.TestCase):
                 "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
             ).fetchone()[0])
         self.coord('message', 'second', 'root', 'parent', 'task', 'Work queued before original completion.')
-        self.action(original, body='Original report survives completed-attempt replay.')
+        self.action(original, body='Original report survives completed-attempt replay.',
+                    complete_task=False)
         self.assertEqual(original.readline(), b'')
         current, second = self.accept('parent')
         self.read_root_channel(root_channel)
