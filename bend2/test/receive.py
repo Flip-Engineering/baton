@@ -2563,7 +2563,9 @@ class Receive(unittest.TestCase):
                          'terminalBeforeObserverLoss': terminal_before_loss})
         root_channel = self.attach_root_channel()
         self.player(harness=harness)
-        self.prepare_input('first', 'parent', 'The original input must be sent once.', kind='task')
+        with sqlite3.connect(self.db) as database:
+            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
+                             ('first', 'root', 'parent', 'task', 'The original input must be sent once.'))
         observer = self.spawn(*self.receive_args('parent'))
         original, started = self.accept('parent')
         evidence.update({'firstSupervisor': observer.pid, 'firstNative': started['pid'],
