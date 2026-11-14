@@ -81,7 +81,7 @@ def history_records(~derive: (@+attempt: String -> @+toolchain: String -> IO(Str
       classified : String <- classify(derive,measured,kind,family,toolchain)
       history_records(derive,rest,state,kind,family,toolchain,add(classified,kind,family,candidates))
 
-def sole(files: List<&2,String>) -> Bool:
+def sole(files: List<&1,String>) -> Bool:
   match files:
     case name <> Nil{}: True{}
     case other: False{}
