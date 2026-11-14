@@ -260,6 +260,96 @@ grep -F "$(cat "$T/artifact-row-prefix")" "$STATE/keys/$ident_key/completed/resu
 [ "$(cat "$STATE/keys/$ident_key/completed/artifacts/binary")" = 'artifact-ident' ] \
   && pass 'completed result retains named artifact bytes' || bad 'completed artifact bytes missing'
 
+# Two requesters of one key publishing the same artifact path.
+# The key binds artifact names, not destinations, so both requests share one
+# key while each state keeps its own artifact-publication lock. A shared
+# staging file lets one publisher remove the staging file of the other
+# mid-copy, failing with No such file or directory.
+BIG=$T/big-compiler
+cat > "$BIG" <<'EOF'
+#!/bin/sh
+out=''
+prev=''
+for arg in "$@"; do
+  [ "$prev" = -o ] && out=$arg
+  prev=$arg
+done
+python3 -c "import sys; sys.stdout.write('y' * 16000000)" > "$out"
+exit 0
+EOF
+chmod +x "$BIG"
+STATE2=$T/state2
+(umask 0007; mkdir -p -m 2770 "$STATE2") || bad 'second state root unavailable'
+samepath_key_a=$(env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$BIG" --linker "$BIG" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/samepath-bin" --option 'test=samepath' \
+  -- "$BIG" -o "$T/samepath-bin" "$T/input.c")
+samepath_key_b=$(env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE2" --cwd "$T" --compiler "$BIG" --linker "$BIG" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/samepath-bin" --option 'test=samepath' \
+  -- "$BIG" -o "$T/samepath-bin" "$T/input.c")
+[ -n "$samepath_key_a" ] && [ "$samepath_key_a" = "$samepath_key_b" ] \
+  && pass 'same artifact path shares one key' || bad 'same artifact path keys differ'
+python3 -c "import sys; sys.stdout.write('y' * 16000000)" > "$T/samepath-expected"
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$BIG" --linker "$BIG" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/samepath-bin" --receipt "$T/samepath-a.receipt" --option 'test=samepath' \
+  --token tok-samepath-a -- "$BIG" -o "$T/samepath-bin" "$T/input.c" >"$T/samepath-a.out" 2>"$T/samepath-a.err" & sp1=$!
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE2" --cwd "$T" --compiler "$BIG" --linker "$BIG" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/samepath-bin" --receipt "$T/samepath-b.receipt" --option 'test=samepath' \
+  --token tok-samepath-b -- "$BIG" -o "$T/samepath-bin" "$T/input.c" >"$T/samepath-b.out" 2>"$T/samepath-b.err" & sp2=$!
+wait "$sp1" || bad 'same-path first requester failed'
+wait "$sp2" || bad 'same-path second requester failed'
+! grep -q 'No such file or directory' "$T/samepath-a.err" "$T/samepath-b.err" \
+  && pass 'same-path publishers report no missing file' || bad 'same-path publisher reported No such file or directory'
+cmp -s "$T/samepath-bin" "$T/samepath-expected" \
+  && pass 'shared artifact path holds complete bytes' || bad 'shared artifact path bytes differ'
+grep -Fx "artifact-binary=$T/samepath-bin" "$T/samepath-a.receipt" \
+  && pass 'same-path first receipt records binding' || bad 'same-path first receipt binding differs'
+grep -Fx "artifact-binary=$T/samepath-bin" "$T/samepath-b.receipt" \
+  && pass 'same-path second receipt records binding' || bad 'same-path second receipt binding differs'
+
+# A publisher that dies leaves its staging file. The next publisher of the
+# same destination removes the staging files whose owner is gone and keeps
+# the one whose owner is running.
+! ls "$T"/samepath-bin.queue-tmp.* >/dev/null 2>&1 \
+  && pass 'completed publication leaves no staging file' || bad 'completed publication left a staging file'
+SMALL=$T/small-compiler
+cat > "$SMALL" <<'EOF'
+#!/bin/sh
+out=''
+prev=''
+for arg in "$@"; do
+  [ "$prev" = -o ] && out=$arg
+  prev=$arg
+done
+printf 'abandoned-ok' > "$out"
+exit 0
+EOF
+chmod +x "$SMALL"
+printf 'dead' > "$T/abandoned-bin.queue-tmp.2147483646.1"
+printf 'dead-previous' > "$T/abandoned-bin.queue-tmp.2147483646.1.previous"
+printf 'legacy' > "$T/abandoned-bin.queue-tmp"
+printf 'legacy-pid' > "$T/abandoned-bin.queue-tmp.4242"
+printf 'other' > "$T/unrelated-bin.queue-tmp.2147483646.1"
+live_start=$(awk '{ sub(/^.*\) /, ""); split($0, f, " "); print f[20] }' "/proc/$$/stat" 2>/dev/null)
+if [ -n "$live_start" ]; then
+  printf 'live' > "$T/abandoned-bin.queue-tmp.$$.$live_start"
+fi
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$SMALL" --linker "$SMALL" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/abandoned-bin" --receipt "$T/abandoned.receipt" --option 'test=abandoned' \
+  --token tok-abandoned -- "$SMALL" -o "$T/abandoned-bin" "$T/input.c" >"$T/abandoned.out" 2>"$T/abandoned.err" \
+  && pass 'publication after abandoned staging succeeds' || bad 'publication after abandoned staging failed'
+[ "$(cat "$T/abandoned-bin" 2>/dev/null)" = 'abandoned-ok' ] \
+  && pass 'publication after abandoned staging holds the artifact bytes' || bad 'artifact bytes differ after abandoned staging'
+[ ! -e "$T/abandoned-bin.queue-tmp.2147483646.1" ] && [ ! -e "$T/abandoned-bin.queue-tmp.2147483646.1.previous" ] \
+  && pass 'staging of a dead publisher is removed' || bad 'staging of a dead publisher remains'
+[ ! -e "$T/abandoned-bin.queue-tmp" ] && [ ! -e "$T/abandoned-bin.queue-tmp.4242" ] \
+  && pass 'staging without a start identity is removed' || bad 'staging without a start identity remains'
+[ -e "$T/unrelated-bin.queue-tmp.2147483646.1" ] \
+  && pass 'staging of another destination is kept' || bad 'staging of another destination was removed'
+if [ -n "$live_start" ]; then
+  [ "$(cat "$T/abandoned-bin.queue-tmp.$$.$live_start" 2>/dev/null)" = 'live' ] \
+    && pass 'staging of a running publisher is kept' || bad 'staging of a running publisher was removed'
+fi
+
 # Artifact names are relative paths used under the attempt and cache roots.
 invalid_artifact=0
 sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \

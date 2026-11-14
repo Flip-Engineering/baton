@@ -5,6 +5,7 @@ import ./compile-queue-identity.bend as Identity
 import ./compile-queue-artifact.bend as Artifact
 import ../host/storage.bend as Storage
 import ./compile-queue-lifecycle.bend as L
+import ./compile-queue-files.bend as Q
 
 # Compile queue result schema version 2.
 #
@@ -375,6 +376,83 @@ def CompileQueueResult.write_with_stage(+path: String, +status: String, +code: S
 def CompileQueueResult.write(+path: String, +status: String, +code: String, +kind: String, +key: String, +started: String, +finished: String, +attempt: String, +work: String, +stdout: String, +stderr: String, +detail: String, +names: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   CompileQueueResult.write_with_stage(path, status, code, kind, key, started, finished, attempt, work, stdout, stderr, detail, "", names)
 
+# Install staging is private to the publishing process. Two requesters of one
+# key can publish the same destination without sharing the
+# artifact-publication lock, so a destination-derived staging name lets one
+# publisher remove or move the staging file of the other. The name is
+# DESTINATION.queue-tmp.PID.START, where START is the process start identity
+# that CompileQueueLifecycle.alive compares. A later publisher of the same
+# destination removes every such name whose owner is no longer running.
+def CompileQueueResult.staging_path(+destination: String) -> IO(String):
+  do IO<String>:
+    +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
+    +start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
+    IO.pure(String, destination ++ ".queue-tmp." ++ U32.show(pid) ++ "." ++ start)
+
+# An owner whose liveness cannot be determined counts as running, so its
+# staging file is kept.
+def CompileQueueResult.owner_gone(alive: Result<&1,&1,U32 & String,U32>) -> Bool:
+  match alive:
+    case Done{running}: U32.is_eq(running, 0)
+    case Fail{error}: False{}
+
+# The suffix after DESTINATION.queue-tmp. is PID.START, optionally followed by
+# .previous for the backup of a replaced directory. A suffix without a pid and
+# start (a name written before the start identity was added) has no running
+# owner.
+def CompileQueueResult.staging_abandoned(+suffix: String) -> IO(Bool):
+  do IO<Bool>:
+    +fields : List<&2,String> <- IO.pure(List<&2,String>, String.split(suffix, Char.from_u32(46)))
+    alive : Result<&1,&1,U32 & String,U32> <- L.CompileQueueLifecycle.alive(Q.number(Q.at(fields, 0)), Q.at(fields, 1))
+    IO.pure(Bool, CompileQueueResult.owner_gone(alive))
+
+def CompileQueueResult.remove_if(+gone: Bool, +path: String) -> IO(Unit):
+  Bool.pick(IO(Unit), gone,
+    IO.try(Unit, Artifact.CompileQueueArtifact.remove(path)),
+    IO.pure(Unit, Unit{}))
+
+def CompileQueueResult.sweep_names(+directory: String, +prefix: String, +names: List<&2,String>) -> IO(Unit):
+  match names:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case name <> rest:
+      do IO<Unit>:
+        +gone : Bool <- Bool.pick(IO(Bool), String.starts_with(name, prefix),
+          CompileQueueResult.staging_abandoned(String.drop(name, String.length(prefix))),
+          IO.pure(Bool, False{}))
+        removed : Unit <- CompileQueueResult.remove_if(gone, directory ++ "/" ++ name)
+        CompileQueueResult.sweep_names(directory, prefix, rest)
+
+def CompileQueueResult.sweep_listed(listing: Result<&1,&1,U32 & String,String>, +directory: String, +prefix: String) -> IO(Unit):
+  match listing:
+    case Fail{error}:
+      IO.pure(Unit, Unit{})
+    case Done{names}:
+      CompileQueueResult.sweep_names(directory, prefix, String.split(names, Char.from_u32(0)))
+
+# Removes the staging files that publishers of DESTINATION left behind when
+# they died.
+def CompileQueueResult.sweep_abandoned(+destination: String) -> IO(Unit):
+  do IO<Unit>:
+    +directory : String <- IO.pure(String, CompileQueueResult.dirname(destination))
+    +prefix : String <- IO.pure(String, CompileQueueResult.basename(destination) ++ ".queue-tmp.")
+    listing : Result<&1,&1,U32 & String,String> <- Q.list_dir(directory)
+    CompileQueueResult.sweep_listed(listing, directory, prefix)
+
+# Every publication path installs through this function. The staging file is
+# removed when the install fails and when it succeeds (a successful install has
+# already moved it, so the removal finds nothing); a publisher that dies
+# between those points leaves a name the next publisher sweeps.
+def CompileQueueResult.install_staged(+source: String, +destination: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +staging : String <- CompileQueueResult.staging_path(destination)
+    swept : Unit <- CompileQueueResult.sweep_abandoned(destination)
+    removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
+    installed : Result<&1,&1,U32 & String,Unit> <- Artifact.CompileQueueArtifact.install(source, destination, staging)
+    cleared : Result<&1,&1,U32 & String,Unit> <- Artifact.CompileQueueArtifact.remove(staging)
+    left : Result<&1,&1,U32 & String,Unit> <- Artifact.CompileQueueArtifact.remove(staging ++ ".previous")
+    IO.pure(Result<&1,&1,U32 & String,Unit>, installed)
+
 def CompileQueueResult.retain_rows(+work: String, +destination: String, +names: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match names:
     case Nil{}:
@@ -384,10 +462,8 @@ def CompileQueueResult.retain_rows(+work: String, +destination: String, +names: 
         CompileQueueResult.retain_rows(work, destination, rest),
         do IO<Result<&1,&1,U32 & String,Unit>>:
           +target : String <- IO.pure(String, destination ++ "/" ++ name)
-          +staging : String <- IO.pure(String, target ++ ".queue-tmp")
           made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(CompileQueueResult.dirname(target)))
-          removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
-          installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(work ++ "/" ++ name, target, staging))
+          installed : Unit <- IO.try(Unit, CompileQueueResult.install_staged(work ++ "/" ++ name, target))
           CompileQueueResult.retain_rows(work, destination, rest))
 
 def CompileQueueResult.retain_artifacts(+work: String, +destination: String, +names: String) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -396,9 +472,7 @@ def CompileQueueResult.retain_artifacts(+work: String, +destination: String, +na
 def CompileQueueResult.retain_external(+path: String, +destination: String, +name: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +target : String <- IO.pure(String, destination ++ "/" ++ name)
-    +staging : String <- IO.pure(String, target ++ ".queue-tmp")
-    removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
-    installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(path, target, staging))
+    installed : Unit <- IO.try(Unit, CompileQueueResult.install_staged(path, target))
     IO.pure(Result<&1,&1,U32 & String,Unit>, Done{installed})
 
 def CompileQueueResult.adoption_append(+acc: String, +value: String) -> String:
@@ -517,9 +591,7 @@ def CompileQueueResult.copy_row_fields(fields: List<&2,String>, +keydir: String)
   match fields:
     case name <> +destination <> tail:
       do IO<Result<&1,&1,U32 & String,Unit>>:
-        +staging : String <- IO.pure(String, destination ++ ".queue-tmp")
-        removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
-        installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(keydir ++ "/completed/artifacts/" ++ name, destination, staging))
+        installed : Unit <- IO.try(Unit, CompileQueueResult.install_staged(keydir ++ "/completed/artifacts/" ++ name, destination))
         IO.pure(Result<&1,&1,U32 & String,Unit>, Done{installed})
     case other:
       IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
