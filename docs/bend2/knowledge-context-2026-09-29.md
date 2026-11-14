@@ -59,6 +59,8 @@ MCP exposes the same operations through `baton2_knowledge_record` with optional 
 
 Recording a finding writes a `question` notice to the author's immediate parent when one exists. The notice identifies the finding and author. A root author has no parent and produces no notice.
 
+A committed record returns the stored finding. When its notice delivery fails, the answer includes `noticeDelivery` with `status: undelivered`, the delivery `code` and its `cause`. The finding and its notice remain committed.
+
 Promoting a finding writes a `question` notice to the destination session or Ensemble owner. Its body identifies the promotion, finding, author, source, destination, and promoting session. Group promotion answers, provenance rows and notices include `sourceKind` and `destinationKind`. Existing session-to-session fields retain their shape. The owner can retrieve the finding and decide whether to notify other sessions.
 
 Each notice is committed with its finding or promotion, then delivered through the coordinator's normal message path. If delivery fails, the database write remains committed and the notice remains available as pending input for inspection and retry. Stopped recipients follow the coordinator's existing stopped-input handoff behavior.

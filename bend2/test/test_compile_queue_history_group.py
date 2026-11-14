@@ -109,7 +109,7 @@ class HistoryGroupTests(unittest.TestCase):
     def allocated(self, name):
         return any(line.startswith("allocated %s " % name) for line in self.log_lines())
 
-    def request(self, name, edit, options=(), exit_code=0, mb=64, aux=(), extra=(), kind="cc"):
+    def request(self, name, edit, options=(), exit_code=0, mb=64, aux=(), extra=(), kind="cc", per_run=()):
         """Start a request whose source text carries the edit; returns the process."""
         hold = self.root / ("hold-" + name)
         self.holds[name] = hold
@@ -132,6 +132,8 @@ class HistoryGroupTests(unittest.TestCase):
             argv += ["--aux", str(path)]
         for option in options:
             argv += ["--option", option]
+        for role, value in per_run:
+            argv += ["--per-run", role + "=" + str(value)]
         argv += ["--", str(self.compiler), "--source", str(source), "-o", str(output), *extra]
         child = subprocess.Popen(argv, env=dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(self.state)),
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -410,10 +412,88 @@ class HistoryGroupTests(unittest.TestCase):
         out, err = changed.communicate(timeout=60)
         self.assertEqual(changed.returncode, 0, out + err)
 
+    def deploy_data(self, name, commit, reverse=False):
+        evidence = self.root / "deploys" / commit / name
+        evidence.mkdir(parents=True)
+        manifest = evidence / "source.json"
+        manifest.write_text("commit=%s\nrun=%s\n" % (commit, name))
+        roles = [("commit", commit), ("evidence", evidence)]
+        return dict(options=["production=" + commit + ";revision=" + commit],
+                    aux=[manifest, self.helper],
+                    extra=["--commit", commit, "--evidence", str(evidence), "--manifest", str(manifest)],
+                    per_run=list(reversed(roles)) if reverse else roles)
+
+    def test_per_run_declaration_preserves_the_exact_key(self):
+        self.measured("first", "one")
+        argv = list(self.children[-1].args)
+        argv[2] = "key"
+        plain = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        self.assertEqual(plain.returncode, 0, plain.stdout + plain.stderr)
+        declared = subprocess.run(argv[:3] + ["--per-run", "edit=one"] + argv[3:],
+                                  capture_output=True, text=True, timeout=30)
+        self.assertEqual(declared.returncode, 0, declared.stdout + declared.stderr)
+        self.assertEqual(declared.stdout, plain.stdout)
+
+    def test_per_run_deploy_reuses_its_peak_beside_an_unmeasured_check(self):
+        self.measured("deploy-one", "one", **self.deploy_data("first", "abcdef01"))
+        (group, peak), = self.group_records().items()
+        running = self.request("checking", "one", kind="check")
+        self.until("unmeasured check allocated", lambda: self.allocated("checking"))
+        self.until("check claim recorded", lambda: self.claim("checking") is not None)
+        self.assertEqual(self.claim("checking")["history"], "0")
+        second = self.request("deploy-two", "two", **self.deploy_data("second", "abcdef02", reverse=True))
+        self.until("new deploy admitted beside the check", lambda: self.allocated("deploy-two"))
+        self.until("deploy claim recorded", lambda: self.claim("deploy-two") is not None)
+        claim = self.claim("deploy-two")
+        self.assertEqual(claim["history"], "1", claim)
+        attempts = list((self.state / "keys" / claim["key"] / "runs").iterdir())
+        self.assertTrue(attempts)
+        self.assertEqual({fields(attempt / "history-group")["group"] for attempt in attempts}, {group})
+        self.assertGreaterEqual(int(claim["expected_kb"]), peak)
+        first_key = fields(self.root / "receipt-deploy-one")["key"]
+        self.assertNotEqual(claim["key"], first_key)
+        self.assertIsNone(running.poll(), "the unmeasured check finished before admission")
+        self.holds["deploy-two"].touch()
+        self.holds["checking"].touch()
+        for child in (second, running):
+            out, err = child.communicate(timeout=60)
+            self.assertEqual(child.returncode, 0, out + err)
+
+    def test_per_run_declarations_retain_stable_helper_identity(self):
+        self.measured("first", "one", **self.deploy_data("first", "abcdef01"))
+        self.helper.write_text("# changed stable driver\n")
+        changed = self.request("changed", "two", **self.deploy_data("second", "abcdef02"))
+        self.until("changed helper has a claim", lambda: self.claim("changed") is not None)
+        self.assertEqual(self.claim("changed")["history"], "0")
+        self.holds["changed"].touch()
+        out, err = changed.communicate(timeout=60)
+        self.assertEqual(changed.returncode, 0, out + err)
+
     def rebuild_history(self):
         return subprocess.run([self.candidate, "--", "history-rebuild", "--state-root", str(self.state)],
                               env=dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(self.state)),
                               capture_output=True, text=True, timeout=60)
+
+    def test_history_rebuild_reports_a_history_write_failure(self):
+        self.measured("first", "one")
+        (group,) = self.group_records()
+        attempt, = list((self.state / "keys").glob("*/runs/*"))
+        keydir = attempt.parent.parent
+        expected_result = (attempt / "result").read_bytes()
+        expected_artifact = (keydir / "completed" / "artifacts" / "output").read_bytes()
+        destination = self.state / "history" / group
+        destination.unlink()
+        destination.mkdir()
+        (destination / "retained").write_text("existing directory\n")
+
+        rebuilt = self.rebuild_history()
+
+        self.assertNotEqual(rebuilt.returncode, 0, rebuilt.stdout + rebuilt.stderr)
+        self.assertNotIn("history=recorded", rebuilt.stdout)
+        self.assertIn("directory", rebuilt.stderr.lower())
+        self.assertTrue(destination.is_dir())
+        self.assertEqual((attempt / "result").read_bytes(), expected_result)
+        self.assertEqual((keydir / "completed" / "artifacts" / "output").read_bytes(), expected_artifact)
 
     def test_verified_legacy_receipt_reconstructs_the_actual_profile(self):
         self.measured("first", "one")

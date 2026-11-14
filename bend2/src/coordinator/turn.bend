@@ -241,7 +241,7 @@ def generation_log(+log: String, +id: String) -> String:
 # finish delivers the settled turn to its recorded coordinator.
 def recovery_observe(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
 
 def refusal_observed(+db: String, +player: String, +id: String, +event: String) -> IO(Unit):
   do IO<Unit>:
@@ -251,7 +251,7 @@ def refusal_observed(+db: String, +player: String, +id: String, +event: String) 
 
 def recovery_after(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{+event,status,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
+    case Ended{status,+event,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
 
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
@@ -290,7 +290,7 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
         case False{}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
           do IO<Result<&1,&1,U32 & String,Unit>>:
-            output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
+            output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL WHEN json_valid(value) THEN json(value) ELSE value END,'error'," ++ C.q(error) ++ ") FROM frame;"))
             T.Text.control_output(output))
 
 def finish(+db: String, +player: String, +id: String, log: String, +outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -1683,7 +1683,7 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         completion_extension : String <- omp_completion_extension(omp,executable)
         claude_entries : List<String> <- claude_environment_if(claude,executable)
         seat_checked : Unit <- claude_seat_check(claude,executable,absolute_db,player,cmd,directory)
-        +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],claude_entries)) ++ identity_prefix(parts))
+        +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON2_CREDIT_RESERVATION=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],claude_entries)) ++ identity_prefix(parts))
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
         history : String <- current_history(db,player)

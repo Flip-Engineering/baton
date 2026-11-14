@@ -136,3 +136,13 @@ project to someone new must not assume the reader has the issue tracker open, an
 mechanism rather than pointing at a bare issue number with no context.
 
 See the `writing-style` skill for the same rules with worked before/after examples.
+
+## Development work never lives in /tmp
+
+Operator rule, 2026-11-05, after a reboot emptied /tmp and erased four agents' unpushed work. No clone,
+worktree, edited tree, build output or patch script that carries development work goes under `/tmp`,
+`/private/tmp`, `/var/tmp` or any other directory that a reboot or a cleaner empties. On atari-homelab,
+work trees go under `/mnt/nvme4tb/agent-scratch/<agent-name>/`; Baton seat worktrees live under
+`/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/worktrees/`. On a Mac, a clone goes under
+`~/Development/Experiments/agent-work/<agent-name>/`. Commit and push after every step, so a tree never
+holds more than one step of unpushed work.

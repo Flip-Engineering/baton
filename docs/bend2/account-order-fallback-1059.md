@@ -50,7 +50,7 @@ On a refusal, Baton scans the order from its head and gives each entry one state
 | State | Meaning | Effect |
 | --- | --- | --- |
 | refused | the account that just refused | skipped |
-| not launchable | an Anthropic `api_key` account while the promotional-credit guard is false | skipped |
+| not launchable | (none: the promotional-credit guard is on, so an Anthropic `api_key` account is ordered like any other) | skipped |
 | held | the account's usage gate is held | skipped |
 | open | no hold | the seat moves here |
 | unknown | the usage read could not be read and no hold stands | the seat moves here, unless the account is `claude-max-primary` |
@@ -122,8 +122,8 @@ account --action record --id claude-max-incognito --provider anthropic --harness
 
 `accounts_priority_ensured` from #1011 writes priority 3 to this id where the
 priority is still empty. The unprioritized `claude-credit-normal` row sorts after
-incognito. A seat refused on incognito holds when the other entries are
-unlaunchable, and a live read that opens incognito resumes it.
+incognito. A seat refused on incognito holds when every other entry is held or
+refused, and a live read that opens incognito resumes it.
 
 The `claude-max-primary` row (priority 4, `secret_ref`
 `/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude`) is recorded only after the
@@ -136,8 +136,9 @@ Its focused compiler entry is `bend2/test/account-order-entry.bend`.
 
 ## Limits
 
-- The credit accounts stay unlaunchable while the promotional-credit guard is
-  false. This change does not alter the guard.
+- The promotional-credit guard is on. A credit account is ordered like any
+  other entry, and its live read decides its state in the scan. The launch
+  gate then records the credit reservation and authorization for the attempt.
 - Native history is not prepared for a seat with no native conversation.
 - This branch includes the #1063 Claude reader. Deployment fixtures use its
   credential resolution and response parsing, with a fixture response for the

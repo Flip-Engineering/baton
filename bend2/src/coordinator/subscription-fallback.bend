@@ -274,11 +274,11 @@ def all_refused_body(harness: String, refused: String, cause: String) -> String:
 #          text in payload.text. A compaction failure that ends the run carries the summarizer and quota
 #          diagnostic in the same reason, so it classifies by that text too.
 def usage_text_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract((SELECT " ++ C.last_assistant_sql_expr(event) ++ "),'$.errorMessage'),'')"
+  "CASE WHEN json_valid(" ++ event ++ ") THEN CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract((SELECT " ++ C.last_assistant_sql_expr(event) ++ "),'$.errorMessage'),'')"
   ++ " WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN coalesce(json_extract(" ++ event ++ ",'$.error.message'),'')"
   ++ " WHEN json_extract(" ++ event ++ ",'$.type')='result' THEN coalesce(json_extract(" ++ event ++ ",'$.result'),'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.errors')='array' THEN json_extract(" ++ event ++ ",'$.errors') ELSE '[]' END)),'')"
   ++ " WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.payload_type')='run.terminal.failed' THEN coalesce(nullif(json_extract(" ++ event ++ ",'$.payload.reason'),''),json_extract(" ++ event ++ ",'$.payload.text'),'')"
-  ++ " ELSE '' END"
+  ++ " ELSE '' END ELSE '' END"
 
 # A genuinely failed provider terminal only:
 #   Codex  {"type":"turn.failed","error":{"message":"..."}}
@@ -289,11 +289,11 @@ def usage_text_sql_expr(+event: String) -> String:
 #           "terminal":"failed","reason":"..."}}          (a completed run that quotes
 #                                                          limit words is never one)
 def failed_terminal_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN 1"
+  "CASE WHEN json_valid(" ++ event ++ ") THEN CASE WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN 1"
   ++ " WHEN json_extract(" ++ event ++ ",'$.type')='result' AND json_extract(" ++ event ++ ",'$.is_error')=1 THEN 1"
   ++ " WHEN json_extract(" ++ event ++ ",'$.payload_type')='run.terminal.failed' THEN 1"
   ++ " WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')='failed' THEN 1"
-  ++ " WHEN " ++ C.omp_terminal_error_sql_expr(event) ++ "=1 THEN 1 ELSE 0 END"
+  ++ " WHEN " ++ C.omp_terminal_error_sql_expr(event) ++ "=1 THEN 1 ELSE 0 END ELSE 0 END"
 
 # The provider's own subscription-limit wordings. Codex (protocol src/error.rs Display):
 # "You’ve hit your usage limit[ for {limit_name}]", "Your workspace is out of credits.",
@@ -335,8 +335,8 @@ def exhausted_marker_sql(+text: String) -> String:
 # 402 (billing_error) classifies as exhaustion by status first: billing is a
 # funding fact for either route, and the documented tier-cap 429 and spend-limit
 # 400 shapes stay on wording until an observed fixture terminal names them.
-def exhausted_reason_sql(event: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,text,status_402) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.type')='result' AND json_extract(frame.value,'$.api_error_status')=402 THEN 1 ELSE 0 END FROM frame) SELECT CASE WHEN diagnostic.failed=0 THEN '' WHEN diagnostic.status_402=1 THEN 'provider-reported billing exhaustion (api_error_status 402): ' || diagnostic.text WHEN " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
+def exhausted_reason_sql(+event: String) -> String:
+  "WITH frame(value) AS (VALUES(CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.q(event) ++ " ELSE '{}' END)), diagnostic(failed,text,status_402) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.type')='result' AND json_extract(frame.value,'$.api_error_status')=402 THEN 1 ELSE 0 END FROM frame) SELECT CASE WHEN diagnostic.failed=0 THEN '' WHEN diagnostic.status_402=1 THEN 'provider-reported billing exhaustion (api_error_status 402): ' || diagnostic.text WHEN " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
 
 # The operator list and the per-session record are plain files beside the database,
 # like the other coordinator sidecars: no schema, no daemon, no environment lookup.
@@ -441,8 +441,8 @@ def exhaustion_cause(db: String, +event: String) -> IO(String):
 
 # Settled OMP rate refusals and socket closures, and Muse transport timeouts,
 # continue on the same account. Usage exhaustion follows the account handoff path.
-def transient_provider_sql(event: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(terminal,assistant,muse_terminal,muse_reason) AS MATERIALIZED (SELECT json_extract(frame.value,'$.type')," ++ C.last_assistant_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.payload.kind')='run_terminal' THEN json_extract(frame.value,'$.payload.terminal') END,coalesce(json_extract(frame.value,'$.payload.reason'),'') FROM frame) SELECT CASE WHEN (diagnostic.terminal='agent_end' AND json_extract(diagnostic.assistant,'$.stopReason')='error' AND (json_extract(diagnostic.assistant,'$.errorStatus')=429 OR instr(coalesce(json_extract(diagnostic.assistant,'$.errorMessage'),''),'The socket connection was closed unexpectedly.')=1)) OR (diagnostic.muse_terminal='failed' AND instr(diagnostic.muse_reason,'transport error [net-timeout]:')=1) THEN 1 ELSE 0 END FROM diagnostic;"
+def transient_provider_sql(+event: String) -> String:
+  "WITH frame(value) AS (VALUES(CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.q(event) ++ " ELSE '{}' END)), diagnostic(terminal,assistant,muse_terminal,muse_reason) AS MATERIALIZED (SELECT json_extract(frame.value,'$.type')," ++ C.last_assistant_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.payload.kind')='run_terminal' THEN json_extract(frame.value,'$.payload.terminal') END,coalesce(json_extract(frame.value,'$.payload.reason'),'') FROM frame) SELECT CASE WHEN (diagnostic.terminal='agent_end' AND json_extract(diagnostic.assistant,'$.stopReason')='error' AND (json_extract(diagnostic.assistant,'$.errorStatus')=429 OR instr(coalesce(json_extract(diagnostic.assistant,'$.errorMessage'),''),'The socket connection was closed unexpectedly.')=1)) OR (diagnostic.muse_terminal='failed' AND instr(diagnostic.muse_reason,'transport error [net-timeout]:')=1) THEN 1 ELSE 0 END FROM diagnostic;"
 
 def transient_provider_stated(+db: String, +event: String) -> IO(Bool):
   do IO<Bool>:
