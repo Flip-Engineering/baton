@@ -4954,45 +4954,54 @@ static void br_drain_detail(BatonProcessCall *call) {
 /* Reports the owner of one database without starting one. */
 static int br_instance_status_text(const char *database,char **text_out) {
   *text_out=NULL;
-  BrOwnerRecord record={0};
-  int socket_fd=-1;
-  int error=br_instance_connect(database,0,&record,&socket_fd);
-  if(error==ENOENT || error==ECONNREFUSED) {
-    *text_out=strdup("{\"state\":\"absent\"}");
-    return *text_out?0:ENOMEM;
+  for(;;) {
+    BrOwnerRecord record={0};
+    int socket_fd=-1;
+    int error=br_instance_connect(database,0,&record,&socket_fd);
+    if(error==ENOENT || error==ECONNREFUSED) {
+      *text_out=strdup("{\"state\":\"absent\"}");
+      return *text_out?0:ENOMEM;
+    }
+    if(error)return error;
+    BrInstanceFrame reply={0};
+    BrOwnerState state={0};
+    error=br_instance_exchange(socket_fd,
+      (BrInstanceFrame){.op=BI_STATE,.owner=record.token,.epoch=record.epoch},NULL,-1,&reply);
+    int transport_error=error;
+    if(!error && reply.error)error=reply.error;
+    if(!error && (reply.op!=BI_HELLO || reply.length!=sizeof(state)))error=EPROTO;
+    if(!error && record.token && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
+    if(!error) {
+      error=br_read_all(socket_fd,&state,sizeof(state));
+      if(error)transport_error=error;
+    }
+    pid_t pid=0;
+    if(!error)error=br_owner_peer_pid(socket_fd,&pid);
+    close(socket_fd);
+    /* An idle owner can exit after acknowledging the drain and accepting this
+       status connection. Read the current owner again after that disconnect. */
+    if(transport_error==ECONNRESET || transport_error==EPIPE)continue;
+    if(error)return error;
+    char *executable=NULL;
+    char hex[65]={0};
+    br_owner_executable(pid,&executable,hex);
+    char *escaped=executable?br_json_escape(executable):NULL;
+    if(!escaped){free(executable);return ENOMEM;}
+    const char *format="{\"state\":\"%s\",\"pid\":%d,\"owner\":%llu,\"epoch\":%llu,"
+      "\"attempts\":%llu,\"drainGated\":%s,\"executable\":\"%s\",\"sha256\":\"%s\"}";
+    const char *name=(state.reserved&BR_OWNER_DRAINING)?"draining":"running";
+    const char *gated=(state.reserved&BR_OWNER_GATED)?"true":"false";
+    int needed=snprintf(NULL,0,format,name,(int)pid,(unsigned long long)state.owner,
+      (unsigned long long)state.epoch,(unsigned long long)state.attempts,gated,escaped,hex);
+    if(needed<0){free(executable);free(escaped);return EIO;}
+    *text_out=malloc((size_t)needed+1);
+    if(!*text_out)error=ENOMEM;
+    else snprintf(*text_out,(size_t)needed+1,format,name,(int)pid,
+      (unsigned long long)state.owner,(unsigned long long)state.epoch,
+      (unsigned long long)state.attempts,gated,escaped,hex);
+    free(executable);free(escaped);
+    return error;
   }
-  if(error)return error;
-  BrInstanceFrame reply={0};
-  BrOwnerState state={0};
-  error=br_instance_exchange(socket_fd,
-    (BrInstanceFrame){.op=BI_STATE,.owner=record.token,.epoch=record.epoch},NULL,-1,&reply);
-  if(!error && reply.error)error=reply.error;
-  if(!error && (reply.op!=BI_HELLO || reply.length!=sizeof(state)))error=EPROTO;
-  if(!error && record.token && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
-  if(!error)error=br_read_all(socket_fd,&state,sizeof(state));
-  pid_t pid=0;
-  if(!error)error=br_owner_peer_pid(socket_fd,&pid);
-  close(socket_fd);
-  if(error)return error;
-  char *executable=NULL;
-  char hex[65]={0};
-  br_owner_executable(pid,&executable,hex);
-  char *escaped=executable?br_json_escape(executable):NULL;
-  if(!escaped){free(executable);return ENOMEM;}
-  const char *format="{\"state\":\"%s\",\"pid\":%d,\"owner\":%llu,\"epoch\":%llu,"
-    "\"attempts\":%llu,\"drainGated\":%s,\"executable\":\"%s\",\"sha256\":\"%s\"}";
-  const char *name=(state.reserved&BR_OWNER_DRAINING)?"draining":"running";
-  const char *gated=(state.reserved&BR_OWNER_GATED)?"true":"false";
-  int needed=snprintf(NULL,0,format,name,(int)pid,(unsigned long long)state.owner,
-    (unsigned long long)state.epoch,(unsigned long long)state.attempts,gated,escaped,hex);
-  if(needed<0){free(executable);free(escaped);return EIO;}
-  *text_out=malloc((size_t)needed+1);
-  if(!*text_out)error=ENOMEM;
-  else snprintf(*text_out,(size_t)needed+1,format,name,(int)pid,
-    (unsigned long long)state.owner,(unsigned long long)state.epoch,
-    (unsigned long long)state.attempts,gated,escaped,hex);
-  free(executable);free(escaped);
-  return error;
 }
 /* Sends one database-level request. The reply must carry the published owner
    incarnation and epoch; a stale socket from an earlier owner is retried
