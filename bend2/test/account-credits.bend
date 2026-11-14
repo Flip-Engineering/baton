@@ -55,6 +55,7 @@ def binding_checks() -> IO(Unit):
     codex : Unit <- binding_is(A.launch_binding("codex","subscription","/fixture/stores/codex alt",None{}),"subscription-codex-store","CODEX_HOME=/fixture/stores/codex alt")
     claude : Unit <- binding_is(A.launch_binding("claude-code","subscription","/fixture/stores/claude",None{}),"subscription-claude-store","CLAUDE_CONFIG_DIR=/fixture/stores/claude")
     resolver : Unit <- binding_is(A.launch_binding("claude-code","api_key","file:/fixture/secrets/api",Some{"/fixture/libexec/api-key-exec"}),"api-key-helper-binding-for-admitted-route","/fixture/libexec/api-key-exec")
+    omp : Unit <- binding_is(A.launch_binding("omp","api_key","/fixture/omp",None{}),"omp-api-key-provider-store","PI_CODING_AGENT_DIR=/fixture/omp")
     profile : Unit <- binding_is(A.account_binding("codex",None{},None{},"/fixture/stores/codex"),"no-account-keeps-the-profile-store","CODEX_HOME=/fixture/stores/codex")
     anthropic_api : Unit <- binding_refuses(A.account_binding("claude-code",Some{A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"anthropic-api-key-is-held-without-request-admission")
     anthropic_subscription : Unit <- binding_is(A.account_binding("claude-code",Some{A.Ac{"claude-max","anthropic","claude-code","subscription","/fixture/stores/claude","org-fixture","2026-10-18"}},None{},""),"anthropic-subscription-binding-is-preserved","CLAUDE_CONFIG_DIR=/fixture/stores/claude")

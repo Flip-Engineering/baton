@@ -5,7 +5,10 @@ The fixture drives Turn.retained_prepare with a profile record. The final argv
 must bind PI_CODING_AGENT_DIR for OMP and XDG_CONFIG_HOME for Muse, with no
 HOME assignment. A selected profile store overrides an inherited value, and
 the OMP preflight checks the selected store. A Claude Code launch carries
-BUN_OPTIONS with the packaged agent_summary preload. No provider is contacted.
+BUN_OPTIONS with the packaged agent_summary preload. Its environment carries
+BATON2_CREDIT_RESERVATION equal to the attempt directory, and the production
+api-key-exec helper admits a launch with that environment and a recorded
+authorization. No provider is contacted.
 """
 import os
 import json
@@ -153,6 +156,50 @@ class RetainedStore(unittest.TestCase):
         argv = self.claude_argv('--smol')
         self.assertIn('BUN_OPTIONS=--smol ' + preload, argv)
         self.assertEqual(1, len([value for value in argv if value.startswith('BUN_OPTIONS=')]))
+
+    def test_launch_environment_marker_admits_api_key_exec(self):
+        helper = pathlib.Path(os.environ.get('BATON2_API_KEY_EXEC',
+                                              ROOT / '.scratch/bend2/api-key-exec'))
+        if not helper.is_file():
+            self.skipTest(f'production api-key-exec helper not built at {helper}')
+        argv = self.claude_argv(None)
+        environment = {}
+        for value in argv:
+            if value == '/usr/bin/claude':
+                break
+            name, separator, entry = value.partition('=')
+            if separator and name.startswith('BATON'):
+                environment[name] = entry
+        attempt = environment.get('BATON_ATTEMPT_DIRECTORY', '')
+        self.assertTrue(attempt)
+        self.assertEqual(environment.get('BATON2_CREDIT_RESERVATION'), attempt)
+        self.assertEqual(environment.get('BATON_DATABASE'), str(self.db.resolve()))
+        secret = self.root / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        reference = 'file:' + str(secret)
+        with sqlite3.connect(self.db) as database:
+            database.execute(
+                "INSERT INTO credit_authorizations"
+                "(attempt,session,account,organization,secret_ref,state) "
+                "VALUES(?,?,?,?,?,'authorized')",
+                (attempt, 'store-fixture', 'claude-credit-primary', 'org-fixture', reference))
+            database.commit()
+        child = self.root / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\\n"\n')
+        child.chmod(0o755)
+        admitted = subprocess.run(
+            [str(helper), reference, str(child)],
+            capture_output=True, text=True,
+            env={**environment, 'PATH': os.environ['PATH']})
+        self.assertEqual((admitted.returncode, admitted.stdout.strip()),
+                         (0, 'KEY=set'), admitted.stderr)
+        replay = subprocess.run(
+            [str(helper), reference, str(child)],
+            capture_output=True, text=True,
+            env={**environment, 'PATH': os.environ['PATH']})
+        self.assertEqual(replay.returncode, 2, replay.stdout)
+        self.assertIn('creditAuthorizationConsumed', replay.stderr)
 
     def test_other_harnesses_carry_no_preload(self):
         for harness in ('omp', 'muse'):

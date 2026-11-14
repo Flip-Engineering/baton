@@ -122,7 +122,7 @@ law completion_without_parent_returns_output_failure:
   for +event: String
   for error: String
   {Turn.finish_parent(db,player,id,log,Turn.Ended{status,event,error,False{}},False{},False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
-    output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
+    output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL WHEN json_valid(value) THEN json(value) ELSE value END,'error'," ++ C.q(error) ++ ") FROM frame;"))
     Text.Text.control_output(output)) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completion_without_parent_returns_output_failure(db,player,id,log,status,event,error):

@@ -47,7 +47,8 @@ function quoted(value) {
 
 export function rootChannelConfig({ database, coordinator, session, resume, ssh, name, node }) {
   const server = name || `baton-${basename(dirname(database)).replace(/[^A-Za-z0-9_-]/g, '-')}`;
-  const conductorArgs = [CONDUCTOR, database, coordinator, '--session', session];
+  const conductorArgs = [CONDUCTOR, database, coordinator, '--session', session,
+    ...(resume ? ['--native-session', resume] : [])];
   const entry = ssh
     ? { command: 'ssh', args: ['-T', ssh, ['exec', node || 'node', ...conductorArgs].map(quoted).join(' ')] }
     : { command: node || process.execPath, args: conductorArgs };

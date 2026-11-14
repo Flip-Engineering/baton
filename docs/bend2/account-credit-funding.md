@@ -30,7 +30,7 @@ attempt:
 | `attempt` | The attempt directory the retained launch records. The same value `native_initial_inputs.attempt` carries. |
 | `session` | The Player. |
 | `turn` | `executions.id` for that attempt, empty when the execution row is absent. |
-| `workload` | The execution class of the launch: `agent-sdk` for API-key funding, `subscription` for a subscription-bound claude-code launch, the harness name otherwise. Written at admit. |
+| `workload` | The execution class of the launch: `agent-sdk` for claude-code API-key funding, `subscription` for a subscription-bound claude-code launch, the harness name otherwise. Written at admit. |
 | `outcome`, `error_text`, `ended_at` | Written once per finished attempt by `Accounts.attempt_completed`, the coordinated hook the receive and turn completion paths call. Empty until that call, by design: an unfinished attempt carries no outcome. |
 | `started_at` | Admit time, written before the spawn, so an unstarted or failed launch keeps its attribution. |
 | `account`, `organization`, `funding`, `secret_ref` | The selection in force for the attempt. |
@@ -74,6 +74,53 @@ returns the hold sentence, writes no reservation and writes no authorization.
 The SQLite busy handler in `bend2/src/host/sqlite.c` waits at most 3000 retries of 10ms for one lock and then returns `SQLITE_BUSY` to the caller.
 The attempt is not started and its input stays owed. Subscription routes and
 other harnesses keep their existing bindings.
+
+## OpenAI organization API accounts through OMP
+
+OMP reads the `openai` provider from its native `models.yml`. Its account uses
+`provider=openai`, `harness=omp`, `funding=api_key` and the OMP agent configuration
+directory as `secret_ref`. The launch binds that directory through
+`PI_CODING_AGENT_DIR`. OMP resolves the provider key from the configured command.
+
+For example, the directory contains this provider entry:
+
+```yaml
+providers:
+  openai:
+    baseUrl: https://api.openai.com/v1
+    api: openai-responses
+    apiKey: "!cat /absolute/path/to/openai-organizational-api.key"
+    headers:
+      OpenAI-Organization: org-EXAMPLE
+```
+
+The operator supplies the organization and an owner-readable key file. OMP's
+[model configuration](https://github.com/can1357/oh-my-pi/blob/main/docs/models.md)
+supports command-backed keys, provider API selection and request headers.
+[OpenAI organization headers](https://developers.openai.com/api/reference/overview)
+select the organization for the request. `omp models openai --json` reports the
+available selectors. Select an explicit provider-qualified model, such as
+`openai/gpt-6.1-sol`, when staffing the seat.
+
+Record the configured route with:
+
+```sh
+baton account --action record --id openai-organization-api \
+  --provider openai --harness omp --funding api_key \
+  --secret-ref /absolute/path/to/omp/agent
+baton account --action bind --id openai-organization-api --session PLAYER
+```
+
+An organization observation records the operator-supplied organization and its
+request evidence. A successful Responses call establishes that the configured
+route accepts a request. Provider usage and cost observations keep their reported
+values; a missing monetary value remains unknown.
+
+Use `account select --harness omp --funding api_key` to select API funding, and
+bind the named account before dispatch. A provider refusal retains the selected
+OpenAI API account and its unfinished input, and sends the cause to the parent.
+The coordinator can then choose the next action. The account's native
+configuration controls any OMP provider fallback.
 
 ## Request-level reservation
 
