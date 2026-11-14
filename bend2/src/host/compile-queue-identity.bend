@@ -814,23 +814,21 @@ def CompileQueueIdentity.control_digest_add(result: Result<&1,&1,U32 & String,St
         (masked ++ Bool.pick(String,per_run,"","\t" ++ digest)) <> acc)}
 
 def CompileQueueIdentity.control_digest_lines(files: List<&2,String>, accumulated: Result<&1,&1,U32 & String,List<&2,String>>, +cwd: String, +root: String, +values: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
-  match accumulated:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{acc}:
-      match files:
-        case Nil{}:
-          IO.pure(Result<&1,&1,U32 & String,String>,Done{CompileQueueIdentity.joined_lines(List.reverse(&2,String,acc))})
-        case +path <> rest:
-          do IO<Result<&1,&1,U32 & String,String>>:
-            +skip : Bool <- IO.pure(Bool,Bool.or(String.is_empty(path),CompileQueueIdentity.workload_source(path)))
-            +normalized : String <- IO.pure(String,CompileQueueIdentity.control_path(path,cwd,root))
-            +masked : String <- IO.pure(String,CompileQueueIdentity.mask_run(normalized,values))
-            +per_run : Bool <- IO.pure(Bool,Bool.not(String.eq(masked,normalized)))
-            result : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),Bool.or(skip,per_run),
-              IO.pure(Result<&1,&1,U32 & String,String>,Done{""}),CompileQueueIdentity.file_digest(path))
-            next : Result<&1,&1,U32 & String,List<&2,String>> <- IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,
-              CompileQueueIdentity.control_digest_add(result,acc,masked,skip,per_run))
-            CompileQueueIdentity.control_digest_lines(rest,next,cwd,root,values)
+  match files accumulated:
+    case remaining Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Nil{} Done{acc}:
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{CompileQueueIdentity.joined_lines(List.reverse(&2,String,acc))})
+    case Con{+path,rest} Done{acc}:
+      do IO<Result<&1,&1,U32 & String,String>>:
+        +skip : Bool <- IO.pure(Bool,Bool.or(String.is_empty(path),CompileQueueIdentity.workload_source(path)))
+        +normalized : String <- IO.pure(String,CompileQueueIdentity.control_path(path,cwd,root))
+        +masked : String <- IO.pure(String,CompileQueueIdentity.mask_run(normalized,values))
+        +per_run : Bool <- IO.pure(Bool,Bool.not(String.eq(masked,normalized)))
+        result : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),Bool.or(skip,per_run),
+          IO.pure(Result<&1,&1,U32 & String,String>,Done{""}),CompileQueueIdentity.file_digest(path))
+        next : Result<&1,&1,U32 & String,List<&2,String>> <- IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,
+          CompileQueueIdentity.control_digest_add(result,acc,masked,skip,per_run))
+        CompileQueueIdentity.control_digest_lines(rest,next,cwd,root,values)
 
 def CompileQueueIdentity.control_digest_result(result: Result<&1,&1,U32 & String,String>, canonical: List<&2,CompileQueueRunValue>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
