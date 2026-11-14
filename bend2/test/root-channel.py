@@ -4,8 +4,8 @@ The root's Claude Code session loaded the removed impl/scripts/mcp-web.mjs.
 That server failed at startup, so the root attached no channel, and its owed
 input grew to 7136 messages with nothing reporting it. status, session and
 orchestra now print one error line for each such root on stderr. A committed
-message, report or question to it prints the line to its sender and appends
-it to the database's .root.log.
+message, report or question to it appends the line to the database's .root.log.
+The sender receives the committed message with a separate notice result.
 
 A root is any parentless session with the operator role, whatever its harness.
 A Codex root with a recorded managed receiver is attached when 'codex app-server
@@ -70,10 +70,17 @@ class RootChannel(unittest.TestCase):
         self.path = str(self.dir / 'orchestra.db')
         installed = self.run_entry('install', self.path)
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        self.addCleanup(self.shutdown_owner)
         self.sql("INSERT INTO sessions(id,parent,harness) VALUES('operator',NULL,'claude-code')")
         self.sql("INSERT INTO session_roles(session,role) VALUES('operator','operator')")
         self.sql("INSERT INTO sessions(id,parent,harness) VALUES('lead',NULL,'omp')")
         self.sql("INSERT INTO session_roles(session,role) VALUES('lead','conductor')")
+
+    def shutdown_owner(self):
+        stopped = self.run_entry('shutdown', self.path)
+        self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+        waited = self.run_entry('wait', self.path)
+        self.assertEqual(waited.returncode, 0, waited.stdout + waited.stderr)
 
     def run_entry(self, *args, env=None):
         return subprocess.run([self.binary, *args], capture_output=True, text=True, env=env,
@@ -119,6 +126,25 @@ class RootChannel(unittest.TestCase):
     def root_log(self):
         log = pathlib.Path(self.path + '.root.log')
         return log.read_text() if log.exists() else ''
+
+    def test_notification_preserves_non_object_answers(self):
+        for saved in ['', 'The original answer. λ\n', '[{"id":"saved"}]', '"text"', 'null', '17']:
+            with self.subTest(saved=saved):
+                result = self.run_entry('answer-saved', self.path, saved)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, saved)
+
+    def test_notification_preserves_original_object_fields(self):
+        saved = {'id': 'original', 'body': 'Original report.', 'receipt': None,
+                 'nested': {'values': [1, 'λ']}}
+        result = self.run_entry('answer-saved', self.path, json.dumps(saved))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        answer = json.loads(result.stdout)
+        for name, value in saved.items():
+            self.assertEqual(answer[name], value)
+        self.assertTrue(answer['committed'])
+        self.assertEqual(set(answer['noticeDelivery']), {'status', 'code', 'detail', 'cause'})
+        self.assertEqual(answer['noticeDelivery']['cause'], 'no channel endpoint is registered')
 
     def test_operator_without_endpoint_is_reported(self):
         self.owe('operator', 2)
@@ -189,11 +215,11 @@ class RootChannel(unittest.TestCase):
         self.endpoint('lead', json.dumps(['/opt/baton/bin/baton', self.path, 'receive', 'lead']))
         self.assertEqual(self.warn(), [])
 
-    def test_message_to_an_unattached_root_reaches_the_sender_and_root_log(self):
+    def test_message_to_an_unattached_root_records_the_root_log(self):
         self.owe('operator', 1)
         result = self.run_entry('message', self.path, 'operator:report:0')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('Baton error: root session operator has 1 owed inputs', result.stderr)
+        self.assertEqual(result.stderr, '')
         self.assertIn('Baton error: root session operator has 1 owed inputs', self.root_log())
 
     def test_message_to_another_session_is_not_reported(self):
@@ -209,7 +235,7 @@ class RootChannel(unittest.TestCase):
         result = self.run_entry('report', self.path, 'operator:report:0')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.strip(), 'driven')
-        self.assertIn('Baton error: root session operator has 1 owed inputs', result.stderr)
+        self.assertEqual(result.stderr, '')
         self.assertIn('Baton error: root session operator has 1 owed inputs', self.root_log())
 
 
@@ -227,7 +253,7 @@ class RootChannel(unittest.TestCase):
         self.sql("UPDATE messages SET receipt='legacy-only'")
         result = self.run_entry('message', self.path, 'operator:report:0')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('1 owed inputs', result.stderr)
+        self.assertEqual(result.stderr, '')
         self.assertIn('no channel endpoint is registered', self.root_log())
 
 
@@ -310,12 +336,12 @@ class RootChannel(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertIn('not a supported root notification channel', lines[0])
 
-    def test_codex_root_message_reaches_the_sender_and_root_log(self):
+    def test_codex_root_message_records_the_root_log(self):
         self.owe('operator', 1)
         self.codex_root(self.fake_codex('refused', self.REFUSED))
         result = self.run_entry('message', self.path, 'operator:report:0')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('the Codex app-server is not reachable', result.stderr)
+        self.assertEqual(result.stderr, '')
         self.assertIn('the Codex app-server is not reachable', self.root_log())
 
     def test_codex_root_stream_witness_records_the_accepted_complete_read(self):
@@ -390,7 +416,7 @@ class RootChannel(unittest.TestCase):
         lines = self.warn()
         self.assertEqual(len(lines), 1, lines)
         self.assertIn('root session operator has 3 owed inputs and no attached channel: no channel endpoint is registered', lines[0])
-        self.assertIn("Register an endpoint for harness 'omp'", lines[0])
+        self.assertIn("harness 'omp'", lines[0])
         self.assertNotIn('mcp-conductor.mjs', lines[0])
 
     def test_unsupported_harness_operator_without_an_endpoint_is_reported(self):

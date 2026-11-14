@@ -55,8 +55,8 @@ def print_result(+result: String) -> IO(Unit):
 def run(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
     +result : String <- IO.try(String, Store.apply(db,command))
-    woken : Unit <- IO.try(Unit,Wake.drive_command(db,command,Done{result}))
-    print_result(result)
+    answer : String <- IO.try(String,Wake.command_result(db,command,Done{result}))
+    print_result(answer)
 
 # The first input forwarded to the successor wakes it after the succession
 # commits; a failed wake leaves the committed succession and the forwarded
