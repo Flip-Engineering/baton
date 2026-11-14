@@ -195,13 +195,16 @@ def admitted_snapshot_parts(+index: String, +id: String, +sender: String, +recip
 def admitted_snapshot(+index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, wake: Result<&1,&1,U32 & String,Unit>, state: Result<&1,&1,U32 & String,String & String>) -> String:
   admitted_snapshot_parts(index,id,sender,recipient,kind,saved,wake_parts(wake),state)
 
+def admitted_delivery(index: String, id: String, sender: String, recipient: String, kind: String, saved: String, result: Result<&1,&1,U32 & String,String>, state: Result<&1,&1,U32 & String,String & String>) -> String:
+  match result:
+    case Fail{error}: admitted_snapshot(index,id,sender,recipient,kind,saved,Fail{error},state)
+    case Done{answer}: admitted_snapshot(index,id,sender,recipient,kind,answer,Done{Unit{}},state)
+
 def admitted(+db: String, +index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, +command: C.Command) -> IO(String):
   do IO<String>:
     result : Result<&1,&1,U32 & String,String> <- Wake.command_result(db,command,Done{saved})
     state : Result<&1,&1,U32 & String,String & String> <- snapshot(db,id)
-    match result:
-      case Fail{error}: IO.pure(String,admitted_snapshot(index,id,sender,recipient,kind,saved,Fail{error},state))
-      case Done{answer}: IO.pure(String,admitted_snapshot(index,id,sender,recipient,kind,answer,Done{Unit{}},state))
+    IO.pure(String,admitted_delivery(index,id,sender,recipient,kind,saved,result,state))
 
 def admission_result(+db: String, +index: String, +id: String, +sender: String, +recipient: String, +kind: String, command: C.Command, result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
