@@ -185,6 +185,13 @@ def request_kind(+state: String, +key: String, +supplied: String) -> IO(String):
 
 # Existing claims keep their recorded reservation. A claim written with no peak
 # obtains its reservation from the retained measurement evidence on each scan.
+def replace_expected(lines: List<&2,String>, +expected: String) -> String:
+  match lines:
+    case Nil{}: expected
+    case +line <> rest:
+      Bool.pick(String,String.starts_with(line,"expected_kb="),"",line ++ "\n")
+        ++ replace_expected(rest,expected)
+
 def running_record(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
                    +state: String, +text: String) -> IO(String):
   Bool.pick(IO(String),U32.is_gt(number(U32.read(field(text,"expected_kb"))),0),IO.pure(String,text),
@@ -192,7 +199,7 @@ def running_record(~derive: (@+attempt: String -> @+toolchain: String -> IO(Stri
       +key : String <- IO.pure(String,field(text,"key"))
       kind : String <- request_kind(state,key,field(text,"kind"))
       measurement : String <- lookup(derive,state,key,field(text,"history_group"),kind)
-      IO.pure(String,"expected_kb=" ++ U32.show(peak(measurement)) ++ "\n" ++ text))
+      IO.pure(String,replace_expected(String.lines(text),"expected_kb=" ++ U32.show(peak(measurement)) ++ "\n")))
 
 def own_history(text: String) -> U32:
   +source = field(text,"peak_source")
