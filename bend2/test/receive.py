@@ -892,7 +892,13 @@ class Receive(unittest.TestCase):
 
     def read_root_channel(self, channel):
         endpoint, received = channel
-        for message in self.coord('inbox', 'root'):
+        with sqlite3.connect(self.db) as database:
+            database.row_factory = sqlite3.Row
+            pending = database.execute(
+                "SELECT id,body FROM messages m WHERE recipient='root' AND NOT EXISTS("
+                'SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient) '
+                'ORDER BY m.rowid').fetchall()
+        for message in pending:
             ident = message['id']
             self.eventually(lambda: received.exists() and ident in received.read_text(),
                             'The root channel did not receive the report identity.')
