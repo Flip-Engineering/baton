@@ -88,6 +88,7 @@ sh bend2/scripts/build-native.sh bend2/test/account-credits-entry.bend .scratch/
 BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" "$PYTHON3" bend2/test/account-credits-focused.py
 sh bend2/scripts/build-native.sh bend2/test/account-order-entry.bend .scratch/bend2/account-order-entry
 BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-order-entry" "$PYTHON3" bend2/test/account-order-fallback.py
+BATON2_ACCOUNT_PROVIDER_FIXTURE="$root/.scratch/bend2/account-order-entry" "$PYTHON3" bend2/test/account-provider-reference.py
 sh bend2/scripts/build-native.sh bend2/harness/claude-credit-observe.bend .scratch/bend2/claude-credit-observe
 BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py
 sh bend2/scripts/build-native.sh bend2/harness/usage-read.bend .scratch/bend2/usage-read
