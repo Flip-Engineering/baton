@@ -4967,16 +4967,20 @@ static int br_instance_status_text(const char *database,char **text_out) {
     BrOwnerState state={0};
     error=br_instance_exchange(socket_fd,
       (BrInstanceFrame){.op=BI_STATE,.owner=record.token,.epoch=record.epoch},NULL,-1,&reply);
+    int transport_error=error;
     if(!error && reply.error)error=reply.error;
     if(!error && (reply.op!=BI_HELLO || reply.length!=sizeof(state)))error=EPROTO;
     if(!error && record.token && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
-    if(!error)error=br_read_all(socket_fd,&state,sizeof(state));
+    if(!error) {
+      error=br_read_all(socket_fd,&state,sizeof(state));
+      if(error)transport_error=error;
+    }
     pid_t pid=0;
     if(!error)error=br_owner_peer_pid(socket_fd,&pid);
     close(socket_fd);
     /* An idle owner can exit after acknowledging the drain and accepting this
        status connection. Read the current owner again after that disconnect. */
-    if(error==ECONNRESET || error==EPIPE)continue;
+    if(transport_error==ECONNRESET || transport_error==EPIPE)continue;
     if(error)return error;
     char *executable=NULL;
     char hex[65]={0};
