@@ -93,8 +93,10 @@ def pending_sql(+player: String, +cursor: String) -> String:
 
 def pending(+db: String, +player: String, handle: U32, +attempt: String, +cursor: String) -> IO(String):
   do IO<String>:
-    +next : String <- IO.try(String,DB.Sql.query(db,pending_sql(player,cursor)))
-    send(db,player,handle,attempt,cursor,next,String.eq(cursor,next))
+    +current : String <- IO.pure(String,Tx.trim_nl(cursor))
+    selected : String <- IO.try(String,DB.Sql.query(db,pending_sql(player,current)))
+    +next : String <- IO.pure(String,Tx.trim_nl(selected))
+    send(db,player,handle,attempt,current,next,String.eq(current,next))
 
 # An attempt with closed input keeps its current forwarding cursor.
 def pending_live(db: String, player: String, handle: U32, attempt: String, cursor: String, closed: U32) -> IO(String):

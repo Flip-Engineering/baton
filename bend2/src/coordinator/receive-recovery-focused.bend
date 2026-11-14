@@ -55,10 +55,11 @@ def dispatch_host_keeper_command(selected: Bool, +directory: String, +lock: Stri
 def dispatch_instance(+flag: String, +db: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),IO.try(Unit,Custody.Instance.owner(db)),
     Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),Custody.Instance.print_drain(db),
+      Bool.pick(IO(Unit),String.eq(flag,"--instance-resume"),Custody.Instance.print_resume(db),
       Bool.pick(IO(Unit),String.eq(flag,"--instance-status"),Custody.Instance.print_status(db),
         Bool.pick(IO(Unit),String.eq(flag,"--instance-wait"),Custody.Instance.print_wait(db),
           Bool.pick(IO(Unit),String.eq(flag,"--drain-sweep"),DrainSweep.sweep(db),
-            IO.die(Unit,2,"expected instance lifecycle command"))))))
+            IO.die(Unit,2,"expected instance lifecycle command")))))))
 
 @unsafe
 def dispatch(args: List<String>) -> IO(Unit):

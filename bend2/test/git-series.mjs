@@ -270,7 +270,7 @@ test('an uninstalled repository refuses and names the repository, App and checke
 test('a failed token request for an installed repository names the repository and its cause', async () => {
   const github = identities.gpt;
   const fixture = installation_api(github, [{ owner: 'Flip-Engineering', id: 5100,
-    permissions: model.GH_PERMISSIONS }], {}, model.GH_PERMISSIONS);
+    permissions: model.PERMISSIONS }], {}, model.PERMISSIONS);
   const request = async (api_path, authorization, body) => {
     if (api_path.endsWith('/access_tokens')) {
       throw new model.Refusal(`GitHub API POST ${api_path} returned HTTP 403: Not approved.`);
@@ -361,18 +361,20 @@ test('missing or weaker Git permissions are refused by name in identities, insta
 });
 
 test('Git tokens keep their permission subset after an installation gains seat CLI permissions', async () => {
-  const grants = { ...model.GH_PERMISSIONS, workflows: 'write' };
+  const grants = { ...model.PERMISSIONS, issues: 'write', actions: 'read', workflows: 'write' };
   const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }], {}, grants);
   await model.installation_token(series.gpt, identities.gpt, REPOSITORY, () => 'fixture-jwt', fixture.request);
   assert.deepEqual(fixture.calls.at(-1).body,
     { permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' } });
 });
 
-test('gh tokens request the full installation grant and accept stronger permissions', async () => {
-  assert.deepEqual(model.GH_PERMISSIONS, { contents: 'write', pull_requests: 'write', metadata: 'read',
-    issues: 'write', actions: 'read', checks: 'read', statuses: 'read' });
-  for (const grants of [model.GH_PERMISSIONS,
-    { ...model.GH_PERMISSIONS, actions: 'write', checks: 'write', statuses: 'write', workflows: 'write' }]) {
+test('gh read tokens request the full installation grant with read access only', async () => {
+  assert.deepEqual(model.GH_READ_PERMISSIONS, { metadata: 'read' });
+  assert.deepEqual(model.GH_READ_ACCESS, [['issues', 'read'], ['pull_requests', 'read']]);
+  for (const grants of [model.PERMISSIONS,
+    { metadata: 'read', issues: 'read' },
+    { metadata: 'read', pull_requests: 'read', contents: 'read' },
+    { ...model.PERMISSIONS, issues: 'write', actions: 'read', checks: 'read', statuses: 'read' }]) {
     const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }], {}, grants);
     assert.ok(await model.gh_installation_token(series.gpt, identities.gpt, REPOSITORY,
       () => 'fixture-jwt', fixture.request));
@@ -380,36 +382,102 @@ test('gh tokens request the full installation grant and accept stronger permissi
   }
 });
 
-test('gh refuses each missing or weaker installation and token grant with its permission name', async () => {
-  for (const [permission, required] of Object.entries(model.GH_PERMISSIONS)) {
-    for (const level of [undefined, 'none', ...(required === 'write' ? ['read'] : [])]) {
-      const grants = { ...model.GH_PERMISSIONS };
-      if (level === undefined) delete grants[permission];
-      else grants[permission] = level;
-      for (const name of ['lookup', 'issue']) {
-        const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }],
-          { name, field: 'permissions', value: grants }, model.GH_PERMISSIONS);
-        await assert.rejects(model.gh_installation_token(series.gpt, identities.gpt, REPOSITORY,
-          () => 'fixture-jwt', fixture.request), error => error instanceof model.Refusal
-            && error.message.includes(permission + ':' + required));
-        if (name === 'lookup') assert.ok(!fixture.calls.some(call => call.api_path.endsWith('/access_tokens')));
-      }
-    }
+test('gh refusals name the missing permission and the installation', async () => {
+  const named = (permission, id = 5100) => error => error instanceof model.Refusal
+    && error.message.includes(permission) && error.message.includes('installation ' + id)
+    && error.message.includes('fixture-series-gpt');
+  for (const name of ['lookup', 'issue']) {
+    const grants = { metadata: 'read', contents: 'write' };
+    const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }],
+      { name, field: 'permissions', value: grants }, model.PERMISSIONS);
+    await assert.rejects(model.gh_installation_token(series.gpt, identities.gpt, REPOSITORY,
+      () => 'fixture-jwt', fixture.request), named('issues:read or pull_requests:read'));
+    if (name === 'lookup') assert.ok(!fixture.calls.some(call => call.api_path.endsWith('/access_tokens')));
+  }
+  const writes = [
+    [['issue', 'comment', '1'], model.PERMISSIONS, 'issues:write'],
+    [['issue', 'create'], { ...model.PERMISSIONS, issues: 'read' }, 'issues:write'],
+    [['pr', 'create'], { metadata: 'read', contents: 'write', issues: 'write' }, 'pull_requests:write'],
+    [['pr', 'comment', '1'], { metadata: 'read', contents: 'write', pull_requests: 'read' }, 'pull_requests:write'],
+    [['run', 'rerun', '1'], model.PERMISSIONS, 'actions:write'],
+    [['release', 'create', 'v1'], { metadata: 'read', pull_requests: 'write' }, 'contents:write'],
+  ];
+  for (const [command, grants, permission] of writes) {
+    const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }], {}, grants);
+    await assert.rejects(model.gh_installation_token(series.gpt, identities.gpt, REPOSITORY,
+      () => 'fixture-jwt', fixture.request, model.gh_permissions(command)), named(permission));
+    assert.ok(!fixture.calls.some(call => call.api_path.endsWith('/access_tokens')));
   }
 });
 
 test('gh checks the target owner installation while narrow Git installations remain usable', async () => {
   const fixture = installation_api(identities.gpt, [
-    { owner: 'Flip-Engineering', id: 5100, permissions: model.GH_PERMISSIONS },
+    { owner: 'Flip-Engineering', id: 5100, permissions: { ...model.PERMISSIONS, issues: 'write' } },
     { owner: 'flip-engineer', id: 5200, permissions: model.PERMISSIONS }]);
-  await model.gh_installation_token(series.gpt, identities.gpt, REPOSITORY, () => 'fixture-jwt', fixture.request);
   await assert.rejects(model.gh_installation_token(series.gpt, identities.gpt,
-    'flip-engineer/automated-content-pipeline', () => 'fixture-jwt', fixture.request), /issues:write/);
+    'flip-engineer/automated-content-pipeline', () => 'fixture-jwt', fixture.request,
+    model.gh_permissions(['issue', 'comment', '1'])),
+  error => error instanceof model.Refusal && error.message.includes('issues:write')
+    && error.message.includes('installation 5200') && error.message.includes('fixture-series-gpt'));
   assert.ok(!fixture.calls.some(call => call.api_path === '/app/installations/5200/access_tokens'));
+  await model.gh_installation_token(series.gpt, identities.gpt, REPOSITORY, () => 'fixture-jwt', fixture.request,
+    model.gh_permissions(['issue', 'comment', '1']));
+  await model.gh_installation_token(series.gpt, identities.gpt,
+    'flip-engineer/automated-content-pipeline', () => 'fixture-jwt', fixture.request);
   await model.installation_token(series.gpt, identities.gpt,
     'flip-engineer/automated-content-pipeline', () => 'fixture-jwt', fixture.request);
   assert.equal(fixture.calls.at(-1).api_path, '/app/installations/5200/access_tokens');
   assert.deepEqual(fixture.calls.at(-1).body, { permissions: model.PERMISSIONS });
+});
+
+test('gh commands carry the requirement of their own operation', () => {
+  const read = { permissions: model.GH_READ_PERMISSIONS, any_of: model.GH_READ_ACCESS };
+  for (const command of [['issue', 'view', '1'], ['issue', 'list'], ['issue', 'status'],
+    ['pr', 'view', '1'], ['pr', 'list'], ['pr', 'diff', '1'], ['pr', 'checks', '1'],
+    ['run', 'list'], ['run', 'view', '1'], ['workflow', 'list'], ['release', 'view'],
+    ['repo', 'view'], ['search', 'issues', 'text'], ['label', 'list'], ['auth', 'status'],
+    ['api', 'repos/Flip-Engineering/baton/issues/1'],
+    ['api', '-X', 'get', 'repos/Flip-Engineering/baton/pulls'],
+    ['api', '--method=GET', 'repos/Flip-Engineering/baton/actions/runs']]) {
+    assert.deepEqual(model.gh_permissions(command), read, command.join(' '));
+  }
+  for (const command of [[], ['--version'], ['--help'], ['help'], ['version'],
+    ['issue', 'view', '1', '--help'], ['pr', 'create', '-h'], ['completion', '-s', 'bash'],
+    ['config', 'list'], ['extension', 'list']]) {
+    assert.equal(model.gh_permissions(command), null, command.join(' '));
+  }
+  const writes = [
+    [['pr', 'create'], model.GH_PULL_REQUEST_WRITE_PERMISSIONS, null],
+    [['pr', 'comment', '1'], model.GH_PULL_REQUEST_WRITE_PERMISSIONS, null],
+    [['issue', 'comment', '1'], model.GH_ISSUE_WRITE_PERMISSIONS, null],
+    [['issue', 'create'], model.GH_ISSUE_WRITE_PERMISSIONS, null],
+    [['run', 'rerun', '1'], model.GH_ACTIONS_WRITE_PERMISSIONS, null],
+    [['workflow', 'run', 'ci.yml'], model.GH_ACTIONS_WRITE_PERMISSIONS, null],
+    [['release', 'create', 'v1'], model.GH_CONTENTS_WRITE_PERMISSIONS, null],
+    [['api', '-X', 'POST', 'repos/Flip-Engineering/baton/pulls'], model.GH_PULL_REQUEST_WRITE_PERMISSIONS, null],
+    [['api', 'repos/Flip-Engineering/baton/releases', '-f', 'tag_name=v1'], model.GH_CONTENTS_WRITE_PERMISSIONS, null],
+    [['api', '-X', 'POST', 'repos/Flip-Engineering/baton/issues/1/comments', '-f', 'body=text'],
+      model.GH_READ_PERMISSIONS, model.GH_COMMENT_ACCESS],
+    [['api', '--method', 'DELETE', 'repos/Flip-Engineering/baton/issues/1'], model.GH_ISSUE_WRITE_PERMISSIONS, null],
+  ];
+  for (const [command, permissions, any_of] of writes) {
+    assert.deepEqual(model.gh_permissions(command), { permissions, any_of }, command.join(' '));
+  }
+});
+
+test('local gh commands reach real gh with no repository, registry or token', async () => {
+  const bin = join(directory, 'passthrough-bin'); mkdirSync(bin);
+  const program = join(bin, 'gh');
+  writeFileSync(program, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  for (const command of [['--version'], ['config', 'list'], ['pr', 'view', '1', '--help']]) {
+    let observed = null;
+    await model.gh(command, { PATH: bin }, (selected, argv, childEnvironment) => {
+      observed = { selected, argv, childEnvironment };
+    }, () => assert.fail('token issued'), () => assert.fail('origin queried'));
+    assert.equal(observed.selected, program);
+    assert.deepEqual(observed.argv, [program, ...command]);
+    assert.ok(!('GH_TOKEN' in observed.childEnvironment));
+  }
 });
 
 test('gh selects repository arguments, GH_REPO and GitHub origin in order', () => {
@@ -452,9 +520,10 @@ test('gh requests a fresh owner token per command and keeps it in the gh child e
   assert.ok(!('GH_TOKEN' in environment) && !('GITHUB_TOKEN' in environment));
   const original = { ...environment };
   const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 },
-    { owner: 'flip-engineer', id: 5200 }], {}, model.GH_PERMISSIONS);
-  const issue = (home, github, repository) => model.gh_installation_token(home, github, repository,
-    () => 'fixture-jwt-no-key', fixture.request);
+    { owner: 'flip-engineer', id: 5200 }], {}, model.PERMISSIONS);
+  const issue = (home, github, repository, _jwt, _request, requirement) =>
+    model.gh_installation_token(home, github, repository,
+      () => 'fixture-jwt-no-key', fixture.request, requirement);
   const observed = [];
   for (const repository of ['Flip-Engineering/baton', 'flip-engineer/flip', 'flip-engineer/flip']) {
     const command = ['pr', 'checks', '-R', repository];
@@ -493,9 +562,10 @@ https.request = (url, options, received) => {
     if (path === '/app') response = ${JSON.stringify({ id: github.appId, slug: github.slug })};
     else if (path === '/repos/flip-engineer/flip/installation') response = ${JSON.stringify({
       id: 5200, app_id: github.appId, app_slug: github.slug, account: { login: 'flip-engineer' },
-      permissions: model.GH_PERMISSIONS })};
+      permissions: { contents: 'write', pull_requests: 'write', metadata: 'read',
+        issues: 'write', actions: 'read', checks: 'read', statuses: 'read' } })};
     else if (path === '/app/installations/5200/access_tokens' && body === '{}') {
-      response = { token: 'fixture-' + 5200, permissions: ${JSON.stringify(model.GH_PERMISSIONS)},
+      response = { token: 'fixture-' + 5200, permissions: ${JSON.stringify({ contents: 'write', pull_requests: 'write', metadata: 'read', issues: 'write', actions: 'read', checks: 'read', statuses: 'read' })},
         expires_at: new Date(Date.now() + 3600000).toISOString() };
     } else throw Error('Unexpected fixture request');
     const incoming = new PassThrough(); incoming.statusCode = 200;

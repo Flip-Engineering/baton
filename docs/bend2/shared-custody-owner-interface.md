@@ -85,6 +85,7 @@ def Instance.attach_owned(database: String, directory: String, lock: U32)
   -> IO(Result<&1,&1,U32 & String,U32>)
 def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>)
 def Instance.drain(database: String) -> IO(Result<&1,&1,U32 & String,String>)
+def Instance.resume(database: String) -> IO(Result<&1,&1,U32 & String,String>)
 def Instance.owner_status(database: String) -> IO(Result<&1,&1,U32 & String,String>)
 def Instance.owner_wait(database: String) -> IO(Result<&1,&1,U32 & String,String>)
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
@@ -115,6 +116,13 @@ for them, so each attempt completes and recovers as before. When its last attemp
 retires, the owner removes its socket and record and exits. Because attempts
 only leave a draining owner, new admissions cannot extend a drain. The request
 returns while the owner is still alive; the printed state is `draining`.
+
+`--instance-resume DATABASE` cancels that owner's drain (#1474). The owner
+removes its incarnation's marker, reopens admission and starts the sweep of owed
+input. Its PID, witness and retained attempts stay in place. The command prints
+the resulting owner status. A marker-removal failure returns its filesystem
+error and preserves the drain. Owners predating `BI_RESUME` answer `EINVAL`;
+the command reports `ENOTSUP` with the owner state and drain marker preserved.
 
 `--instance-status DATABASE` prints one JSON object and starts no owner:
 

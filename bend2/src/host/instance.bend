@@ -72,6 +72,11 @@ def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def Instance.drain(database: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./process-spawn.c"
 
+# Reopens admission on the running owner, preserves its attempts and starts the
+# sweep of owed input. The result describes the owner after the request.
+def Instance.resume(database: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
 # The owner of one database without starting one, as JSON: state absent,
 # running or draining, pid, token, epoch, attempts and the executable path and
 # SHA-256 of the code the owner process loaded.
@@ -97,6 +102,11 @@ def Instance.print_status(+database: String) -> IO(Unit):
 def Instance.print_wait(+database: String) -> IO(Unit):
   do IO<Unit>:
     text : String <- IO.try(String,Instance.owner_wait(database))
+    IO.write(text ++ "\n")
+
+def Instance.print_resume(+database: String) -> IO(Unit):
+  do IO<Unit>:
+    text : String <- IO.try(String,Instance.resume(database))
     IO.write(text ++ "\n")
 
 # Terminal capability cleanup after acknowledgment. The attempt directory and

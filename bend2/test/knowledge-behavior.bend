@@ -110,6 +110,8 @@ def dispatch(+db: String, args: List<String>) -> IO(Unit):
       traverse(db,reader,scope,subject,reference,direction,relation,recursive)
     case "detail" <> reader <> id <> Nil{}: detail(db,reader,id)
     case "record" <> id <> author <> kind <> claim <> evidence <> limits <> Nil{}: record(db,id,author,kind,claim,evidence,limits)
+    case "record-plain" <> id <> author <> claim <> evidence <> limits <> Nil{}: Knowledge.record(db,id,author,claim,evidence,limits)
+    case "record-linked" <> id <> author <> kind <> claim <> evidence <> limits <> links <> Nil{}: Knowledge.record_linked(db,id,author,kind,claim,evidence,limits,links)
     case "relate" <> id <> author <> source <> relation <> target <> Nil{}: relate(db,id,author,source,relation,target)
     case "report" <> id <> sender <> body <> Nil{}: report(db,id,sender,body)
     case "notice" <> id <> author <> claim <> evidence <> limits <> Nil{}: notice(db,id,author,claim,evidence,limits)

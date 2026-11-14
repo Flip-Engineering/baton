@@ -15,6 +15,7 @@ import pathlib
 import queue
 import select
 import signal
+import socket
 import shlex
 import shutil
 import sqlite3
@@ -1354,6 +1355,86 @@ class SharedInstance(unittest.TestCase):
             token, epoch = self.owner_incarnation()
         info = os.stat(self.db)
         return self.ipc_directory() / f'owner-{info.st_dev:x}-{info.st_ino:x}.drain-{token}-{epoch}'
+
+    def resume_owner(self, token=None, epoch=None, payload=b''):
+        if token is None:
+            token, epoch = self.owner_incarnation()
+        _, _, _, record, _ = self.election_paths()
+        address = record.read_bytes()[40:].split(b'\0')[0].decode()
+        frame = struct.Struct('=IiQQQQQII')
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.connect(address)
+            connection.sendall(frame.pack(17, 0, token, epoch, 0, 0, len(payload), 0, 0)
+                               + payload)
+            received = bytearray()
+            while len(received) < frame.size:
+                part = connection.recv(frame.size - len(received))
+                self.assertTrue(part, 'owner closed the resume reply')
+                received.extend(part)
+        return frame.unpack(received)
+
+    def test_resume_reopens_admission_and_preserves_the_live_attempt(self):
+        directory, first = self.begin('resume-held', mode='hold', payload='before\n')
+        self.line(first, 'admitted')
+        self.hold(directory / 'stdout', 'echo:before', child=first)
+        owner = self.owner_status()
+        birth = (directory / 'native.birth').read_bytes()
+        token, epoch = self.owner_incarnation()
+        foreign = self.drain_marker(token + 1, epoch)
+        foreign.touch()
+        drained = self.command('drain', self.db)
+        self.assertEqual(drained.returncode, 0, drained.stderr)
+        refused_directory, refused = self.begin('resume-refused')
+        refused.wait()
+        self.assertIn('ESHUTDOWN', refused.stderr.read())
+        self.assertFalse(refused_directory.exists())
+
+        reply = self.resume_owner()
+        self.assertEqual((reply[0], reply[1]), (7, 0), reply)
+        resumed = self.owner_status()
+        self.assertEqual(resumed['state'], 'running', resumed)
+        self.assertEqual((resumed['pid'], resumed['owner'], resumed['epoch']),
+                         (owner['pid'], owner['owner'], owner['epoch']))
+        self.assertFalse(self.drain_marker().exists())
+        self.assertTrue(foreign.exists())
+        self.assertEqual((directory / 'native.birth').read_bytes(), birth)
+        self.write(directory, 'after-resume\n')
+        self.hold(directory / 'stdout', 'echo:after-resume', child=first)
+
+        _, second = self.begin('resume-new', payload='new\nexit\n')
+        self.assertIn('echo:new', self.wait_run(second))
+        self.assertEqual(self.owner_pid(), owner['pid'])
+        self.write(directory, 'exit\n')
+        self.hold(directory / 'stdout', 'native-done', child=first)
+        self.assertIn('hold-released', self.wait_run(first))
+
+    def test_resume_uses_the_current_owner_witness(self):
+        directory, first = self.begin('resume-stale', mode='hold', payload='before\n')
+        self.line(first, 'admitted')
+        self.hold(directory / 'stdout', 'echo:before', child=first)
+        self.assertEqual(self.command('drain', self.db).returncode, 0)
+        token, epoch = self.owner_incarnation()
+        reply = self.resume_owner(token + 1, epoch)
+        self.assertEqual(reply[1], errno.ESTALE, reply)
+        self.assertEqual(self.owner_status()['state'], 'draining')
+        self.assertTrue(self.drain_marker().exists())
+        self.write(directory, 'exit\n')
+        self.hold(directory / 'stdout', 'native-done', child=first)
+        self.assertIn('hold-released', self.wait_run(first))
+
+    def test_resume_drives_the_deferred_input_sweep(self):
+        directory, first = self.begin('resume-sweep', mode='hold', payload='before\n')
+        self.line(first, 'admitted')
+        self.hold(directory / 'stdout', 'echo:before', child=first)
+        self.eventually(lambda: self.sweep_count() > 0, 'initial owner sweep did not run')
+        before = self.sweep_count()
+        self.assertEqual(self.command('drain', self.db).returncode, 0)
+        reply = self.resume_owner()
+        self.assertEqual(reply[1], 0, reply)
+        self.eventually(lambda: self.sweep_count() > before, 'resume did not drive the sweep')
+        self.write(directory, 'exit\n')
+        self.hold(directory / 'stdout', 'native-done', child=first)
+        self.assertIn('hold-released', self.wait_run(first))
 
     def executable_sha256(self):
         return hashlib.sha256(EXE.read_bytes()).hexdigest()

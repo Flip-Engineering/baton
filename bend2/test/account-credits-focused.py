@@ -142,9 +142,46 @@ class FocusedAccountCredits(unittest.TestCase):
             self.assertEqual(refused.returncode, 2, refused.stderr)
         self.assertEqual(self.json_account('read')['accounts'], [])
 
-    def test_api_key_funding_records_only_for_the_claude_code_harness(self):
-        refused = self.record('omp-api', harness='omp', funding='api_key', secret='file:/fixture/api')
-        self.assertEqual(refused.returncode, 2, refused.stderr)
+    def test_omp_api_account_launches_with_its_native_provider_store(self):
+        self.execute("INSERT INTO sessions(id,parent,harness) VALUES('omp-leaf','root','omp')")
+        recorded = self.record('omp-key', harness='omp', funding='api_key',
+                               provider='openai', secret='/fixture/omp agent')
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        self.observe('omp-key', 'org-openai')
+        self.bind('omp-key', 'omp-leaf')
+        gate = self.entry('gate', 'omp-leaf', 'omp', 'omp-attempt')
+        self.assertEqual(gate.returncode, 0, gate.stderr)
+        self.assertEqual(gate.stdout.strip(), 'PI_CODING_AGENT_DIR=/fixture/omp agent')
+        self.entry('attempt', 'omp-leaf', 'omp', 'omp-attempt', '')
+        self.assertEqual(self.query("SELECT account,funding,organization,secret_ref,workload FROM account_attempts"),
+                         [('omp-key', 'api_key', 'org-openai', '/fixture/omp agent', 'omp')])
+
+    def test_omp_organization_refusal_retains_its_account_and_notifies_the_parent(self):
+        self.execute("INSERT INTO sessions(id,parent,harness) VALUES('omp-leaf','root','omp')")
+        self.assertEqual(self.record('omp-key', harness='omp', funding='api_key', provider='openai').returncode, 0)
+        self.record('omp-sub', harness='omp', provider='openai', secret='/fixture/personal')
+        self.bind('omp-key', 'omp-leaf')
+        event = json.dumps({'type': 'agent_end', 'messages': [
+            {'role': 'assistant', 'stopReason': 'error', 'errorMessage': '402 Insufficient Balance'}]})
+        ended = self.entry('handoff', 'omp-leaf', 'turn-omp', event)
+        self.assertEqual(ended.returncode, 0, ended.stderr)
+        self.assertEqual(ended.stdout.strip(), 'exhausted')
+        self.assertEqual(self.current('omp-leaf', 'omp'), 'omp-key')
+        reports = self.query("SELECT recipient,body FROM messages WHERE sender='omp-leaf' AND kind='report'")
+        self.assertTrue(any(recipient == 'root' and 'organization API account refused' in body
+                            for recipient, body in reports), reports)
+        self.assertEqual(self.query("SELECT body FROM messages WHERE id LIKE '%:account-exhausted'"), [])
+        self.assertEqual(self.query("SELECT body FROM messages WHERE id='task-1'"), [('original task',)])
+
+    def test_omp_api_funding_selection_keeps_its_route(self):
+        self.record('omp-sub', harness='omp', provider='openai')
+        self.assertEqual(self.record('omp-key', harness='omp', funding='api_key', provider='openai').returncode, 0)
+        self.assertEqual(self.json_account('select', harness='omp', funding='api_key')['selected'], 'omp-key')
+
+    def test_codex_and_muse_api_key_routes_are_refused(self):
+        for harness in ('codex', 'muse'):
+            refused = self.record(harness + '-key', harness=harness, funding='api_key', provider='openai')
+            self.assertEqual(refused.returncode, 2, refused.stderr)
         self.assertEqual(self.json_account('read')['accounts'], [])
 
     def test_rerecording_a_label_with_different_fields_is_refused(self):

@@ -6,6 +6,7 @@
 import Base
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/agent-input.bend as A
+import ../src/coordinator/turn.bend as Turn
 import ../src/host/sqlite.bend as DB
 import ../src/host/instance.bend as I
 import ../src/git/text.bend as Tx
@@ -42,6 +43,10 @@ def task_message(+db: String, +id: String, +body: String) -> IO(Unit):
 
 def classification_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
+    plain : String <- A.rr_refusal_description(db,"The prior turn completed. λ")
+    expect("plain-text-event",String.is_empty(plain))
+    empty : String <- A.rr_refusal_description(db,"")
+    expect("empty-event",String.is_empty(empty))
     normal : String <- A.rr_refusal_description(db,"{\"type\":\"result\",\"result\":\"Work completed.\",\"is_error\":false}")
     expect("ordinary-result-not-refusal",String.is_empty(normal))
     provider : String <- A.rr_refusal_description(db,"{\"type\":\"result\",\"result\":\"429 rate limit: I cannot help with that.\",\"is_error\":true}")
@@ -126,8 +131,8 @@ def success_case(+db: String) -> IO(Unit):
   do IO<Unit>:
     source : Unit <- source_row(db,"retry-success")
     task : Unit <- task_message(db,"retry-success","Retry success task λ")
-    first : Unit <- A.rr_observe(db,"retry-success","success-turn-1","{\"type\":\"result\",\"result\":\"I cannot help with that.\",\"is_error\":false}")
-    second : Unit <- A.rr_observe(db,"retry-success","success-turn-2","{\"type\":\"result\",\"result\":\"Work completed.\",\"is_error\":false}")
+    first : Unit <- Turn.recovery_observe(db,"retry-success","success-turn-1",Turn.Ended{"exit 0","{\"type\":\"result\",\"result\":\"I cannot help with that.\",\"is_error\":false}","",False{}})
+    second : Unit <- Turn.recovery_observe(db,"retry-success","success-turn-2",Turn.Ended{"exit 0","{\"type\":\"result\",\"result\":\"Work completed.\",\"is_error\":false}","",False{}})
     expect_read(db,"SELECT status FROM refusal_recoveries WHERE source='retry-success';","succeeded\n","continue-success-recovery")
     expect_read(db,"SELECT status FROM refusal_attempts WHERE recovery=(SELECT id FROM refusal_recoveries WHERE source='retry-success');","succeeded\n","continue-success-attempt")
     IO.pure(Unit,Unit{})
