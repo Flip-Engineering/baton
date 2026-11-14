@@ -890,8 +890,14 @@ class Receive(unittest.TestCase):
         self.coord('connect', 'root', 'native-root', endpoint)
         return endpoint, received
 
-    def read_root_channel(self, channel):
+    def read_root_channel(self, channel, expected_body):
         endpoint, received = channel
+        def report_committed():
+            with sqlite3.connect(self.db) as database:
+                return database.execute(
+                    "SELECT EXISTS(SELECT 1 FROM messages WHERE recipient='root' "
+                    "AND kind='report' AND body=?)", (expected_body,)).fetchone()[0]
+        self.eventually(report_committed, 'The completed turn report did not reach the root inbox.')
         with sqlite3.connect(self.db) as database:
             database.row_factory = sqlite3.Row
             pending = database.execute(
@@ -3308,7 +3314,7 @@ class Receive(unittest.TestCase):
                     complete_task=False)
         self.assertEqual(original.readline(), b'')
         current, second = self.accept('parent')
-        self.read_root_channel(root_channel)
+        self.read_root_channel(root_channel, 'Original report survives completed-attempt replay.')
         report = self.coord('turns', 'parent')[0]
         self.assertEqual(self.coord('delivery', report['id'])['body'],
                          'Original report survives completed-attempt replay.')
@@ -3366,7 +3372,7 @@ class Receive(unittest.TestCase):
         self.assertFalse(read_recorded(self.db, 'later-guidance'))
         self.action(current, body='Current task completed after accepting guidance.')
         self.assertEqual(current.readline(), b'')
-        self.read_root_channel(root_channel)
+        self.read_root_channel(root_channel, 'Current task completed after accepting guidance.')
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
                         'replayed completion or current work remained pending')
         turns = self.coord('turns', 'parent')
@@ -3414,7 +3420,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(original.readline(), b'')
 
         continuation, resumed = self.accept('parent')
-        self.read_root_channel(root_channel)
+        self.read_root_channel(root_channel, original_body)
         self.assertFalse(any(p['pid'] == started['pid'] for p in self.owned_processes()))
         self.assertEqual(resumed['native'], started['native'])
         self.assertIn('[id: pending-guidance]', resumed['prompt'])
@@ -3423,7 +3429,7 @@ class Receive(unittest.TestCase):
         follow_up_body = 'Pending guidance completed by the next native invocation.'
         self.action(continuation, body=follow_up_body)
         self.assertEqual(continuation.readline(), b'')
-        self.read_root_channel(root_channel)
+        self.read_root_channel(root_channel, follow_up_body)
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
                         'pending guidance or its parent notification was not acknowledged')
         turns = self.coord('turns', 'parent')
