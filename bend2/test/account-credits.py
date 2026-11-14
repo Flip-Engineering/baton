@@ -67,9 +67,17 @@ class AccountCredits(unittest.TestCase):
         commands.mkdir()
         (commands / 'omp').symlink_to(self.fixture)
         self.environment['PATH'] = str(commands) + os.pathsep + self.environment.get('PATH', '')
-        self.fixture.write_text(self.fixture.read_text().replace(
+        fixture = self.fixture.read_text().replace(
             "session=config.get('sessions',{}).get(model,model)",
-            "session=os.environ['BATON_SESSION']"))
+            "session=os.environ['BATON_SESSION']")
+        self.fixture.write_text(fixture.replace(
+            "    json.loads(filter_frame)\n"
+            "    state=json.loads(sys.stdin.readline())\n"
+            "    prompt=json.loads(sys.stdin.readline())['message']",
+            "    frames=[json.loads(filter_frame)]\n"
+            "    while frames[-1]['type']!='prompt': frames.append(json.loads(sys.stdin.readline()))\n"
+            "    state=next(frame for frame in frames if frame['type']=='get_state')\n"
+            "    prompt=frames[-1]['message']"))
 
     def recruit(self, session, harness='omp', model='kimi-code/k3', effort='low'):
         return self.call('recruit', session, 'root', harness, model, effort, self.repo,
@@ -147,7 +155,7 @@ class AccountCredits(unittest.TestCase):
         self.assertEqual(pooled['observationState'], 'unknown')
         self.imported('claude-max', 'org-fixture', credit(
             fact='promotional_credit', balance='200.00', unit='USD', cycle='2026-10',
-            source='console-billing-display', observedAt=1760000001000))
+            source='console-billing-display', observedAt=1760000002000))
         self.imported('claude-api', 'org-fixture', credit(
             fact='promotional_credit', balance='184.32', unit='USD', cycle='2026-10',
             source='console-billing-display', observedAt=1760000002000))
