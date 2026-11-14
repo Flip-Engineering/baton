@@ -10,6 +10,18 @@ successful observed execution raises the profile's peak. Admission takes the
 largest measured value from its exact key and compatible profile. Each profile
 records the source request key and attempt that supplied its largest observation.
 
+`--per-run NAME=VALUE` declares a commit, evidence directory or other per-run
+value. It can be repeated. The exact request key continues to hash options, the normalized command and
+input contents. In history-group material, each occurrence of a
+named value becomes `{run:NAME}` in options, command tokens and control paths.
+Absolute paths also match their normalized `@root/` or `@cwd/` spelling. Matching
+uses the longest value at each position, so an evidence path can contain a named
+commit. Declaration order does not affect matching. A control file under a
+named evidence path contributes its masked path; stable controls retain their
+path and content digest. Requests without declarations retain their existing
+history group. Flip production builds use this declaration for their source
+commit and evidence directory (#1481).
+
 An unmeasured workload enters when no other queue claim is live. A measured CC request can
 run beside that owner when current available memory covers its expected peak,
 remaining measured growth of running claims, and the existing observed outside

@@ -54,12 +54,22 @@ remote. It looks up that repository owner's App installation for every command
 and gives the real `gh` process a fresh `GH_TOKEN`. It removes an inherited
 `GITHUB_TOKEN` from that process environment.
 
-The CLI token requires `contents:write`, `pull_requests:write`, `metadata:read`,
-`issues:write`, `actions:read`, `checks:read` and `statuses:read`. The token
-request omits the `permissions` field, so GitHub returns the installation's full
-permission grant. The token can access every repository selected for that App
-installation. Git credential requests continue to use the three-permission
-subset described above. [GitHub's installation-token API](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app)
+Each command requires the permissions its own operation uses. A read
+(`gh issue view`, `gh issue list`, `gh pr view`, `gh pr diff`, `gh pr checks`,
+`gh run list`, `gh api` with a GET method) requires `metadata:read` and issues
+or pull-requests read access; a write grant includes read access. Opening or
+commenting on a pull request requires `pull_requests:write`. Creating or
+commenting on an issue requires `issues:write`. Rerunning a workflow run
+requires `actions:write`. Creating a release requires `contents:write`.
+Commands that only read local state (`gh --version`, `--help`, `gh config`) run
+the real `gh` with no wrapper token. The wrapper checks the requirement
+against the target owner's installation and the issued token before it starts
+`gh`. A refusal names the missing permission and the installation, with its
+App slug and account, so the operator can grant that permission on GitHub.
+The token request omits the `permissions` field, so GitHub returns the
+installation's full permission grant. The token can access every repository
+selected for that App installation. Git credential requests continue to use
+the three-permission subset described above. [GitHub's installation-token API](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app)
 documents these token permissions.
 
 ## GitHub App permissions
@@ -81,8 +91,8 @@ GitHub Apps > Permissions & events**:
 | Contents | Read and write | Git pushes and repository contents |
 | Pull requests | Read and write | Read and create pull requests |
 | Metadata | Read-only | Repository metadata |
-| Issues | Read and write | Read issues and post comments |
-| Actions | Read-only | Read workflow runs and logs |
+| Issues | Read and write | Read issues and post comments; read access alone serves issue reads |
+| Actions | Read-only | Read workflow runs and logs; rerun, cancel and dispatch require read and write |
 | Checks | Read-only | Read check runs and annotations |
 | Commit statuses | Read-only | Read commit status contexts |
 | Workflows | Read and write | Push changes under `.github/workflows` with the `workflow-write` profile |

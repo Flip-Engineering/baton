@@ -108,9 +108,9 @@ class AccountCredits(unittest.TestCase):
             self.assertIn('No account was recorded', refused['stderr'])
         self.assertEqual(self.send('read')['accounts'], [])
 
-    def test_api_key_funding_records_only_for_the_claude_code_harness(self):
+    def test_codex_api_key_funding_is_refused(self):
         self.root()
-        refused = self.record('omp-api', 'anthropic', 'omp', 'api_key',
+        refused = self.record('codex-api', 'openai', 'codex', 'api_key',
                               'file:/fixture/secrets/api', ok=False)
         self.assertEqual(refused['code'], 2, refused)
         self.assertIn('No account was recorded', refused['stderr'])

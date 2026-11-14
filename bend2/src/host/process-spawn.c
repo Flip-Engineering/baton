@@ -43,6 +43,7 @@ static int br_instance_decision(BatonProcessCall *call);
 static void br_instance_state_call(BatonProcessCall *call);
 static char *br_json_escape(const char *text);
 static char *br_drain_marker_for(const char *ipc,const char *key,uint64_t token,uint64_t epoch);
+static void br_owner_sweep(const char *database);
 
 /* A capability packs its slot index and generation. A retired slot is reused
    with a higher generation, and a request carrying the old generation is
@@ -69,7 +70,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
        BP_INSTANCE_ATTEMPT_SIGNAL, BP_OBSERVER_RECOVERY, BP_READ_SPAN, BP_READ_AWAKE_SPAN, BP_SPAWN_ENV_FILE,
        BP_INSTANCE_MONITOR_COMMIT, BP_INSTANCE_OWNER_STATUS, BP_INSTANCE_OWNER_WAIT,
-       BP_INSTANCE_DRAIN };
+       BP_INSTANCE_DRAIN, BP_INSTANCE_RESUME };
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
   if (fcntl(fds[0],F_SETFD,FD_CLOEXEC) < 0 || fcntl(fds[1],F_SETFD,FD_CLOEXEC) < 0) {
@@ -471,7 +472,7 @@ typedef struct {
 typedef struct { int32_t disposition,status; } BrAttemptSignalResult;
 enum { BI_ENSURE=1, BI_ADMIT, BI_ATTACH, BI_SHUTDOWN, BI_STATE, BI_HELLO, BI_REPLY,
        BI_SUBSCRIBE, BI_COMMIT, BI_NOTICE, BI_READY, BI_PREPARE, BI_START, BI_CANCEL,
-       BI_RECOVER, BI_ATTEMPT_SIGNAL };
+       BI_RECOVER, BI_ATTEMPT_SIGNAL, BI_RESUME };
 /* A committed-change subscription. A process that committed a database
    transaction publishes the durable native_changes high-water cursor with
    BI_COMMIT after its commit; the owner records the highest published cursor and
@@ -3444,6 +3445,19 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     owner->finishing=1;
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,.epoch=owner->epoch},NULL);
   }
+  if(frame.op==BI_RESUME) {
+    if(frame.length)return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EPROTO},NULL);
+    char *marker=br_drain_marker_for(owner->ipc,owner->key,owner->token,owner->epoch);
+    int error=marker?0:ENOMEM;
+    if(!error && unlink(marker) && errno!=ENOENT)error=errno;
+    free(marker);
+    if(!error) {
+      owner->finishing=0;
+      br_owner_sweep(owner->database);
+    }
+    return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
+      .epoch=owner->epoch,.error=error},NULL);
+  }
   if(frame.op==BI_ADMIT || frame.op==BI_PREPARE) {
     if(frame.length<2 || payload[frame.length-1])
       return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EINVAL},NULL);
@@ -5642,6 +5656,32 @@ static int br_instance_input_prompt(BatonProcessCall *call) {
   free(saved);free(body);free(session);free(attempt);free(cursor);free(inputs);free(argv);
   free(text);br_manifest_free(&manifest);free(directory);return error;
 }
+static int br_instance_resume(BatonProcessCall *call) {
+  for(;;) {
+    BrOwnerRecord record={0};
+    BrInstanceFrame reply={0};
+    int socket_fd=-1;
+    int error=br_instance_connect(call->database,0,&record,&socket_fd);
+    if(error==ENOENT || error==ECONNREFUSED) {
+      br_owner_sweep(call->database);
+      return 0;
+    }
+    if(error)return error;
+    error=br_instance_exchange(socket_fd,
+      (BrInstanceFrame){.op=BI_RESUME,.owner=record.token,.epoch=record.epoch},
+      NULL,-1,&reply);
+    close(socket_fd);
+    if(error)return error;
+    if(reply.owner && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
+    if(!error && reply.error==EINVAL) {
+      br_spec_detail(call,"The running owner does not implement drain resume. Its drain and live attempts are preserved.");
+      return ENOTSUP;
+    }
+    if(!error && (reply.op!=BI_REPLY || reply.length))return EPROTO;
+    if(!error && !reply.error)return 0;
+    if(error!=ESTALE && reply.error!=ESTALE)return error?error:reply.error;
+  }
+}
 static int br_instance_shutdown(BatonProcessCall *call) {
   for(;;) {
     BrOwnerRecord record={0};
@@ -6282,9 +6322,10 @@ static void baton_process_call(IoWork *w) {
   if(call->kind==BP_INSTANCE_INPUT_PROMPT) { call->error=br_instance_input_prompt(call);return; }
   if(call->kind==BP_INSTANCE_OWNER_WITNESS) { br_instance_owner_witness(call,0);return; }
   if(call->kind==BP_INSTANCE_OWNER_STATUS || call->kind==BP_INSTANCE_OWNER_WAIT ||
-     call->kind==BP_INSTANCE_DRAIN) {
+     call->kind==BP_INSTANCE_DRAIN || call->kind==BP_INSTANCE_RESUME) {
     if(call->kind==BP_INSTANCE_OWNER_WAIT)call->error=br_instance_owner_wait(call);
     if(!call->error && call->kind==BP_INSTANCE_DRAIN)call->error=br_instance_shutdown(call);
+    if(!call->error && call->kind==BP_INSTANCE_RESUME)call->error=br_instance_resume(call);
     if(!call->error)call->error=br_instance_status_text(call->database,&call->text);
     if(!call->error)call->length=strlen(call->text);
     return;
@@ -6368,7 +6409,8 @@ static Term baton_process_pack(Env e, IoWork *w) {
             call->kind==BP_INSTANCE_INPUT_WITNESS || call->kind==BP_INSTANCE_INPUT_PROMPT ||
             call->kind==BP_INSTANCE_NOTICE || call->kind==BP_INSTANCE_OWNER_WITNESS ||
             call->kind==BP_INSTANCE_ENSURE_OWNER_WITNESS || call->kind==BP_INSTANCE_OWNER_STATUS ||
-            call->kind==BP_INSTANCE_OWNER_WAIT || call->kind==BP_INSTANCE_DRAIN)
+            call->kind==BP_INSTANCE_OWNER_WAIT || call->kind==BP_INSTANCE_DRAIN ||
+            call->kind==BP_INSTANCE_RESUME)
       value=io_str(e,call->text?call->text:"",call->length);
     else if(call->kind==BP_INSTANCE_RECOVER)
       value=io_tup(e,(Term)call->handle,io_str(e,call->text?call->text:"",call->length));
@@ -6543,7 +6585,7 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
   } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN ||
             kind==BP_INSTANCE_OWNER_WITNESS || kind==BP_INSTANCE_ENSURE_OWNER_WITNESS ||
             kind==BP_INSTANCE_OWNER_STATUS || kind==BP_INSTANCE_OWNER_WAIT ||
-            kind==BP_INSTANCE_DRAIN) {
+            kind==BP_INSTANCE_DRAIN || kind==BP_INSTANCE_RESUME) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     if(strlen(call->database)!=length)call->error=EINVAL;
   } else if(kind==BP_INSTANCE_SUBSCRIBE || kind==BP_INSTANCE_PUBLISH) {
@@ -6709,6 +6751,9 @@ BP_EFFECT(baton_instance_owner_wait,CID_INSTANCE_OWNER_WAIT,BP_INSTANCE_OWNER_WA
 #endif
 #ifdef CID_INSTANCE_DRAIN
 BP_EFFECT(baton_instance_drain,CID_INSTANCE_DRAIN,BP_INSTANCE_DRAIN)
+#endif
+#ifdef CID_INSTANCE_RESUME
+BP_EFFECT(baton_instance_resume,CID_INSTANCE_RESUME,BP_INSTANCE_RESUME)
 #endif
 #ifdef CID_INSTANCE_ENSURE_OWNER_WITNESS
 BP_EFFECT(baton_instance_ensure_owner_witness,CID_INSTANCE_ENSURE_OWNER_WITNESS,BP_INSTANCE_ENSURE_OWNER_WITNESS)

@@ -234,7 +234,7 @@ static int focused_receiver_verb(int argc,char **argv) {
   if(!strcmp(first,"--stop-hook") || !strcmp(first,"--redeliver-message") ||
      !strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown") ||
-     !strcmp(first,"--instance-status") || !strcmp(first,"--instance-wait") ||
+     !strcmp(first,"--instance-resume") || !strcmp(first,"--instance-status") || !strcmp(first,"--instance-wait") ||
      !strcmp(first,"--drain-sweep") || !strcmp(first,"--drain-sweep-session") ||
       !strcmp(first,"--ensure-schema")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
@@ -283,7 +283,7 @@ static int native_receiver_route(int argc, char **argv) {
   int focused_verb=argc>1 && (!strcmp(argv[1],"--stop-hook") ||
     !strcmp(argv[1],"--redeliver-message") || !strcmp(argv[1],"--dispatch-message") ||
     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
-    !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--instance-status") ||
+    !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--instance-resume") || !strcmp(argv[1],"--instance-status") ||
     !strcmp(argv[1],"--instance-wait") || !strcmp(argv[1],"--drain-sweep") ||
     !strcmp(argv[1],"--drain-sweep-session") ||
     !strcmp(argv[1],"--ensure-schema") || recovery);
@@ -385,7 +385,7 @@ static int recovery_helper_verb(int argc,char **argv) {
   if(argc<2 || native_help_request(argc,argv)) return 0;
   if(!strcmp(argv[1],"--recover-observer") || !strcmp(argv[1],"--recover-receive") ||
      !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
-     !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--instance-status") ||
+     !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--instance-resume") || !strcmp(argv[1],"--instance-status") ||
      !strcmp(argv[1],"--instance-wait") || !strcmp(argv[1],"--drain-sweep") ||
      !strcmp(argv[1],"--dispatch-message")) return 1;
   return argc>2 && !strcmp(argv[2],"recover-observer");
