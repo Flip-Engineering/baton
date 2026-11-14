@@ -44,7 +44,7 @@ def main():
     receipt = evidence / 'receipt'
     request = [client, '--', 'run', '--kind', 'workload', '--state-root', str(state),
         '--cwd', str(cwd), '--root', str(cwd), '--source-root', os.path.commonpath([cwd, script]),
-        '--compiler', executable, '--receipt', str(receipt), '--token', invocation,
+        '--compiler', executable, '--receipt', str(receipt),
         '--option', 'invocation=' + invocation, '--per-run', 'invocation=' + invocation,
         '--input', str(script), '--', *command]
     print('workload evidence: ' + str(evidence), file=sys.stderr, flush=True)
@@ -54,34 +54,8 @@ def main():
         sys.stderr.buffer.write(keyed.stderr)
         return keyed.returncode
     keydir = state / 'keys' / keyed.stdout.decode().strip()
-    key = keydir.name
     offsets = {'stdout': 0, 'stderr': 0}
     attempt = None
-    high_applied = False
-
-    def apply_memory_high():
-        nonlocal high_applied
-        if high_applied:
-            return
-        for claim in (state / 'admission/running').glob('*'):
-            if not claim.is_file():
-                continue
-            try:
-                values = dict(line.split('=', 1) for line in claim.read_text().splitlines() if '=' in line)
-            except FileNotFoundError:
-                continue
-            if values.get('key') != key:
-                continue
-            measured = int(values['expected_kb'])
-            if not measured:
-                # A host with no history establishes its first peak alone.
-                measured = int(next(line.split()[1] for line in
-                    Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:')))
-            subprocess.run(['systemctl', '--user', 'set-property', '--runtime',
-                Path(group).name, 'MemoryHigh=' + str(measured * 1024)], check=True)
-            print('workload memory.high: ' + str(measured) + ' KiB', file=sys.stderr, flush=True)
-            high_applied = True
-            return
 
     def drain():
         nonlocal attempt
@@ -103,17 +77,9 @@ def main():
 
     with (evidence / 'queue.stdout').open('wb') as out, (evidence / 'queue.stderr').open('wb') as err:
         child = subprocess.Popen(request, stdout=out, stderr=err)
-        try:
-            while child.poll() is None:
-                apply_memory_high()
-                drain()
-                time.sleep(.1)
-        except BaseException:
-            subprocess.run([client, '--', 'cancel', '--state-root', str(state),
-                '--key', key, '--token', invocation], check=True)
-            child.wait()
+        while child.poll() is None:
             drain()
-            raise
+            time.sleep(.1)
         code = child.wait()
     drain()
     if code and (attempt is None or not (attempt / 'result').exists()):
