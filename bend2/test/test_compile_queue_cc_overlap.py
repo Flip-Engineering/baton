@@ -52,11 +52,26 @@ class QueueCcOverlapTests(unittest.TestCase):
                         "--", str(compiler), str(control), label,
                         str(root / (label + ".out"))]
 
+            def recorded_samples():
+                usage = state / "admission" / "usage"
+                samples = {}
+                if usage.is_dir():
+                    for path in usage.iterdir():
+                        for line in path.read_text(errors="replace").splitlines():
+                            if line.startswith("kb="):
+                                samples[path.name] = int(line[3:] or 0)
+                return samples
+
+            def sampled(before):
+                return any(value > 0 for name, value in recorded_samples().items()
+                           if name not in before)
+
             # One measured run per command family, alone: the first request of
             # an unmeasured family enters when no other claim is live.
             for label in ("first", "second"):
                 source = root / (label + "-measure.c")
                 source.write_text("int %s_measure(void) { return 0; }\n" % label)
+                samples_before = recorded_samples()
                 child = subprocess.Popen(
                     argv(label, source, root / (label + "-measure.receipt")),
                     env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -70,9 +85,18 @@ class QueueCcOverlapTests(unittest.TestCase):
                     time.sleep(0.02)
                 self.assertTrue((control / (label + ".started")).exists(),
                                 "measure run of %s did not start" % label)
-                # Hold the command past the watcher's sampling cadence so the
-                # run records a nonzero measured peak.
-                time.sleep(2)
+                # Hold the command until the queue writes this run's recorded
+                # sample under admission/usage, so the run records a nonzero
+                # measured peak at a point load cannot decide.
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    if sampled(samples_before):
+                        break
+                    if child.poll() is not None:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(sampled(samples_before),
+                                "the queue recorded no nonzero sample of the measure run of %s" % label)
                 (control / "release").touch()
                 stdout, stderr = child.communicate(timeout=30)
                 self.assertEqual(child.returncode, 0, stdout + stderr)

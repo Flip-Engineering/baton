@@ -55,9 +55,24 @@ class QueueCcParallelTests(unittest.TestCase):
                 "--input", str(source),
                 "--", str(self.compiler), str(self.control), "job", str(self.output)]
 
+    def recorded_samples(self):
+        usage = self.state / "admission" / "usage"
+        samples = {}
+        if usage.is_dir():
+            for path in usage.iterdir():
+                for line in path.read_text(errors="replace").splitlines():
+                    if line.startswith("kb="):
+                        samples[path.name] = int(line[3:] or 0)
+        return samples
+
+    def sampled(self, before):
+        return any(value > 0 for name, value in self.recorded_samples().items()
+                   if name not in before)
+
     # Runs the command of one request and releases it after the command
     # itself has started. Returns once the request completed.
     def run_released(self, source, receipt):
+        samples_before = self.recorded_samples()
         child = subprocess.Popen(self.argv(source, receipt), env=self.environment,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         deadline = time.monotonic() + 20
@@ -69,9 +84,18 @@ class QueueCcParallelTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertTrue((self.control / "job.started").exists(),
                         "the cc command did not run")
-        # Hold the command past the watcher's sampling cadence so the run
-        # records a nonzero measured peak.
-        time.sleep(2)
+        # Hold the command until the queue writes this run's recorded sample
+        # under admission/usage, so the run records a nonzero measured peak
+        # at a point load cannot decide.
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if self.sampled(samples_before):
+                break
+            if child.poll() is not None:
+                break
+            time.sleep(0.02)
+        self.assertTrue(self.sampled(samples_before),
+                        "the queue recorded no nonzero sample of the cc run")
         (self.control / "release").touch()
         stdout, stderr = child.communicate(timeout=30)
         self.assertEqual(child.returncode, 0, stdout + stderr)
