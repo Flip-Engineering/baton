@@ -89,7 +89,8 @@ def drive_id_found(+db: String, +id: String, empty: Bool) -> IO(Result<&1,&1,U32
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       found : String <- IO.try(String,DB.Sql.query(db,wake_recipient_sql(id)))
       stopped : String <- IO.try(String,DB.Sql.query(db,stopped_recipient_sql(id)))
-      drive_recipient(db,id,Tx.trim_nl(found),String.eq(stopped,"1\n"))
+      root : Bool <- RootChannel.message_root(db,id,"1")
+      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),root,deliver_wake_target(db,id),drive_recipient(db,id,Tx.trim_nl(found),String.eq(stopped,"1\n")))
 
 def drive_id(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   drive_id_found(db,id,String.is_empty(id))
@@ -100,14 +101,6 @@ def drive_id(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def message_cli(+db: String, +id: String) -> IO(Unit):
   IO.try(Unit,drive_id(db,id))
 
-# Input whose sender is told when its root recipient has no attached channel.
-def addressed_message_id(command: C.Command) -> String:
-  match command:
-    case C.Message{id,sender,recipient,kind,body}: id
-    case C.Report{id,sender,body}: id
-    case C.Ask{id,player,body}: id
-    case other: ""
-
 # A confirmation that ends its Player also reports the Player's live children
 # and unresolved input to the Player's coordinator; that report wakes its
 # recipient the same way.
@@ -116,18 +109,31 @@ def ended_report_id(command: C.Command) -> String:
     case C.Message{+id,sender,recipient,+kind,body}: Bool.pick(String,String.eq(kind,"completion-confirmed"),"ended:" ++ id,"")
     case other: ""
 
-def root_checked(+db: String, +id: String, empty: Bool) -> IO(Unit):
-  match empty:
-    case True{}: IO.pure(Unit,Unit{})
-    case False{}: RootChannel.warn_message(db,id)
+def command_saved(saved: String, wake: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,String>:
+  match wake:
+    case Fail{error}: Fail{error}
+    case Done{unit}: Done{saved}
 
-# A committed answer with a message identity reaches the session driver.
+# Root notification returns the committed message and its notice result directly.
+def command_result_selected(+db: String, +command: C.Command, +saved: String, root: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match root:
+    case True{}: Delivery.deliver(db,admitted_message_id(command),"1",saved)
+    case False{}: do IO<Result<&1,&1,U32 & String,String>>:
+      driven : Result<&1,&1,U32 & String,Unit> <- drive_id(db,admitted_message_id(command))
+      ended : Result<&1,&1,U32 & String,Unit> <- drive_id(db,ended_report_id(command))
+      IO.pure(Result<&1,&1,U32 & String,String>,command_saved(saved,driven))
+
+def command_result(+db: String, +command: C.Command, answer: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match answer:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{saved}: do IO<Result<&1,&1,U32 & String,String>>:
+      root : Bool <- RootChannel.message_root(db,admitted_message_id(command),"1")
+      command_result_selected(db,command,saved,root)
+
+# Callers that only need wake completion retain the Unit result.
 def drive_command(+db: String, +command: C.Command, answer: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match answer:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case Done{saved}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      driven : Result<&1,&1,U32 & String,Unit> <- drive_id(db,admitted_message_id(command))
-      ended : Result<&1,&1,U32 & String,Unit> <- drive_id(db,ended_report_id(command))
-      +addressed : String <- IO.pure(String,addressed_message_id(command))
-      checked : Unit <- root_checked(db,addressed,String.is_empty(addressed))
-      IO.pure(Result<&1,&1,U32 & String,Unit>,driven)
+      result : Result<&1,&1,U32 & String,String> <- command_result(db,command,Done{saved})
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(result))
