@@ -6,7 +6,6 @@ import pathlib
 import sqlite3
 import subprocess
 import sys
-import time
 import unittest
 from unittest.mock import patch
 
@@ -44,15 +43,6 @@ class RootInboxDelivery(receive.Receive):
 
     def process_names(self):
         return super().process_names() | {'exe'}
-
-    def eventually(self, observation, description):
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            result = observation()
-            if result:
-                return result
-            time.sleep(.01)
-        self.fail(description)
 
     def committed_notice(self, value):
         if isinstance(value, dict):
