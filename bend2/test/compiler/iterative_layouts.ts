@@ -2,18 +2,23 @@
 // Compare datatype layouts with the retained implementation and exercise a
 // checked datatype dependency chain across both layout implementations.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import * as Bend from "../../compiler/upstream/bend.ts";
 
 const root = path.resolve(import.meta.dir, "../../..");
 const upstream = path.join(root, "bend2/compiler/upstream");
-const original = execFileSync("git", ["show",
-  "b9eb2d2b7643994f3162f16ec264f429218f458c:bend2/compiler/upstream/comp.ts"],
-  { cwd: root, encoding: "utf8", maxBuffer: 1024 * 1024 });
+// The retained implementation lives in fixtures/historical so frozen source
+// snapshots run this test without a Git object store.
+const baseCommit = "b9eb2d2b7643994f3162f16ec264f429218f458c";
+const original = fs.readFileSync(path.join(import.meta.dir,
+  "fixtures/historical/comp-" + baseCommit + ".ts"), "utf8");
+assert.equal(createHash("sha256").update(original).digest("hex"),
+  "46cc6f8fbd591552c6f2ce925ddbe680f650077bdc4f8554b0167700106ca3e5",
+  "historical comp.ts matches " + baseCommit);
 const current = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-iterative-layouts-"));
 const hooks = `
