@@ -3374,8 +3374,10 @@ class Receive(unittest.TestCase):
         self.eventually(lambda: marker in log.read_text(),
                         'the observer did not read past the steer response')
         reads = message_reads(self.db, 'later-guidance', 'parent')
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            current_id, = database.execute("SELECT id FROM executions WHERE session='parent'").fetchone()
         self.assertEqual({(row['attempt'], row['native']) for row in reads},
-                         {(self.execution('parent')[1], second['native'])})
+                         {(current_id, second['native'])})
         self.action(current, body='Current task completed after accepting guidance.')
         self.assertEqual(current.readline(), b'')
         self.read_root_channel(root_channel, 'Current task completed after accepting guidance.')
