@@ -86,30 +86,37 @@ def sole(files: List<&1,String>) -> Bool:
     case name <> Nil{}: True{}
     case other: False{}
 
-def completed_peak(+state: String, +key: String) -> IO(String):
+def attempt_peak(+state: String, +key: String, +attempt: String, is_sole: Bool) -> IO(String):
   do IO<String>:
-    +result : String <- read(state ++ "/keys/" ++ key ++ "/completed/result")
+    result : String <- read(attempt ++ "/result")
     Bool.pick(IO(String),Result.CompileQueueResult.recorded_completed(result,key),
       do IO<String>:
-        +attempt : String <- IO.pure(String,field(result,"attempt"))
         +own : String <- read(attempt ++ "/peak")
         # A sole legacy run identifies the source of its key-level observation.
         raw : String <- Bool.pick(IO(String),U32.is_gt(peak(own),0),IO.pure(String,own),
-          do IO<String>:
-            runs : String <- names(state ++ "/keys/" ++ key ++ "/runs")
-            Bool.pick(IO(String),sole(Tx.split_nul(runs)),
-              read(state ++ "/keys/" ++ key ++ "/peak"),IO.pure(String,"")))
+          Bool.pick(IO(String),is_sole,
+            read(state ++ "/keys/" ++ key ++ "/peak"),IO.pure(String,"")))
         observation("key=" ++ key ++ "\nattempt=" ++ attempt ++ "\n" ++ raw),
       IO.pure(String,""))
+
+def attempt_records(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
+                    files: List<&1,String>, +state: String, +key: String, +kind: String,
+                    +family: String, +toolchain: String, +is_sole: Bool, candidates: Candidates) -> IO(Candidates):
+  match files:
+    case Nil{}: IO.pure(Candidates,candidates)
+    case name <> rest: do IO<Candidates>:
+      measured : String <- attempt_peak(state,key,state ++ "/keys/" ++ key ++ "/runs/" ++ name,is_sole)
+      classified : String <- classify(derive,measured,kind,family,toolchain)
+      attempt_records(derive,rest,state,key,kind,family,toolchain,is_sole,add(classified,kind,family,candidates))
 
 def key_records(~derive: (@+attempt: String -> @+toolchain: String -> IO(String)),
                 keys: List<&1,String>, +state: String, +kind: String, +family: String, +toolchain: String, candidates: Candidates) -> IO(Candidates):
   match keys:
     case Nil{}: IO.pure(Candidates,candidates)
-    case key <> rest: do IO<Candidates>:
-      measured : String <- completed_peak(state,key)
-      classified : String <- classify(derive,measured,kind,family,toolchain)
-      key_records(derive,rest,state,kind,family,toolchain,add(classified,kind,family,candidates))
+    case +key <> rest: do IO<Candidates>:
+      +runs : String <- names(state ++ "/keys/" ++ key ++ "/runs")
+      measured : Candidates <- attempt_records(derive,Tx.split_nul(runs),state,key,kind,family,toolchain,sole(Tx.split_nul(runs)),candidates)
+      key_records(derive,rest,state,kind,family,toolchain,measured)
 
 def selected(candidates: Candidates) -> String:
   match candidates:
