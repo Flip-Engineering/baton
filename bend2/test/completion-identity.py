@@ -163,7 +163,11 @@ INSERT INTO session_stops(session,id,reason,outcome) VALUES('coordinator','stop-
 INSERT INTO messages(id,sender,recipient,kind,body) VALUES('succession:coordinator:successor','successor','coordinator','succession','{}');
 """)
         replay = self.request('Done.', first['id'])
-        self.assertEqual(replay['status'], 'admitted', replay)
+        # The recorded request is admitted as recorded; its delivery to the
+        # terminally stopped coordinator stays pending and retained.
+        self.assertEqual(replay['admission']['status'], 'admitted', replay)
+        self.assertEqual(replay['status'], 'pending', replay)
+        self.assertEqual(replay['wake']['status'], 'refused', replay)
         self.assertEqual((replay['id'], replay['recipient']), (first['id'], 'coordinator'))
         self.assertEqual(self.requests(), [(first['id'], 'Done.')])
         later = self.request('Updated summary after succession.')
