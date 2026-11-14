@@ -1867,7 +1867,7 @@ def admission_ticket_text(+priority: U32, +pid: U32, +start: String, +key: Strin
   "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start
   ++ "\nkey=" ++ key ++ "\nkind=" ++ kind ++ "\ngroup=" ++ group ++ "\ntoken=" ++ token ++ "\n"
 
-def admission_waiter_fits(state: String, kind: String, key: String, history_group: String, stats: ClaimStats,
+def admission_waiter_fits(+state: String, kind: String, +key: String, history_group: String, stats: ClaimStats,
                           +available: U32, total: U32, legacy_pid: U32) -> IO(Bool):
   do IO<Bool>:
     actual_kind : String <- History.request_kind(state,key,"")
