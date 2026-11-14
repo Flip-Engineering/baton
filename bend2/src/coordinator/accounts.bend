@@ -275,11 +275,11 @@ def provider_matches(+provider: String, account: AccountRecord) -> Bool:
 def provider_accounts(accounts: List<&2,AccountRecord>, +provider: String) -> List<&2,AccountRecord>:
   match accounts:
     case Nil{}: Nil{}
-    case +account <> rest: Bool.pick(List<&2,AccountRecord>,provider_matches(provider,account),account <> provider_accounts(rest,provider),provider_accounts(rest,provider))
+    case +account <> +rest: Bool.pick(List<&2,AccountRecord>,provider_matches(provider,account),account <> provider_accounts(rest,provider),provider_accounts(rest,provider))
 
 # An explicit current binding remains usable while the seat has no recorded
 # provider. A recorded different provider supplies no account attribution.
-def current_provider_account(provider: String, account: Maybe<&2,AccountRecord>) -> Maybe<&2,AccountRecord>:
+def current_provider_account(+provider: String, account: Maybe<&2,AccountRecord>) -> Maybe<&2,AccountRecord>:
   match account:
     case None{}: None{}
     case Some{+chosen}: Bool.pick(Maybe<&2,AccountRecord>,Bool.or(String.is_empty(provider),provider_matches(provider,chosen)),Some{chosen},None{})

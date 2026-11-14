@@ -16,12 +16,12 @@ def forms() -> List<Form>:
 def safe_text(text: String) -> Bool:
   match text:
     case SNil{}: True{}
-    case SCon{head,tail}: Bool.and(Bool.and(Bool.not(U32.is_lt(Char.to_u32(head),32)),Bool.not(U32.is_eq(Char.to_u32(head),127))),safe_text(tail))
+    case SCon{+head,tail}: Bool.and(Bool.and(Bool.not(U32.is_lt(Char.to_u32(head),32)),Bool.not(U32.is_eq(Char.to_u32(head),127))),safe_text(tail))
 
 def keychain_parts(text: String, service: Bool) -> Bool:
   match text:
     case SNil{}: False{}
-    case SCon{head,tail}: Bool.pick(Bool,Char.is_eq(head,Char.from_u32(47)),Bool.and(service,Bool.not(String.is_empty(tail))),keychain_parts(tail,True{}))
+    case SCon{head,+tail}: Bool.pick(Bool,Char.is_eq(head,Char.from_u32(47)),Bool.and(service,Bool.not(String.is_empty(tail))),keychain_parts(tail,True{}))
 
 def form_matches(form: Form, +reference: String) -> Bool:
   match form:
@@ -58,7 +58,7 @@ def accepted_account(harness: String, funding: String, reference: String) -> Boo
 def labels_from(remaining: List<Form>, +kinds: List<String>, +separator: String) -> String:
   match remaining:
     case Nil{}: ""
-    case ReferenceForm{kind,prefix,+label,empty} <> rest:
+    case ReferenceForm{kind,prefix,+label,empty} <> +rest:
       Bool.pick(String,member(kind,kinds),separator ++ label ++ labels_from(rest,kinds,", "),labels_from(rest,kinds,separator))
 
 def describe(kinds: List<String>) -> String:
