@@ -156,9 +156,11 @@ class QueuePriorityTests(unittest.TestCase):
         self.assertEqual(self.published_tickets(), [])
 
     def admission_waiting(self):
+        # The queue creates this directory sticky (mkdir_sticky, mode 01770);
+        # a pre-existing non-sticky directory is refused by the supervisor.
         waiting = self.state / "admission" / "waiting"
-        waiting.mkdir(mode=0o2770, parents=True)
-        waiting.chmod(0o2770)
+        waiting.mkdir(mode=0o1770, parents=True)
+        waiting.chmod(0o1770)
         return waiting
 
     def waiting_names(self, waiting):
