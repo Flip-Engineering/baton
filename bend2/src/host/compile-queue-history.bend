@@ -44,7 +44,7 @@ def observation(+text: String) -> IO(String):
   do IO<String>:
     +key : String <- IO.pure(String,field(text,"key"))
     +attempt : String <- IO.pure(String,field(text,"attempt"))
-    result : String <- read(attempt ++ "/result")
+    +result : String <- read(attempt ++ "/result")
     +eligible : Bool <- IO.pure(Bool,Bool.and(U32.is_gt(peak(text),0),
       Bool.and(Bool.not(String.is_empty(attempt)),
         Bool.and(Result.CompileQueueResult.recorded_completed(result,key),
@@ -66,7 +66,7 @@ def classify(+text: String, +kind: String, +family: String, toolchain: String,
 
 def add(+text: String, +kind: String, +family: String, candidates: Candidates) -> Candidates:
   match candidates:
-    case Candidates{compatible,same,host}:
+    case Candidates{+compatible,+same,host}:
       Candidates{Bool.pick(String,Bool.and(Bool.not(String.is_empty(family)),String.eq(field(text,"family"),family)),larger(text,compatible),compatible),
         Bool.pick(String,String.eq(field(text,"kind"),kind),larger(text,same),same),
         larger(text,host)}
@@ -92,7 +92,7 @@ def completed_peak(+state: String, +key: String) -> IO(String):
     Bool.pick(IO(String),Result.CompileQueueResult.recorded_completed(result,key),
       do IO<String>:
         +attempt : String <- IO.pure(String,field(result,"attempt"))
-        own : String <- read(attempt ++ "/peak")
+        +own : String <- read(attempt ++ "/peak")
         # A sole legacy run identifies the source of its key-level observation.
         raw : String <- Bool.pick(IO(String),U32.is_gt(peak(own),0),IO.pure(String,own),
           do IO<String>:
@@ -148,10 +148,10 @@ def profile(+state: String, +key: String, +group: String) -> IO(String):
 def lookup(+state: String, +key: String, +group: String, +kind: String,
            derive: (@+attempt: String -> @+toolchain: String -> IO(String))) -> IO(String):
   do IO<String>:
-    exact : String <- read(state ++ "/keys/" ++ key ++ "/peak")
+    +exact : String <- read(state ++ "/keys/" ++ key ++ "/peak")
     group_text : String <- Bool.pick(IO(String),String.is_empty(group),IO.pure(String,""),
       read(state ++ "/history/" ++ group))
-    grouped : String <- observation(group_text)
+    +grouped : String <- observation(group_text)
     +own : String <- IO.pure(String,record(peak(exact),"exact",key,field(exact,"attempt"),kind))
     +workload : String <- IO.pure(String,record(peak(grouped),"workload",field(grouped,"peak_key"),
       field(grouped,"peak_attempt"),field(grouped,"kind")))
@@ -169,7 +169,7 @@ def kind_from_attempts(files: List<&1,String>, +keydir: String) -> IO(String):
       +kind : String <- IO.pure(String,field(meta,"kind"))
       Bool.pick(IO(String),String.is_empty(kind),kind_from_attempts(rest,keydir),IO.pure(String,kind))
 
-def request_kind(+state: String, +key: String, supplied: String) -> IO(String):
+def request_kind(+state: String, +key: String, +supplied: String) -> IO(String):
   Bool.pick(IO(String),Bool.not(String.is_empty(supplied)),IO.pure(String,supplied),
     do IO<String>:
       +keydir : String <- IO.pure(String,state ++ "/keys/" ++ key)
