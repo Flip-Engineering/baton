@@ -914,8 +914,9 @@ class Receive(unittest.TestCase):
                                   'readMessage': ident})
             environment = os.environ | {'BATON_SESSION': 'root', 'BATON_DATABASE': str(self.db),
                                         'BATON_MCP_INPUT': context, 'CODEX_THREAD_ID': 'native-root'}
-            accepted = self.coord('delivery', ident, environment=environment)
-            self.assertEqual(accepted['body'], message['body'])
+            accepted, = self.coord('read', ident, environment=environment)
+            self.assertEqual(accepted['status'], 'found', accepted)
+            self.assertEqual(accepted['delivery']['body'], message['body'])
             self.assertTrue(read_recorded(self.db, ident))
 
     def receive_args(self, session, executable=None):
