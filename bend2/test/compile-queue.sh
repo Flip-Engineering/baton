@@ -329,9 +329,12 @@ printf 'dead-previous' > "$T/abandoned-bin.queue-tmp.2147483646.1.previous"
 printf 'legacy' > "$T/abandoned-bin.queue-tmp"
 printf 'legacy-pid' > "$T/abandoned-bin.queue-tmp.4242"
 printf 'other' > "$T/unrelated-bin.queue-tmp.2147483646.1"
+mkdir "$T/abandoned-bin.queue-tmp.2147483645.1"
+printf 'inner' > "$T/abandoned-bin.queue-tmp.2147483645.1/file"
 live_start=$(awk '{ sub(/^.*\) /, ""); split($0, f, " "); print f[20] }' "/proc/$$/stat" 2>/dev/null)
 if [ -n "$live_start" ]; then
   printf 'live' > "$T/abandoned-bin.queue-tmp.$$.$live_start"
+  printf 'reused' > "$T/abandoned-bin.queue-tmp.$$.$(($live_start + 1))"
 fi
 env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$SMALL" --linker "$SMALL" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/abandoned-bin" --receipt "$T/abandoned.receipt" --option 'test=abandoned' \
@@ -345,9 +348,13 @@ env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --s
   && pass 'staging without a start identity is removed' || bad 'staging without a start identity remains'
 [ -e "$T/unrelated-bin.queue-tmp.2147483646.1" ] \
   && pass 'staging of another destination is kept' || bad 'staging of another destination was removed'
+[ ! -e "$T/abandoned-bin.queue-tmp.2147483645.1" ] \
+  && pass 'directory staging of a dead publisher is removed' || bad 'directory staging of a dead publisher remains'
 if [ -n "$live_start" ]; then
   [ "$(cat "$T/abandoned-bin.queue-tmp.$$.$live_start" 2>/dev/null)" = 'live' ] \
     && pass 'staging of a running publisher is kept' || bad 'staging of a running publisher was removed'
+  [ ! -e "$T/abandoned-bin.queue-tmp.$$.$(($live_start + 1))" ] \
+    && pass 'staging of a reused pid is removed' || bad 'staging of a reused pid remains'
 fi
 
 # Artifact names are relative paths used under the attempt and cache roots.

@@ -433,13 +433,15 @@ def CompileQueueResult.sweep_listed(listing: Result<&1,&1,U32 & String,String>, 
       CompileQueueResult.sweep_names(directory, prefix, String.split(names, Char.from_u32(0)))
 
 # Removes the staging files that publishers of DESTINATION left behind when
-# they died.
+# they died. The plain DESTINATION.queue-tmp name carries no owner identity,
+# so it is removed with the names whose owner is gone.
 def CompileQueueResult.sweep_abandoned(+destination: String) -> IO(Unit):
   do IO<Unit>:
     +directory : String <- IO.pure(String, CompileQueueResult.dirname(destination))
     +prefix : String <- IO.pure(String, CompileQueueResult.basename(destination) ++ ".queue-tmp.")
     listing : Result<&1,&1,U32 & String,String> <- Q.list_dir(directory)
-    CompileQueueResult.sweep_listed(listing, directory, prefix)
+    swept : Unit <- CompileQueueResult.sweep_listed(listing, directory, prefix)
+    IO.try(Unit, Artifact.CompileQueueArtifact.remove(destination ++ ".queue-tmp"))
 
 # Every publication path installs through this function. The staging file is
 # removed when the install fails and when it succeeds (a successful install has
