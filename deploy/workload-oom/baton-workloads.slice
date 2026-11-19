@@ -1,0 +1,9 @@
+[Unit]
+Description=Agent test workloads and private databases
+
+[Slice]
+MemoryAccounting=yes
+ManagedOOMMemoryPressure=kill
+
+[Install]
+WantedBy=default.target
