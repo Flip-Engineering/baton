@@ -92,7 +92,8 @@ def CompileQueueResult.read_rows(+path: String) -> IO(Result<&1,&1,U32 & String,
 
 def CompileQueueResult.completed_lines(+lines: List<&2,String>) -> Bool:
   Bool.and(String.eq(CompileQueueResult.field_lines(lines, "status"), "completed"),
-    Bool.or(String.eq(CompileQueueResult.field_lines(lines, "kind"), "check"),
+    Bool.or(Bool.or(String.eq(CompileQueueResult.field_lines(lines, "kind"), "check"),
+      String.eq(CompileQueueResult.field_lines(lines, "kind"), "workload")),
       Bool.not(String.is_empty(CompileQueueResult.artifact_lines(lines,"")))))
 
 def CompileQueueResult.completed(result: String) -> Bool:
@@ -193,7 +194,8 @@ def CompileQueueResult.acceptable_lines(+lines: List<&2,String>, key: String, +r
   Bool.and(String.eq(CompileQueueResult.field_lines(lines, "external"), "0"),
     Bool.and(CompileQueueResult.base_verified_lines(lines, key),
       Bool.and(CompileQueueResult.completed_lines(lines),
-        Bool.pick(Bool, String.eq(CompileQueueResult.field_lines(lines, "kind"), "check"),
+        Bool.pick(Bool, Bool.or(String.eq(CompileQueueResult.field_lines(lines, "kind"), "check"),
+          String.eq(CompileQueueResult.field_lines(lines, "kind"), "workload")),
           String.is_empty(rows), Bool.not(String.is_empty(rows))))))
 
 def CompileQueueResult.acceptable(result: String, key: String, rows: String) -> Bool:
