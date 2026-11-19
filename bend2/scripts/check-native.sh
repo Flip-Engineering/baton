@@ -74,6 +74,8 @@ if .scratch/bend2/storage-focused > /dev/null 2>&1; then
   exit 1
 fi
 "$PYTHON3" bend2/test/stage-storage-clean.py
+sh bend2/scripts/build-native.sh bend2/src/coordinator/receive-focused.bend .scratch/bend2/receive-focused
+BATON2_STORAGE_FOCUSED_BINARY="$root/.scratch/bend2/receive-focused" "$PYTHON3" bend2/test/storage-focused-routes.py
 sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
 .scratch/bend2/subscription-profiles-test
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads

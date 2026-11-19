@@ -8,6 +8,7 @@ import Base
 import ./types.bend as T
 import ../host/storage.bend as H
 import ../git/text.bend as Tx
+import ../json/canonical.bend as J
 
 type Observation is Data:
   Missing{path: String}
@@ -65,6 +66,42 @@ def observe(+path: String) -> IO(Observation):
   do IO<Observation>:
     result : Result<&1,&1,U32 & String,String> <- H.StorageHost.observe(path)
     IO.pure(Observation, observation_result(path, result))
+
+# Filesystem capacity and ownership facts for one path, from the host record
+# `device<TAB>owner<TAB>blockSize<TAB>freeBytes<TAB>totalBytes`. A failed
+# observation is unknown; the policy report shows the failure detail.
+type Filesystem is Data:
+  FsFound{device: String, owner: String, block_size: Nat, free_bytes: Nat, total_bytes: Nat}
+  FsUnknown{detail: String}
+
+def filesystem_fields(fields: List<String>) -> Filesystem:
+  match fields:
+    case +device <> +owner <> +block <> +free <> +total <> Nil{}:
+      FsFound{device, owner, parse_nat(block), parse_nat(free), parse_nat(total)}
+    case other: FsUnknown{"host filesystem record"}
+
+def filesystem_of(+raw: String) -> Filesystem:
+  filesystem_fields(Tx.split_tabs(raw))
+
+def filesystem_result(result: Result<&1,&1,U32 & String,String>) -> Filesystem:
+  match result:
+    case Fail{error}: FsUnknown{fail_detail(error)}
+    case Done{value}: filesystem_of(value)
+
+def filesystem(+path: String) -> IO(Filesystem):
+  do IO<Filesystem>:
+    result : Result<&1,&1,U32 & String,String> <- H.StorageHost.filesystem(path)
+    IO.pure(Filesystem, filesystem_result(result))
+
+def filesystem_json(fs: Filesystem) -> String:
+  match fs:
+    case FsFound{device, owner, block_size, free_bytes, total_bytes}:
+      "{\"device\":" ++ J.string_literal(device)
+      ++ ",\"owner\":" ++ J.string_literal(owner)
+      ++ ",\"blockSize\":" ++ Nat.show(block_size)
+      ++ ",\"freeBytes\":" ++ Nat.show(free_bytes)
+      ++ ",\"totalBytes\":" ++ Nat.show(total_bytes) ++ "}"
+    case FsUnknown{detail}: "{\"unknown\":" ++ J.string_literal(detail) ++ "}"
 
 def observation_identity(+o: Observation) -> String:
   match o:
