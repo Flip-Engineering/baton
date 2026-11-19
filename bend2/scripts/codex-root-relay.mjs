@@ -411,8 +411,8 @@ function appError(message) {
 }
 
 // A lost app-server connection during the locked delivery section. The section
-// fails so its thread lock is released, and the delivery retries from the
-// unread message instead of holding the lock while it reconnects.
+// fails, its thread lock is released, and the delivery retries from the
+// unread message. The lock is free while the retry reconnects.
 function lostAppSession(cause) {
   const error = new Error('Codex app-server session lost: ' + String(cause.message || cause));
   error.appSessionLost = true;
@@ -545,7 +545,8 @@ async function walkTurns(session, thread, visit) {
 // arrived after the notice was queued; omitting it finds a complete notice left
 // by an earlier relay attempt. `after` names the turn of the last recorded
 // read: a copy left by an earlier attempt is always newer, so the walk stops
-// after examining that turn instead of growing with the age of the thread.
+// after examining that turn. The turns walked are the turns added since that
+// read.
 function findUserMessage(session, thread, content, { before = null, after = null } = {}) {
   return walkTurns(session, thread, turn => {
     for (const item of [...turn.items].reverse()) {
@@ -615,9 +616,9 @@ async function scanAndQueue(session, options, thread, id, content) {
     const before = await newestTurn(session, thread);
     const state = readDeliveryState(options.database, thread);
     // A prior relay can queue the complete notice and exit before its read
-    // callback completes. Reuse that exact message on retry instead of
-    // adding another copy to the root thread. The scan stops at the turn of
-    // the last recorded read, which a leftover copy is always newer than.
+    // callback completes. Reuse that exact message on retry: the root thread
+    // then holds one copy of the notice. The scan stops at the turn of the
+    // last recorded read, which a leftover copy is always newer than.
     const received = await findUserMessage(session, thread, content, { after: state.lastReadTurn });
     if (received) return { before, received, reused: true };
     if (state.queued && state.queued.id === id && state.queued.content === content) {

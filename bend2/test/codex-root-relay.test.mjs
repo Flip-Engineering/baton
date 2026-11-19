@@ -464,7 +464,7 @@ test('a lost app-server session during the locked scan releases the lock and ret
   const owner = await runRelay(t, 'drop-scan-once', { directory });
   await until(owner, 'codexAppServerScanInterrupted');
   // The interrupted delivery released the thread lock, so a second context can
-  // complete the scan and queue instead of waiting behind a dead session.
+  // complete the scan and queue while the first delivery retries.
   const waiter = await runRelay(t, 'consume', { directory });
   await Promise.all([until(owner, 'codexRootMessageReceived'), until(waiter, 'codexRootMessageReceived')]);
   assert.equal(readFileSync(join(directory, 'queues.jsonl'), 'utf8').trim().split('\n').length, 1,
