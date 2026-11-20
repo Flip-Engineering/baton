@@ -271,14 +271,14 @@ class PackageLicenses(unittest.TestCase):
             source = (self.source / entry['source_path']).read_bytes()
             self.assertEqual((prefix / entry['path']).read_bytes(), source)
 
-    def stage_runtime_files(self):
+    def stage_runtime_files(self, system='Darwin'):
         scripts = self.source / 'bend2/scripts'
         scripts.mkdir(parents=True)
         names = [harness + '-' + suffix + '.mjs'
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('check-install.py', 'context-provider.mjs', 'context-project-policy.mjs',
                       'context-query-artifact.mjs', 'context-worktree-capture.mjs',
-                      'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs',
+                      'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs', 'harness-clients.py',
                       'no-agent-summary.js', 'agent-summary-check.mjs',
                       'codex-root-relay.mjs', 'root-channel-config.mjs'))
         for name in names:
@@ -297,8 +297,17 @@ class PackageLicenses(unittest.TestCase):
             path.write_bytes(('File-only ' + name + ' fixture; never run.\n').encode())
             path.chmod(0o755)
         shutil.copytree(ROOT / 'bend2/ui/orchestra', self.source / 'bend2/ui/orchestra')
-        PACKAGE.stage_adapters(self.payload)
+        shutil.copytree(ROOT / 'bend2/deploy/linux', self.source / 'bend2/deploy/linux')
+        PACKAGE.stage_adapters(self.payload, system=system)
         return names
+
+    def test_linux_install_stages_the_harness_update_schedule(self):
+        self.stage_runtime_files(system='Linux')
+        directory = self.payload / 'share/baton2/systemd/user'
+        for suffix in ('service', 'timer'):
+            name = 'baton-harness-update@.' + suffix
+            self.assertEqual((directory / name).read_bytes(),
+                             (ROOT / 'bend2/deploy/linux' / name).read_bytes())
 
     def test_archive_keeps_canonical_and_compatibility_adapter_bytes(self):
         names = self.stage_runtime_files()

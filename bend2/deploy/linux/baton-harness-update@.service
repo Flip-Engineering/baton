@@ -1,0 +1,6 @@
+[Unit]
+Description=Check Baton native harness updates for %f
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/baton %f harness-update

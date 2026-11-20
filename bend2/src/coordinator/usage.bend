@@ -12,7 +12,7 @@ import ../git/types.bend as T
 import ../json/canonical.bend as J
 import ../harness/codex-player.bend as Codex
 import ../harness/omp-player.bend as Omp
-import ../harness/muse-player.bend as Muse
+import ./harness-update.bend as HarnessUpdate
 import ../harness/dsh-player.bend as Dsh
 
 # --- the recorded source ----------------------------------------------------
@@ -350,16 +350,20 @@ def usage_with_provider(db: String, session: String, +harness: String, conversat
 
 # --- the model discovery read ------------------------------------------------
 
-# The model read reports the configured harness's current catalog or profile.
-def models_args(+harness: String, +command: String, model: String) -> List<String>:
-  Bool.pick(List<String>,String.eq(harness,"codex"),Codex.models_args(command),
-  Bool.pick(List<String>,String.eq(harness,"omp"),Omp.models_args(command),
-  Bool.pick(List<String>,String.eq(harness,"muse"),Muse.models_args(command,model),Nil{})))
+# The catalog comes from the resolved client in the recorded workspace.
+def models_args(+harness: String, command: String, helper: String) -> List<String>:
+  match harness:
+    case "codex": Codex.models_args(command)
+    case "omp": Omp.models_args(command)
+    case other: ["python3",helper,"catalog",other,command]
 
-def models_argv(+harness: String, model: String) -> String:
-  Bool.pick(String,String.eq(harness,"codex"),lines_array(["debug","models"]),
-  Bool.pick(String,String.eq(harness,"omp"),lines_array(["models","--json"]),
-  Bool.pick(String,String.eq(harness,"muse"),lines_array(["model-profile","show",model]),"[]")))
+def models_argv(harness: String) -> String:
+  match harness:
+    case "codex": lines_array(["debug","models"])
+    case "omp": lines_array(["models","--json"])
+    case "muse": lines_array(["serve","--no-session-log"])
+    case "claude-code": lines_array(["-p","--input-format","stream-json","--output-format","stream-json","--verbose","--no-session-persistence","--setting-sources",""])
+    case other: "[]"
 
 def models_unknown(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, reason: String) -> String:
   "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"unknown\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"reason\":" ++ J.string_literal(reason) ++ "}"
@@ -370,47 +374,40 @@ def models_raw_failure(+session: String, +harness: String, +command: String, +mo
 def models_json_answer(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, +stdout: String) -> String:
   "WITH answer(text) AS (SELECT " ++ C.q(stdout) ++ ") SELECT json_object('schema','baton2-model-discovery-v1','state',CASE WHEN json_valid(text) THEN 'reported' ELSE 'unknown' END,'session'," ++ C.q(session) ++ ",'harness'," ++ C.q(harness) ++ ",'command'," ++ C.q(command) ++ ",'argv',json(" ++ C.q(argv) ++ "),'workspace'," ++ C.q(cwd) ++ ",'requestedModel',nullif(" ++ C.q(model) ++ ",''),'response',CASE WHEN json_valid(text) THEN json(text) END,'raw',text,'reason',CASE WHEN json_valid(text) THEN NULL ELSE 'providerOutputNotJson' END) FROM answer;"
 
-def models_text_answer(+session: String, +harness: String, +command: String, +model: String, +effort: String, +cwd: String, +argv: String, +stdout: String) -> String:
-  "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"reported\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"requestedEffort\":" ++ J.string_literal(effort) ++ ",\"modelExistence\":\"unknown\",\"profileText\":" ++ J.string_literal(stdout) ++ "}"
-
-def models_outcome(+db: String, +session: String, +harness: String, +command: String, +model: String, +effort: String, +cwd: String, +argv: String, outcome: T.RunRes) -> IO(String):
+def models_outcome(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, outcome: T.RunRes) -> IO(String):
   match outcome:
     case T.RSpawn{detail}: IO.pure(String,models_unknown(session,harness,command,model,cwd,argv,"processStatusUnavailable: " ++ detail))
     case T.RRun{T.SExit{0},+out}:
-      Bool.pick(IO(String),String.eq(harness,"muse"),IO.pure(String,models_text_answer(session,harness,command,model,effort,cwd,argv,out)),IO.try(String,DB.Sql.read(db,models_json_answer(session,harness,command,model,cwd,argv,out))))
+      IO.try(String,DB.Sql.read(db,models_json_answer(session,harness,command,model,cwd,argv,out)))
     case T.RRun{T.SExit{code},out}: IO.pure(String,models_raw_failure(session,harness,command,model,cwd,argv,"exit",code,out))
     case T.RRun{T.SSignal{num},out}: IO.pure(String,models_raw_failure(session,harness,command,model,cwd,argv,"signal",num,out))
 
-def models_result(+db: String, +session: String, +harness: String, +command: String, +model: String, +effort: String, +cwd: String, +argv: String, run: Result<&1,&1,U32 & String,String>) -> IO(String):
+def models_result(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, run: Result<&1,&1,U32 & String,String>) -> IO(String):
   match run:
     case Fail{(code,detail)}:
       IO.pure(String,"{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"unknown\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"reason\":\"providerCommandHostFailure\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
-    case Done{raw}: models_outcome(db,session,harness,command,model,effort,cwd,argv,Tx.run_res(Done{raw}))
-
-# TODO(DSH-MODELS-1): the official DSH CLI has no models command.
-def models_supported(+harness: String) -> Bool:
-  Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),String.eq(harness,"muse")))
+    case Done{raw}: models_outcome(db,session,harness,command,model,cwd,argv,Tx.run_res(Done{raw}))
 
 def models_print(db: String, answer: String) -> IO(Unit):
   do IO<Unit>:
     observed : String <- IO.try(String,DB.Sql.read(db,"SELECT json_set(" ++ C.q(answer) ++ ",'$.observedAt',CAST(strftime('%s','now') AS INTEGER)*1000);"))
     IO.print(observed)
 
-def models_query(+db: String, +session: String, +harness: String, +command: String, +model: String, +effort: String, +cwd: String) -> IO(Unit):
-  do IO<Unit>:
-    +argv : String <- IO.pure(String,models_argv(harness,model))
-    args : List<String> <- IO.pure(List<String>,models_args(harness,command,model))
+def models_route_answer(+db: String, +session: String, +harness: String, +recorded: String, +model: String, +cwd: String) -> IO(String):
+  do IO<String>:
+    +argv : String <- IO.pure(String,models_argv(harness))
+    +selected : HarnessUpdate.Selection <- HarnessUpdate.check(db,session,harness,recorded,True{})
+    +command : String <- IO.pure(String,HarnessUpdate.command(selected))
+    helper : String <- HarnessUpdate.script()
+    args : List<String> <- IO.pure(List<String>,models_args(harness,command,helper))
     run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(args),Bool.pick(String,String.is_empty(cwd),".",cwd))
-    answer : String <- models_result(db,session,harness,command,model,effort,cwd,argv,run)
-    models_print(db,answer)
+    models_result(db,session,harness,command,model,cwd,argv,run)
 
-def models_command(+db: String, +session: String, +harness: String, +command: String, +model: String, +effort: String, +cwd: String) -> IO(Unit):
-  do IO<Unit>:
-    +argv : String <- IO.pure(String,models_argv(harness,model))
-    +answer : String <- IO.pure(String,Bool.pick(String,models_supported(harness),
-      Bool.pick(String,String.is_empty(command),models_unknown(session,harness,command,model,cwd,argv,"noRecordedHarnessCommand"),""),
-      models_unknown(session,harness,command,model,cwd,argv,"unsupportedHarness")))
-    Bool.pick(IO(Unit),String.is_empty(answer),models_query(db,session,harness,command,model,effort,cwd),models_print(db,answer))
+def models_route_guarded(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(String):
+  +argv = models_argv(harness)
+  Bool.pick(IO(String),HarnessUpdate.supported(harness),
+    Bool.pick(IO(String),String.is_empty(command),IO.pure(String,models_unknown(session,harness,command,model,cwd,argv,"noRecordedHarnessCommand")),models_route_answer(db,session,harness,command,model,cwd)),
+    IO.pure(String,models_unknown(session,harness,command,model,cwd,argv,"unsupportedHarness")))
 
 def usage_registered(saved: String) -> IO(Unit):
   match saved:
@@ -420,23 +417,23 @@ def usage_registered(saved: String) -> IO(Unit):
 # --- the cross-harness model discovery read -----------------------------------
 
 # One observation per recorded session with a harness. Each entry carries its
-# source session, harness, command, model, effort and recorded workspace, and
+# source session, harness, command, model and recorded workspace, and
 # the harness command runs in that recorded workspace, so the entry reads as
 # that session's own models read. The envelope names the requesting session.
 # Sessions whose recorded route fields contain the separator are excluded and
-# named in the limits. The read changes no seat identity, route or pending work.
+# named in the limits.
 type Discovered is Data:
-  DRoute{session: String, harness: String, command: String, model: String, effort: String, workspace: String}
+  DRoute{session: String, harness: String, command: String, model: String, workspace: String}
 
 def models_all_command_sql() -> String:
   "CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') WHEN 19 THEN coalesce(json_extract(endpoint,'$[14]'),'') ELSE '' END ELSE '' END"
 
 def models_all_routes_sql() -> String:
-  "SELECT row FROM (SELECT id || '|' || harness || '|' || " ++ models_all_command_sql() ++ " || '|' || coalesce(model,'') || '|' || coalesce(effort,'') || '|' || coalesce(workspace,'') AS row, harness, " ++ models_all_command_sql() ++ " AS command, coalesce(model,'') AS model, coalesce(effort,'') AS effort, coalesce(workspace,'') AS cwd FROM sessions WHERE harness <> '') WHERE harness NOT LIKE '%|%' AND command NOT LIKE '%|%' AND model NOT LIKE '%|%' AND effort NOT LIKE '%|%' AND cwd NOT LIKE '%|%' ORDER BY row;"
+  "SELECT row FROM (SELECT id || '|' || harness || '|' || " ++ models_all_command_sql() ++ " || '|' || coalesce(model,'') || '|' || coalesce(workspace,'') AS row, harness, " ++ models_all_command_sql() ++ " AS command, coalesce(model,'') AS model, coalesce(workspace,'') AS cwd FROM sessions WHERE harness <> '') WHERE harness NOT LIKE '%|%' AND command NOT LIKE '%|%' AND model NOT LIKE '%|%' AND cwd NOT LIKE '%|%' ORDER BY row;"
 
 def split_route_parts(parts: List<&2,String>) -> Maybe<&2,Discovered>:
   match parts:
-    case source <> harness <> command <> model <> effort <> workspace <> Nil{}: Some{DRoute{Tx.trim_nl(source),Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(model),Tx.trim_nl(effort),Tx.trim_nl(workspace)}}
+    case source <> harness <> command <> model <> workspace <> Nil{}: Some{DRoute{Tx.trim_nl(source),Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(model),Tx.trim_nl(workspace)}}
     case other: None{}
 
 def split_route(+line: String) -> Maybe<&2,Discovered>:
@@ -452,25 +449,9 @@ def models_all_routes(lines: List<String>) -> List<&2,Discovered>:
     case Nil{}: Nil{}
     case line <> rest: models_all_cons_route(split_route(line),models_all_routes(rest))
 
-def models_route_answer(+db: String, +source: String, +harness: String, +command: String, +model: String, +effort: String, +cwd: String) -> IO(String):
-  do IO<String>:
-    +argv : String <- IO.pure(String,models_argv(harness,model))
-    args : List<String> <- IO.pure(List<String>,models_args(harness,command,model))
-    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(args),Bool.pick(String,String.is_empty(cwd),".",cwd))
-    answer : String <- models_result(db,source,harness,command,model,effort,cwd,argv,run)
-    IO.pure(String,answer)
-
-def models_route_guarded(+db: String, +source: String, +harness: String, +command: String, +model: String, +effort: String, +cwd: String) -> IO(String):
-  do IO<String>:
-    +argv : String <- IO.pure(String,models_argv(harness,model))
-    answer : String <- Bool.pick(IO(String),models_supported(harness),
-      Bool.pick(IO(String),String.is_empty(command),IO.pure(String,models_unknown(source,harness,command,model,cwd,argv,"noRecordedHarnessCommand")),models_route_answer(db,source,harness,command,model,effort,cwd)),
-      IO.pure(String,models_unknown(source,harness,command,model,cwd,argv,"unsupportedHarness")))
-    IO.pure(String,answer)
-
 def models_all_entry(db: String, route: Discovered) -> IO(String):
   match route:
-    case DRoute{session,harness,command,model,effort,workspace}: models_route_guarded(db,session,harness,command,model,effort,workspace)
+    case DRoute{session,harness,command,model,workspace}: models_route_guarded(db,session,harness,command,model,workspace)
 
 def models_all_answers(+db: String, routes: List<&2,Discovered>) -> IO(String):
   match routes:
@@ -481,7 +462,7 @@ def models_all_answers(+db: String, routes: List<&2,Discovered>) -> IO(String):
       IO.pure(String,Bool.pick(String,String.is_empty(tail),answer,answer ++ "," ++ tail))
 
 def models_all_limits() -> String:
-  "Entries are one observation per recorded session with a harness, each carrying its source session and recorded workspace. A harness without a recorded session has no entry in this read. Sessions whose recorded route fields contain '|' are excluded. Account-wide usable models remain unknown. Muse entries show one recorded model's profile with its recorded effort; model existence stays unknown. Quota, budget, freshness and probe outcomes do not gate this read."
+  "Entries are one observation per recorded session with a harness, each carrying its source session and recorded workspace. A harness without a recorded session has no entry in this read. Sessions whose recorded route fields contain '|' are excluded. Each catalog reflects the model discovery interface provided by that client."
 
 def models_all_envelope(+session: String, +routes: String) -> String:
   "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"reported\",\"session\":" ++ J.string_literal(session) ++ ",\"scope\":\"recorded-harnesses\",\"routes\":[" ++ routes ++ "],\"limits\":" ++ J.string_literal(models_all_limits()) ++ "}"
@@ -604,7 +585,7 @@ def models(+db: String, +session: String) -> IO(Unit):
     present : Unit <- usage_registered(found)
     +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    +effort : String <- IO.try(String,DB.Sql.read(db,"SELECT effort FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +cwd : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +command : String <- IO.try(String,DB.Sql.read(db,harness_command_sql(session)))
-    models_command(db,session,Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(model),Tx.trim_nl(effort),Tx.trim_nl(cwd))
+    answer : String <- models_route_guarded(db,session,Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(model),Tx.trim_nl(cwd))
+    models_print(db,answer)

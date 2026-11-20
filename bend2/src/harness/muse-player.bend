@@ -33,9 +33,6 @@ def hook_event(+command: String) -> J.Json:
 def hook_config(+command: String) -> String:
   "hooks=" ++ J.json_text(J.Jobj{J.Jpair{"PostToolUse", hook_event(command), J.Jpair{"Stop", hook_event(command), J.Jnil{}}}})
 
-def models_args(cmd: String, model: String) -> List<String>:
-  [cmd,"model-profile","show",model]
-
 def arguments(cmd: String, +model: String, effort: String, task: String) -> List<String>:
   List.append(&1,String,[cmd,"exec","--json","--prompt-file",task,"--model",model,"--reasoning-effort",effort,"--yolo"],Bool.pick(List<String>,String.eq(model,"muse-spark-1.3-contributor"),["--contributor-mode","on"],Nil{}))
 

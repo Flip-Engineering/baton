@@ -211,7 +211,7 @@ def archive_notices(archive):
     return notices
 
 
-def stage_adapters(payload, helper_binaries=None):
+def stage_adapters(payload, helper_binaries=None, system=None):
     directory = payload / 'libexec/baton2'
     directory.mkdir(parents=True)
     for harness in ('codex', 'omp', 'mcp'):
@@ -246,6 +246,9 @@ def stage_adapters(payload, helper_binaries=None):
     (directory / 'usage-read').chmod(0o755)
     shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', directory / 'task-start.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/dsh-worker.mjs', directory / 'dsh-worker.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/harness-clients.py', directory / 'harness-clients.py')
+    if (system or platform.system()) == 'Linux':
+        shutil.copytree(ROOT / 'bend2/deploy/linux', payload / 'share/baton2/systemd/user')
     shutil.copyfile(ROOT / 'bend2/scripts/dsh-baton-hooks.mjs', directory / 'dsh-baton-hooks.mjs')
     shutil.copytree(ROOT / 'bend2/ui/orchestra', directory / 'ui')
     shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
@@ -843,7 +846,7 @@ def package(args):
         records = stage_receiver_binaries(payload, specs, built, c_hashes)
         closures = stage_source_closures(payload, args)
         require_manifest_closures(specs, closures)
-        stage_adapters(payload, helper_binaries)
+        stage_adapters(payload, helper_binaries, system=target_system)
         repl_compiler = stage_repl(payload, args)
         selected_context = [stage_selected_context_payload(payload), stage_runtime_context_module(payload)]
         selected_context.extend(stage_clang_context_modules(payload, args.context_clang_package))
