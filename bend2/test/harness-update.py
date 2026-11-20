@@ -49,7 +49,7 @@ elif args == ['update'] or os.environ.get('MUSE_LAUNCHER_INSTALL') == '1':
         sys.exit(17)
 elif args == ['debug', 'models']:
     print(json.dumps({'models': [{'slug': 'model-' + VERSION}]}))
-elif args[0] == 'exec':
+elif args[:3] == ['-c', 'forced_login_method="chatgpt"', 'exec']:
     sys.stdin.read()
     print(json.dumps({'type': 'thread.started', 'thread_id': 'native-fixture'}), flush=True)
     print(json.dumps({'type': 'item.completed', 'item': {
@@ -126,7 +126,8 @@ class HarnessUpdate(unittest.TestCase):
         endpoint = [str(EXE), str(self.db), 'receive', 'worker', str(command),
                     'fixture-model', 'low', str(self.root), str(self.root / 'receiver.log')]
         with sqlite3.connect(self.db) as db:
-            db.execute("UPDATE sessions SET parent='root', workspace=?, endpoint=? WHERE id='worker'",
+            db.execute("UPDATE sessions SET parent='root', model='fixture-model', effort='low', "
+                       "workspace=?, endpoint=? WHERE id='worker'",
                        (str(self.root), json.dumps(endpoint)))
 
     def records(self, harness):
