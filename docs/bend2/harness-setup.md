@@ -28,12 +28,13 @@ account. Use the installed Baton link at `~/.local/bin/baton` and the absolute
 path of the Orchestra database receiving the scheduled check reports.
 
 ```sh
-install -d "$HOME/.config/systemd/user"
-install -m 0644 "$BATON2_PREFIX"/share/baton2/systemd/user/baton-harness-update@.* \
-  "$HOME/.config/systemd/user/"
+unit_dir="${XDG_DATA_HOME:-$HOME/.local/share}/systemd/user"
+timer=$(systemd-escape --path --template=baton-harness-update@.timer "$BATON2_DATABASE")
+install -d "$unit_dir/timers.target.wants"
+install -m 0644 "$BATON2_PREFIX"/share/baton2/systemd/user/baton-harness-update@.* "$unit_dir/"
+ln -sfn ../baton-harness-update@.timer "$unit_dir/timers.target.wants/$timer"
 systemctl --user daemon-reload
-systemctl --user enable --now "$(systemd-escape --path \
-  --template=baton-harness-update@.timer "$BATON2_DATABASE")"
+systemctl --user start "$timer"
 ```
 
 Run `baton DATABASE harness-update` for the same sweep from the command line.
