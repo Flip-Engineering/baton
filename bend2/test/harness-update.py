@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 args = sys.argv[1:]
@@ -51,6 +52,10 @@ elif args in (['debug', 'models'], ['models', '--json']):
     print(json.dumps({'models': [{'slug': 'model-' + VERSION}]}))
 elif args[:3] == ['-c', 'forced_login_method="chatgpt"', 'exec']:
     sys.stdin.read()
+    finished = subprocess.run([os.environ['BATON_COORDINATOR'], os.environ['BATON_DATABASE'],
+                               'as', os.environ['BATON_SESSION'], 'completion-request',
+                               '--text', 'Fixture completed.'], text=True, capture_output=True)
+    assert finished.returncode == 0, finished.stdout + finished.stderr
     print(json.dumps({'type': 'thread.started', 'thread_id': 'native-fixture'}), flush=True)
     print(json.dumps({'type': 'item.completed', 'item': {
         'id': 'answer', 'type': 'agent_message', 'text': 'launched ' + VERSION}}), flush=True)
@@ -154,7 +159,10 @@ class HarnessUpdate(unittest.TestCase):
         log = self.root / 'native.log'
         self.call('turn', 'worker', 'attempt-update', old, 'fixture-model', 'low',
                   self.root, task, log, 'native-fixture')
-        self.assertIn('launched 2.0.0', log.read_text())
+        with sqlite3.connect(self.db) as db:
+            report = db.execute("SELECT body FROM messages WHERE id='attempt-update' "
+                                "AND sender='worker' AND kind='report'").fetchone()
+        self.assertEqual(report, ('launched 2.0.0',))
         self.assertEqual(self.records('codex')[0]['result'], 'updated')
 
     def test_scheduled_check_keeps_a_running_client_and_reuses_fresh_observation(self):
