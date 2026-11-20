@@ -1345,6 +1345,26 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
+    def test_status_reports_absent_when_the_owner_exits_before_its_reply(self):
+        # Account target v9 and the receive memory target v4 both observed an
+        # idle owner's status connection reset after its drain acknowledgement.
+        _, _, _, record, address = self.election_paths()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(address))
+            listener.listen()
+            info = self.db.stat()
+            record.write_bytes(struct.pack('=QQQQii104s', 1, 1, info.st_dev,
+                                           info.st_ino, os.getpid(), 0,
+                                           str(address).encode()))
+            child = self.spawn('owner-status', self.db)
+            connection, _ = listener.accept()
+            with connection:
+                address.unlink()
+                record.unlink()
+            listener.close()
+        output = self.wait_run(child)
+        self.assertEqual(json.loads(output), {'state': 'absent'})
+
     def owner_incarnation(self):
         _, _, _, record, _ = self.election_paths()
         return struct.unpack_from('=QQ', record.read_bytes(), 0)
