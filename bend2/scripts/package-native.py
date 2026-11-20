@@ -224,6 +224,7 @@ def stage_adapters(payload, helper_binaries=None):
     shutil.copyfile(ROOT / 'bend2/scripts/no-agent-summary.js', directory / 'no-agent-summary.js')
     shutil.copyfile(ROOT / 'bend2/scripts/agent-summary-check.mjs', directory / 'agent-summary-check.mjs')
     shutil.copytree(ROOT / 'bend2/harness/agy-plugin', directory / 'agy-plugin')
+    shutil.copytree(ROOT / 'bend2/harness/baton-bees', directory / 'baton-bees')
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
     shutil.copytree(ROOT / 'bend2/harness/git-series-bin', directory / 'git-series-bin')
     shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs', directory / 'native-history.mjs')

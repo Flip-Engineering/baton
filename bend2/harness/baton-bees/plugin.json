@@ -1,0 +1,19 @@
+{
+  "name": "baton-bees",
+  "version": "0.1.0",
+  "description": "Self-organizing bag-of-bees orchestration plugin for Baton, with a pi-intercom-compatible durable bus and Baton mutator/sandbox integration.",
+  "entry": "./index.mjs",
+  "capabilities": [
+    "bag.plan",
+    "bag.bus",
+    "bag.mutator"
+  ],
+  "requires": {
+    "baton": ">=2.0.0",
+    "node": ">=22.15.0"
+  },
+  "config": {
+    "bus_dir_env": "BATON_BEES_BUS",
+    "default_roles": 5
+  }
+}
