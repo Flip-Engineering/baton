@@ -147,6 +147,8 @@ class HarnessUpdate(unittest.TestCase):
     def test_new_native_attempt_uses_the_updated_client(self):
         old = self.install_codex()
         self.route(old)
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE sessions SET endpoint=? WHERE id='root'", (json.dumps(['/bin/true']),))
         task = self.root / 'input'
         task.write_text('Run the fixture.\n')
         log = self.root / 'native.log'
