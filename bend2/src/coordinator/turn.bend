@@ -1673,7 +1673,7 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +kind : String <- IO.pure(String,Tx.trim_nl(harness))
       +selection : HarnessUpdate.Selection <- HarnessUpdate.check(db,player,kind,recorded_cmd,HarnessUpdate.supported(kind))
       +cmd : String <- IO.pure(String,HarnessUpdate.command(selection))
-      +update_env : List<String> <- IO.pure(List<String>,HarnessUpdate.environment(selection,kind))
+      update_env : List<String> <- IO.pure(List<String>,HarnessUpdate.environment(selection,kind))
       retained_identity(executable, identity => do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
         +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
         +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
