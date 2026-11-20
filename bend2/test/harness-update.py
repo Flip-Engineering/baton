@@ -93,10 +93,14 @@ class HarnessUpdate(unittest.TestCase):
         self.addCleanup(self.shutdown)
 
     def shutdown(self):
-        result = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
-                                cwd=self.root, env=self.env, text=True,
-                                capture_output=True, timeout=60)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        def owner(action):
+            return subprocess.run([str(EXE), action, str(self.db)], cwd=self.root,
+                                  env=self.env, text=True, capture_output=True, timeout=60)
+
+        drained = owner('--instance-shutdown')
+        exited = owner('--instance-wait')
+        self.assertEqual(exited.returncode, 0, drained.stderr + exited.stderr)
+        self.assertEqual(json.loads(exited.stdout)['state'], 'absent', drained.stderr)
 
     def call(self, *args):
         result = subprocess.run([str(EXE), str(self.db), *map(str, args)],
