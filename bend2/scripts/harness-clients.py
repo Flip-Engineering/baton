@@ -72,7 +72,7 @@ def preserve(paths, directory):
         elif path.is_dir():
             shutil.copytree(path, copy, symlinks=True, copy_function=os.link)
         elif path.exists():
-            if path.name.startswith('.muse-'):
+            if path.name in ('auto-update-version', 'selection-history', '.muse-release-info.json', '.muse-version'):
                 shutil.copy2(path, copy)
             else:
                 os.link(path, copy)
@@ -105,7 +105,11 @@ def update(harness, alias, home, backup, record):
     paths = []
     if harness == 'codex':
         current = home / '.codex/packages/standalone/current'
-        paths = [current.resolve(), current, alias] if current.is_symlink() else [target]
+        if current.is_symlink():
+            paths = [current.resolve(), current, alias, current.parent / 'auto-update-version',
+                     current.parent / 'selection-history']
+        else:
+            paths = [target]
     elif harness == 'claude-code':
         paths = [target, alias] if alias.is_symlink() else [target]
     elif harness == 'muse':

@@ -33,6 +33,7 @@ elif args == ['update'] or os.environ.get('MUSE_LAUNCHER_INSTALL') == '1':
         current.symlink_to(current.parent / 'releases/2.0.0')
         command.unlink()
         command.symlink_to(current / 'bin/codex')
+        (current.parent / 'auto-update-version').write_text('2.0.0\n')
     elif HARNESS == 'claude-code':
         command.unlink()
         command.symlink_to(home / '.local/share/claude/versions/2.0.0')
@@ -84,6 +85,13 @@ class HarnessUpdate(unittest.TestCase):
                                    'BATON_COORDINATOR', 'BATON_ATTEMPT_DIRECTORY')}
         self.env['HOME'] = str(self.home)
         self.call('attach', 'root', 'codex', 'native-root', '')
+        self.addCleanup(self.shutdown)
+
+    def shutdown(self):
+        result = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                cwd=self.root, env=self.env, text=True,
+                                capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def call(self, *args):
         result = subprocess.run([str(EXE), str(self.db), *map(str, args)],
@@ -103,6 +111,7 @@ class HarnessUpdate(unittest.TestCase):
         self.write_client(old, 'codex', '1.0.0')
         self.write_client(package / 'releases/2.0.0/bin/codex', 'codex', '2.0.0')
         (package / 'current').symlink_to(old.parent)
+        (package / 'auto-update-version').write_text('1.0.0\n')
         (self.bin / 'codex').symlink_to(package / 'current/codex')
         return old
 
@@ -171,6 +180,7 @@ class HarnessUpdate(unittest.TestCase):
             answer = json.loads(self.call('models', 'worker'))
             self.assertEqual(answer['response']['models'], [{'slug': 'model-1.0.0'}])
         self.assertEqual((self.bin / 'codex').resolve(), old)
+        self.assertEqual((old.parents[2] / 'auto-update-version').read_text(), '1.0.0\n')
         record, = self.records('codex')
         self.assertEqual(record['result'], 'failed')
         self.assertEqual(record['newVersion'], '1.0.0')
