@@ -2,10 +2,12 @@
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -22,27 +24,47 @@ def executable(path):
     return path.is_file() and os.access(path, os.X_OK)
 
 
-def installation(home, harness, command):
-    """Resolve the standard install, including paths canonicalized by old receivers."""
-    alias = home / '.local/bin' / NAMES[harness]
-    if not executable(alias):
+def installations(home, harness):
+    paths = [home / '.local/bin' / NAMES[harness]]
+    if harness == 'omp':
+        clients = home / '.local/share/baton-native-clients'
+        paths.extend(path for path in sorted(clients.glob('omp-*-linux-*/omp'))
+                     if re.fullmatch(r'omp-\d+\.\d+\.\d+-linux-\w+', path.parent.name))
+    return [path for path in paths if executable(path)]
+
+
+def omp_wrapper_target(home, command):
+    # Read the installed service wrapper's explicit exec target.
+    if command != home / '.local/libexec/omp-batonci-env' or not executable(command):
         return None
-    if not command:
-        return alias
+    for line in command.read_text().splitlines():
+        words = shlex.split(line, comments=True)
+        if len(words) == 3 and words[0] == 'exec' and words[2] == '$@':
+            return Path(words[1])
+    return None
+
+
+def installation(home, harness, command, paths):
+    """Resolve a managed install and the command the caller should run."""
     given = Path(shutil.which(command) or command)
     if not given.is_absolute():
-        return None
+        return None, command
     given = given.parent.resolve() / given.name
-    if given == alias or (given.exists() and given.samefile(alias)):
-        return alias
-    if harness == 'codex':
+    wrapper_target = omp_wrapper_target(home, given) if harness == 'omp' else None
+    for path in paths:
+        if wrapper_target == path:
+            return path, command
+        if given == path or (given.exists() and given.samefile(path)):
+            return path, str(path)
+    if paths and harness == 'codex':
         releases = (home / '.codex/packages/standalone/releases').resolve()
         release = given.parent.parent if given.parent.name == 'bin' else given.parent
         if given.name == 'codex' and release.parent == releases:
-            return alias
-    if harness == 'claude-code' and given.parent == (home / '.local/share/claude/versions').resolve():
-        return alias
-    return None
+            return paths[0], str(paths[0])
+    if paths and harness == 'claude-code':
+        if given.parent == (home / '.local/share/claude/versions').resolve():
+            return paths[0], str(paths[0])
+    return None, command
 
 
 def run(argv, home, env):
@@ -143,7 +165,8 @@ def update(harness, alias, home, backup, record):
 
 
 def refresh(home, harness, alias):
-    records = home / '.local/state/baton2/harness-updates' / harness
+    install_id = hashlib.sha256(os.fsencode(alias)).hexdigest()
+    records = home / '.local/state/baton2/harness-updates' / harness / install_id
     records.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (records / 'lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -155,7 +178,7 @@ def refresh(home, harness, alias):
         identity = f'{started:020d}-{uuid.uuid4().hex}'
         path = records / (identity + '.json')
         record = {'id': identity, 'harness': harness, 'time': started // 1_000_000,
-                  'oldVersion': None, 'newVersion': None, 'result': 'failed'}
+                  'installation': str(alias), 'oldVersion': None, 'newVersion': None, 'result': 'failed'}
         try:
             with tempfile.TemporaryDirectory(prefix='.baton-update-', dir=alias.parent) as staging:
                 update(harness, alias, home, Path(staging), record)
@@ -167,17 +190,25 @@ def refresh(home, harness, alias):
         return (path, record)
 
 
+def print_receipt(home, harness, alias):
+    path, record = refresh(home, harness, alias)
+    fields = ('id', 'harness', 'installation', 'time', 'oldVersion', 'newVersion', 'result')
+    print(json.dumps({**{name: record[name] for name in fields},
+                      'log': str(path), 'error': record.get('error')}))
+
+
 def check(harness, command):
     home = Path.home().resolve()
-    alias = installation(home, harness, command) if sys.platform == 'linux' else None
-    if alias is None:
-        print(command)
+    paths = installations(home, harness) if sys.platform == 'linux' else []
+    if command:
+        alias, selected = installation(home, harness, command, paths)
+        print(selected)
+        if alias:
+            print_receipt(home, harness, alias)
         return
-    path, record = refresh(home, harness, alias)
-    print(alias)
-    print(json.dumps({'id': record['id'], 'harness': harness, 'oldVersion': record['oldVersion'],
-                      'newVersion': record['newVersion'], 'result': record['result'],
-                      'log': str(path), 'error': record.get('error')}))
+    print()
+    for alias in paths:
+        print_receipt(home, harness, alias)
 
 
 def send_frame(process, frame):

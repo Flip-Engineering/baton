@@ -47,7 +47,7 @@ elif args == ['update'] or os.environ.get('MUSE_LAUNCHER_INSTALL') == '1':
     if (state / (HARNESS + '-fail')).exists():
         print('vendor error', file=sys.stderr)
         sys.exit(17)
-elif args == ['debug', 'models']:
+elif args in (['debug', 'models'], ['models', '--json']):
     print(json.dumps({'models': [{'slug': 'model-' + VERSION}]}))
 elif args[:3] == ['-c', 'forced_login_method="chatgpt"', 'exec']:
     sys.stdin.read()
@@ -121,8 +121,8 @@ class HarnessUpdate(unittest.TestCase):
         self.write_client(self.state / 'omp-next', 'omp', '2.0.0')
         return command
 
-    def route(self, command):
-        self.call('attach', 'worker', 'codex', 'native-fixture', '')
+    def route(self, command, harness='codex'):
+        self.call('attach', 'worker', harness, 'native-fixture', '')
         endpoint = [str(EXE), str(self.db), 'receive', 'worker', str(command),
                     'fixture-model', 'low', str(self.root), str(self.root / 'receiver.log')]
         with sqlite3.connect(self.db) as db:
@@ -132,7 +132,7 @@ class HarnessUpdate(unittest.TestCase):
 
     def records(self, harness):
         directory = self.home / '.local/state/baton2/harness-updates' / harness
-        return [json.loads(path.read_text()) for path in sorted(directory.glob('*.json'))]
+        return [json.loads(path.read_text()) for path in sorted(directory.rglob('*.json'))]
 
     def test_models_updates_a_legacy_path_and_reads_the_new_client(self):
         old = self.install_codex()
@@ -194,6 +194,25 @@ class HarnessUpdate(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn(record['id'], body)
         self.assertIn('vendor updater exited 17', body)
+
+    def test_legacy_omp_wrapper_and_standard_install_both_update(self):
+        default = self.install_omp()
+        legacy = self.home / '.local/share/baton-native-clients/omp-1.0.0-linux-x64/omp'
+        self.write_client(legacy, 'omp', '1.0.0')
+        wrapper = self.home / '.local/libexec/omp-batonci-env'
+        wrapper.parent.mkdir()
+        wrapper.write_text('#!/bin/sh\nexport OMP_WRAPPER_PRESENT=1\n'
+                           f'exec "{legacy}" "$@"\n')
+        wrapper.chmod(0o755)
+        self.route(wrapper, harness='omp')
+        answer = json.loads(self.call('models', 'worker'))
+        self.assertEqual(answer['command'], str(wrapper))
+        self.assertEqual(answer['response']['models'], [{'slug': 'model-2.0.0'}])
+        self.assertEqual(subprocess.check_output([default, '--version'], text=True).strip(),
+                         'omp 1.0.0')
+        receipts = [json.loads(line) for line in self.call('harness-update').splitlines()]
+        self.assertEqual({(r['installation'], r['newVersion']) for r in receipts},
+                         {(str(default), '2.0.0'), (str(legacy), '2.0.0')})
 
     def test_scheduled_failure_reaches_the_root(self):
         command = self.install_omp()

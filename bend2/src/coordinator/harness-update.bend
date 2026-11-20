@@ -55,13 +55,20 @@ def report(+db: String, session: String, receipt: String) -> IO(Unit):
     ids : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,report_sql(session,receipt))
     report_result(db,ids)
 
+def report_receipts(+db: String, +session: String, receipts: List<String>) -> IO(Unit):
+  match receipts:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case receipt <> rest: do IO<Unit>:
+      notified : Unit <- report(db,session,receipt)
+      report_receipts(db,session,rest)
+
 def checked_lines(+db: String, session: String, lines: List<String>, fallback: String) -> IO(Selection):
   match lines:
-    case selected <> Nil{}: IO.pure(Selection,Selected{selected,""})
-    case selected <> +receipt <> Nil{}: do IO<Selection>:
-      notified : Unit <- report(db,session,receipt)
-      IO.pure(Selection,Selected{selected,receipt})
-    case other: IO.pure(Selection,Selected{fallback,""})
+    case selected <> receipts: do IO<Selection>:
+      +recorded : String <- IO.pure(String,Tx.join("\n",receipts))
+      notified : Unit <- report_receipts(db,session,Tx.split_lines(recorded))
+      IO.pure(Selection,Selected{selected,recorded})
+    case Nil{}: IO.pure(Selection,Selected{fallback,""})
 
 def checked_result(db: String, session: String, fallback: String, result: T.RunRes) -> IO(Selection):
   match result:

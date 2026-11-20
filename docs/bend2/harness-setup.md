@@ -10,7 +10,11 @@ Use the service account's installs at `~/.local/bin/codex`,
 `~/.local/bin/claude`, `~/.local/bin/omp` and `~/.local/bin/muse` as the managed
 receiver commands. Existing receiver records that contain a version path from
 the Codex standalone or Claude Code native installation also use the current
-installation. Other receiver paths continue to select their recorded executable.
+installation. Baton updates OMP standalone copies under
+`~/.local/share/baton-native-clients/omp-VERSION-linux-ARCH/` in place. The
+service account's `omp-batonci-env` wrapper keeps its environment bindings and
+runs the updated copy. Other receiver paths continue to select their recorded
+executable.
 
 Before each managed attempt or model discovery, Baton checks the installation.
 It reuses the most recent update result for one hour. It runs `codex update`,
