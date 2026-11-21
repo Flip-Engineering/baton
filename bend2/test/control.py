@@ -430,16 +430,33 @@ class Control(unittest.TestCase):
             connection.close()
         self.server.close()
         configured = json.loads((self.directory / 'fixture.json').read_text())['exe']
-        owner = f'{pathlib.Path(configured).resolve()} --instance-owner {self.db.resolve()}'
+        owner_args = f' --instance-owner {self.db.resolve()}'
+        owner = str(pathlib.Path(configured).resolve()) + owner_args
+
+        def is_fixture_owner(pid, command):
+            if command == owner:
+                return True
+            if sys.platform != 'linux' or not command.endswith(owner_args):
+                return False
+            try:
+                return pathlib.Path(f'/proc/{pid}/exe').samefile(configured)
+            except FileNotFoundError:
+                return False
+
         def settled_processes():
             rows = self.process_rows()
-            if [row.split(None, 3)[3] for row in rows] in ([], [owner]):
+            if not rows:
                 return {'rows': rows}
+            if len(rows) == 1:
+                pid, _, _, command = rows[0].split(None, 3)
+                if is_fixture_owner(pid, command):
+                    return {'rows': rows}
+
         settled = self.eventually(settled_processes)['rows']
         if settled:
             selected = receive_fixture.Receive.selected_process(self, int(settled[0].split()[0]))
             self.assertIsNotNone(selected)
-            self.assertEqual(selected['command'], owner)
+            self.assertTrue(is_fixture_owner(selected['pid'], selected['command']), selected)
             argv = [configured, str(self.db), 'owner-status']
             result = subprocess.run(argv, env=self.environment, capture_output=True, text=True)
             current = receive_fixture.Receive.selected_process(self, selected['pid'])

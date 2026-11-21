@@ -169,6 +169,8 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.current('omp-leaf', 'omp'), 'omp-key')
         reports = self.query("SELECT recipient,body FROM messages WHERE sender='omp-leaf' AND kind='report'")
         self.assertTrue(any(recipient == 'root' and 'organization API account refused' in body
+                            and 'Provider: openai. Account: omp-key.' in body
+                            and '402 Insufficient Balance' in body
                             for recipient, body in reports), reports)
         self.assertEqual(self.query("SELECT body FROM messages WHERE id LIKE '%:account-exhausted'"), [])
         self.assertEqual(self.query("SELECT body FROM messages WHERE id='task-1'"), [('original task',)])

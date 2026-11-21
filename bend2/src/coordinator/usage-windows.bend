@@ -377,7 +377,7 @@ def hold_sql(+seat: String, +provider: String, +account: String, +model: String)
 
 def unknown_sql(+seat: String, +provider: String, +account: String) -> String:
   +latest = latest_read_sql(provider,account)
-  announce_sql("'usage-read:'||" ++ unknown_episode_sql(provider,account) ++ "||':unreadable:'||" ++ C.q(seat),C.q(seat),"'usage read unreadable: seat " ++ C.escaped(seat) ++ " on " ++ C.escaped(scope_text(provider,account)) ++ ". ' || (SELECT source FROM usage_reads WHERE id=" ++ latest ++ ") || ': ' || (SELECT reason FROM usage_reads WHERE id=" ++ latest ++ ") || '. The hold state is unknown; Baton does not hold the seat on an unknown read and keeps any hold an earlier readable read recorded.'","(SELECT state FROM usage_reads WHERE id=" ++ latest ++ ")='unreadable'")
+  announce_sql("'usage-read:'||" ++ unknown_episode_sql(provider,account) ++ "||':unreadable:'||" ++ C.q(seat),C.q(seat),"'usage read unreadable: seat " ++ C.escaped(seat) ++ " on " ++ C.escaped(scope_text(provider,account)) ++ ". ' || (SELECT source FROM usage_reads WHERE id=" ++ latest ++ ") || ': ' || (SELECT reason FROM usage_reads WHERE id=" ++ latest ++ ") || '. The current provider-window state is unknown. The usage read and its reason are retained.'","(SELECT state FROM usage_reads WHERE id=" ++ latest ++ ")='unreadable'")
 
 # The seat's hold announcements without a release, each answered with a release that
 # keeps the hold's recipient. The id prefix lets the read use the unique id index.

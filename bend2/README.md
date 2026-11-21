@@ -904,6 +904,34 @@ count and endpoint repair command. Repeated delivery of the oldest unread
 input keeps the same report; reading that input lets a later failed delivery
 produce a new report.
 
+## Account credential references
+
+Automatic account ordering selects records for the seat's model provider. Codex
+uses OpenAI account records, and Claude Code uses Anthropic account records.
+OMP uses the provider prefix of its recorded model. Current account attribution
+uses that provider as well. An explicit current binding is retained while its
+provider is unrecorded.
+
+Account writes and usage reads use the credential forms defined in
+`src/coordinator/credential-reference.bend`:
+
+| Form | Use |
+|---|---|
+| absolute store directory | Subscription accounts and OMP API-key accounts; OMP usage reads select the model provider's credential from this directory. |
+| `omp-models:BLOCK` | Usage reads resolve the block's `apiKey` in the default OMP `models.yml`. |
+| `omp-auth:PROVIDER` | Usage reads resolve the provider's enabled credential in the default OMP `agent.db`. |
+| `claude-oauth:PATH` | Usage reads resolve the Claude OAuth credential file; an empty path selects the default file. |
+| `file:PATH` | Claude API-key accounts and usage reads resolve the credential file. |
+| `keychain:SERVICE/ACCOUNT` | Claude API-key accounts resolve the named keychain entry. |
+| `codex-home:PATH` | Codex usage reads select the native credential directory; an empty path uses the recorded environment. |
+
+OMP retains the same store-directory reference for native launches and usage
+reads. Kimi and z.ai reads use their provider block in that store's `models.yml`.
+DeepSeek reads use its enabled provider credential in that store's `agent.db`.
+A refused account write names the row and its accepted forms. Provider reads
+retain their response and reset times. An unreadable read records its reason
+and the unknown provider-window state.
+
 ## OMP Associate Conductors and Players
 
 A recruited OMP Player assigned as an Associate Conductor can receive reports
