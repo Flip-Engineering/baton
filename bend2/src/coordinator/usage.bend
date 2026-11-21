@@ -13,6 +13,7 @@ import ../json/canonical.bend as J
 import ../harness/codex-player.bend as Codex
 import ../harness/omp-player.bend as Omp
 import ./harness-update.bend as HarnessUpdate
+import ./harness-catalog.bend as Catalog
 import ../harness/dsh-player.bend as Dsh
 
 # --- the recorded source ----------------------------------------------------
@@ -351,18 +352,12 @@ def usage_with_provider(db: String, session: String, +harness: String, conversat
 # --- the model discovery read ------------------------------------------------
 
 # The catalog comes from the resolved client in the recorded workspace.
-def models_args(+harness: String, command: String, helper: String) -> List<String>:
-  match harness:
-    case "codex": Codex.models_args(command)
-    case "omp": Omp.models_args(command)
-    case other: ["python3",helper,"catalog",other,command]
-
 def models_argv(harness: String) -> String:
   match harness:
     case "codex": lines_array(["debug","models"])
     case "omp": lines_array(["models","--json"])
-    case "muse": lines_array(["serve","--no-session-log"])
-    case "claude-code": lines_array(["-p","--input-format","stream-json","--output-format","stream-json","--verbose","--no-session-persistence","--setting-sources",""])
+    case "muse": lines_array(Catalog.arguments("muse"))
+    case "claude-code": lines_array(Catalog.arguments("claude-code"))
     case other: "[]"
 
 def models_unknown(+session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, reason: String) -> String:
@@ -393,15 +388,24 @@ def models_print(db: String, answer: String) -> IO(Unit):
     observed : String <- IO.try(String,DB.Sql.read(db,"SELECT json_set(" ++ C.q(answer) ++ ",'$.observedAt',CAST(strftime('%s','now') AS INTEGER)*1000);"))
     IO.print(observed)
 
-def models_route_answer(+db: String, +session: String, +harness: String, +recorded: String, +model: String, +cwd: String) -> IO(String):
+def models_cli(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String, args: List<String>) -> IO(String):
   do IO<String>:
-    +argv : String <- IO.pure(String,models_argv(harness))
-    +selected : HarnessUpdate.Selection <- HarnessUpdate.check(db,session,harness,recorded,True{})
-    +command : String <- IO.pure(String,HarnessUpdate.command(selected))
-    helper : String <- HarnessUpdate.script()
-    args : List<String> <- IO.pure(List<String>,models_args(harness,command,helper))
     run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(args),Bool.pick(String,String.is_empty(cwd),".",cwd))
     models_result(db,session,harness,command,model,cwd,argv,run)
+
+def models_run(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, +argv: String) -> IO(String):
+  match harness:
+    case "codex": models_cli(db,session,"codex",command,model,cwd,argv,Codex.models_args(command))
+    case "omp": models_cli(db,session,"omp",command,model,cwd,argv,Omp.models_args(command))
+    case +other: do IO<String>:
+      run : T.RunRes <- Catalog.catalog(db,other,command,Bool.pick(String,String.is_empty(cwd),".",cwd))
+      models_outcome(db,session,other,command,model,cwd,argv,run)
+
+def models_route_answer(+db: String, +session: String, +harness: String, recorded: String, model: String, cwd: String) -> IO(String):
+  do IO<String>:
+    +selected : HarnessUpdate.Selection <- HarnessUpdate.check(db,session,harness,recorded,True{})
+    command : String <- IO.pure(String,HarnessUpdate.command(selected))
+    models_run(db,session,harness,command,model,cwd,models_argv(harness))
 
 def models_route_guarded(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(String):
   +argv = models_argv(harness)

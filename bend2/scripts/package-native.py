@@ -246,7 +246,6 @@ def stage_adapters(payload, helper_binaries=None, system=None):
     (directory / 'usage-read').chmod(0o755)
     shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', directory / 'task-start.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/dsh-worker.mjs', directory / 'dsh-worker.mjs')
-    shutil.copyfile(ROOT / 'bend2/scripts/harness-clients.py', directory / 'harness-clients.py')
     if (system or platform.system()) == 'Linux':
         shutil.copytree(ROOT / 'bend2/deploy/linux', payload / 'share/baton2/systemd/user')
     shutil.copyfile(ROOT / 'bend2/scripts/dsh-baton-hooks.mjs', directory / 'dsh-baton-hooks.mjs')

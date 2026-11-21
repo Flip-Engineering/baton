@@ -289,7 +289,7 @@ class PackageLicenses(unittest.TestCase):
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('check-install.py', 'context-provider.mjs', 'context-project-policy.mjs',
                       'context-query-artifact.mjs', 'context-worktree-capture.mjs',
-                      'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs', 'harness-clients.py',
+                      'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs',
                       'no-agent-summary.js', 'agent-summary-check.mjs',
                       'codex-root-relay.mjs', 'root-channel-config.mjs'))
         for name in names:
