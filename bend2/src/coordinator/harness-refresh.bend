@@ -56,28 +56,28 @@ def version(+harness: String, +command: String, +home: String, +stage: String, p
     P.bind_result(P.Capture,String,P.capture(List.append(&1,String,vendor_env(path,False{}),[command,"--version"]),home,stderr),
       captured => parse_version(harness,command,home,stage,captured)))
 
-def codex_paths(+target: String, +current: String, +alias: String, link: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,List<String>>):
+def codex_paths(+target: String, +current: String, +alias: String, link: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   match link:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<String>>,Done{[target]})
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Done{[target]})
     case Done{link_target}:
       +standalone = Subs.directory_of(current)
-      P.bind_result(String,List<String>,F.Files.realpath(current),release =>
-        IO.pure(Result<&1,&1,U32 & String,List<String>>,Done{[release,current,alias,standalone ++ "/auto-update-version",standalone ++ "/selection-history"]}))
+      P.bind_result(String,List<&2,String>,F.Files.realpath(current),release =>
+        IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Done{[release,current,alias,standalone ++ "/auto-update-version",standalone ++ "/selection-history"]}))
 
-def backup_paths(+harness: String, +home: String, +alias: String, +target: String) -> IO(Result<&1,&1,U32 & String,List<String>>):
+def backup_paths(+harness: String, +home: String, +alias: String, +target: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   match harness:
-    case "codex": do IO<Result<&1,&1,U32 & String,List<String>>>:
+    case "codex": do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
       +current : String = home ++ "/.codex/packages/standalone/current"
       link : Result<&1,&1,U32 & String,String> <- F.Files.readlink(current)
       codex_paths(target,current,alias,link)
     case "claude-code":
-      IO.pure(Result<&1,&1,U32 & String,List<String>>,Done{Bool.pick(List<String>,String.eq(target,alias),[target],[target,alias])})
+      IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Done{Bool.pick(List<&2,String>,String.eq(target,alias),[target],[target,alias])})
     case "muse":
       +parent = Subs.directory_of(target)
       +state = parent ++ "/.muse-version"
-      P.bind_result(String,List<String>,Text.Text.read(state),release =>
-        IO.pure(Result<&1,&1,U32 & String,List<String>>,Done{[parent ++ "/muse-bin-" ++ String.trim(release),parent ++ "/.muse-release-info.json",state]}))
-    case other: IO.pure(Result<&1,&1,U32 & String,List<String>>,Done{Nil{}})
+      P.bind_result(String,List<&2,String>,Text.Text.read(state),release =>
+        IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Done{[parent ++ "/muse-bin-" ++ String.trim(release),parent ++ "/.muse-release-info.json",state]}))
+    case other: IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Done{Nil{}})
 
 # The vendor can rewrite these files in place. Back up their bytes separately.
 def backup_options(file: String) -> List<String>:
@@ -96,7 +96,7 @@ def save_path(+path: String, copy: String, cwd: String, stat: Result<&1,&1,U32 &
       P.run("/usr/bin/cp" <> List.append(&1,String,backup_options(Install.name(path)),["--",path,copy]),cwd)
 
 @unsafe
-def save(paths: List<String>, +stage: String, +index: U32, +home: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def save(paths: List<&2,String>, +stage: String, +index: U32, +home: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match paths:
     case Nil{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case +path <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -125,7 +125,7 @@ def restore_error(+path: String, result: Result<&1,&1,U32 & String,Unit>) -> Str
     case Fail{(code,detail)}: " Rollback of " ++ path ++ " failed: " ++ detail ++ "."
 
 @unsafe
-def restore(paths: List<String>, +stage: String, +index: U32) -> IO(String):
+def restore(paths: List<&2,String>, +stage: String, +index: U32) -> IO(String):
   match paths:
     case Nil{}: IO.pure(String,"")
     case +path <> rest: do IO<String>:
@@ -151,14 +151,14 @@ def verify_update(+harness: String, +alias: String, +command: String, +home: Str
     case other:
       IO.pure(Result<&1,&1,U32 & String,String>,Fail{(1,"vendor updater exited " ++ Bool.pick(String,String.starts_with(status,"exit "),String.drop(status,5n),status))})
 
-def after_verify(+paths: List<String>, +stage: String, +old: String, +status: String, +out: String, +err: String, result: Result<&1,&1,U32 & String,String>) -> IO(Observation):
+def after_verify(+paths: List<&2,String>, +stage: String, +old: String, +status: String, +out: String, +err: String, result: Result<&1,&1,U32 & String,String>) -> IO(Observation):
   match result:
     case Done{new}: IO.pure(Observation,Observed{old,new,status,out,err,""})
     case Fail{(code,detail)}: do IO<Observation>:
       errors : String <- restore(paths,stage,0)
       IO.pure(Observation,Observed{old,old,status,out,err,detail ++ errors})
 
-def after_vendor(+harness: String, +alias: String, +command: String, +home: String, +stage: String, path: String, +old: String, +paths: List<String>, result: Result<&1,&1,U32 & String,P.Capture>) -> IO(Observation):
+def after_vendor(+harness: String, +alias: String, +command: String, +home: String, +stage: String, path: String, +old: String, +paths: List<&2,String>, result: Result<&1,&1,U32 & String,P.Capture>) -> IO(Observation):
   match result:
     case Fail{error}: after_verify(paths,stage,old,"","","",Fail{error})
     case Done{P.Captured{+status,out,err}}: do IO<Observation>:
@@ -177,14 +177,14 @@ def prepare(+harness: String, +alias: String, +target: String, +stage: String, +
         IO.pure(Result<&1,&1,U32 & String,Plan>,Done{Planned{command,stage ++ ":" ++ path}}))
     case other: IO.pure(Result<&1,&1,U32 & String,Plan>,Done{Planned{alias,path}})
 
-def update_prepared(+harness: String, +alias: String, +home: String, +stage: String, +old: String, +paths: List<String>, result: Result<&1,&1,U32 & String,Plan>) -> IO(Observation):
+def update_prepared(+harness: String, +alias: String, +home: String, +stage: String, +old: String, +paths: List<&2,String>, result: Result<&1,&1,U32 & String,Plan>) -> IO(Observation):
   match result:
     case Fail{(code,detail)}: IO.pure(Observation,Observed{old,old,"","","",detail})
     case Done{Planned{+command,+path}}: do IO<Observation>:
       ran : Result<&1,&1,U32 & String,P.Capture> <- P.capture(update_args(harness,command,path),home,stage ++ "/vendor.stderr")
       after_vendor(harness,alias,command,home,stage,path,old,paths,ran)
 
-def update_paths(+harness: String, +alias: String, +home: String, +stage: String, +old: String, +path: String, +target: String, paths: Result<&1,&1,U32 & String,List<String>>) -> IO(Observation):
+def update_paths(+harness: String, +alias: String, +home: String, +stage: String, +old: String, +path: String, +target: String, paths: Result<&1,&1,U32 & String,List<&2,String>>) -> IO(Observation):
   match paths:
     case Fail{(code,detail)}: IO.pure(Observation,Observed{old,old,"","","",detail})
     case Done{+files}: do IO<Observation>:
@@ -198,7 +198,7 @@ def update_started(+harness: String, +alias: String, +home: String, +stage: Stri
     case Done{version}: do IO<Observation>:
       target : Result<&1,&1,U32 & String,String> <- F.Files.realpath(alias)
       +resolved : String = P.value_or(target,alias)
-      paths : Result<&1,&1,U32 & String,List<String>> <- backup_paths(harness,home,alias,resolved)
+      paths : Result<&1,&1,U32 & String,List<&2,String>> <- backup_paths(harness,home,alias,resolved)
       update_paths(harness,alias,home,stage,version,path,resolved,paths)
 
 def update(+harness: String, +alias: String, +home: String, +stage: String) -> IO(Observation):
