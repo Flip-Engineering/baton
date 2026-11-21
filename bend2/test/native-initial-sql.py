@@ -4,8 +4,10 @@
 BATON2_NATIVE_INITIAL_SQL_FIXTURE names the built native-initial-sql-fixture.bend.
 The fixture prints the statements that native-initial-input.bend generates; the
 tests prepare and run them with the SQLite library of this host. The statement
-once nested the coordinator walk of C.report_recipient inside the predecessor
-predicate and failed with "parser stack overflow" on SQLite 3.45.1.
+once expanded the coordinator walk of C.report_recipient inside the predecessor
+statement and failed with "parser stack overflow" on SQLite 3.45.1. The
+recipient is resolved by its own statement first, and the predecessor
+statement carries that recipient as a literal.
 
 Each case seeds a worker whose retained execution exited, whose profile hand-off
 report was sent to its report recipient, and whose owed input is selected. The
@@ -77,7 +79,7 @@ class Seeded(unittest.TestCase):
         return self.db.execute(printed('recipient', WORKER)).fetchone()[0]
 
     def predecessor(self, inputs=('input-1',)):
-        statement = printed('predecessor', WORKER, json.dumps(list(inputs)))
+        statement = printed('predecessor', WORKER, json.dumps(list(inputs)), self.recipient() or '')
         row = self.db.execute(statement).fetchone()
         return bytes.fromhex(row[0]).decode()
 
@@ -89,10 +91,17 @@ class PredecessorStatement(Seeded):
     def test_the_failing_statement_prepares_on_this_library(self):
         self.tree()
         self.retained_execution()
-        statement = printed('predecessor', WORKER, '["input-1"]')
-        self.assertGreater(len(statement), 5000)
+        statement = printed('predecessor', WORKER, '["input-1"]', 'parent')
         self.db.execute('EXPLAIN ' + statement.rstrip().rstrip(';'))
         self.assertEqual(self.db.execute(printed('recipient', WORKER)).fetchone()[0], 'parent')
+
+    def test_the_predecessor_statement_carries_no_coordinator_walk(self):
+        self.tree()
+        self.retained_execution()
+        statement = printed('predecessor', WORKER, '["input-1"]', 'parent')
+        self.assertNotIn('coordinator_path', statement)
+        self.assertNotIn('WITH RECURSIVE', statement)
+        self.assertNotIn('report_to', statement)
 
     def test_fresh_worker_has_no_predecessor(self):
         self.tree()
