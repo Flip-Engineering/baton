@@ -3,7 +3,10 @@
 Set BATON2_COMPILE_QUEUE_BIN to the candidate native queue. Each test uses a private state
 root, a fake compiler that records when it starts, and a state/meminfo override so that
 memory-aware admission is on and memory is plentiful. Requests of different options are
-different history groups; none of them has a recorded peak unless a test measures it first.
+different history groups. Under the retained-peak rules of #1501 an unmeasured request of
+a new group is bounded by the largest recorded peak of its kind, so a test that needs
+waiting requests either starts before any peak is recorded, or removes the retained
+evidence between rounds, or lowers available memory below the retained bound.
 
 * The oldest of several equal-priority waiters starts first when the running claim ends,
   although a newer waiter polls more often than an older one that has backed off.
@@ -19,11 +22,77 @@ different history groups; none of them has a recorded peak unless a test measure
 import fcntl
 import os
 import pathlib
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+
+# Fixture directories whose teardown reported a straggler supervisor (#1520).
+# The directories are mkdtemp creations with no interpreter-shutdown cleanup:
+# they are removed only by an explicit rmtree, so a record of a preserved path
+# stays valid after the test process exits.
+PRESERVED = []
+
+EXIT_CHILD = '''
+import pathlib, subprocess, sys, tempfile
+directory = sys.argv[1]
+sys.path.insert(0, directory)
+import test_compile_queue_equal_priority as fixture
+root = pathlib.Path(tempfile.mkdtemp(prefix="queue-equal-priority-exit-"))
+state = root / "state"
+state.mkdir(mode=0o2770)
+straggler = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)",
+                              str(state)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+try:
+    fixture.teardown_state_directory(state, root, settle_seconds=2.0)
+except AssertionError:
+    print(root)
+    print(straggler.pid)
+    sys.exit(0)
+straggler.kill()
+straggler.wait()
+sys.exit(1)
+'''
+
+
+def state_processes(state):
+    """Every live process whose command line carries this state root."""
+    wanted = str(state).encode()
+    alive = []
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if wanted in (entry / "cmdline").read_bytes():
+                alive.append(entry.name)
+        except OSError:
+            continue
+    return alive
+
+
+def teardown_state_directory(state, root, settle_seconds=15.0):
+    """Remove root once no process of the state root remains (#1520).
+
+    A supervisor can outlive its client: after the result is published it still
+    removes its tickets and claim. Teardown waits a bounded interval for every
+    such process to leave, then removes the fixture directory. A straggler past
+    the bound is an explicit failure naming the surviving processes and the
+    preserved directory, which no later automatic cleanup removes."""
+    deadline = time.monotonic() + settle_seconds
+    while time.monotonic() < deadline:
+        if not state_processes(state):
+            shutil.rmtree(root)
+            return
+        time.sleep(0.05)
+    alive = state_processes(state)
+    PRESERVED.append(str(root))
+    raise AssertionError(
+        "supervisors still hold the fixture state after teardown: %s; "
+        "fixture directory preserved at %s" % (alive, root))
 
 COMPILER = '''#!{python}
 import pathlib, sys, time
@@ -64,9 +133,10 @@ class EqualPriorityTests(unittest.TestCase):
             raise unittest.SkipTest("BATON2_COMPILE_QUEUE_BIN is required")
 
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="queue-equal-priority-")
-        self.addCleanup(self.temporary.cleanup)
-        self.root = pathlib.Path(self.temporary.name)
+        # mkdtemp owns nothing: the directory is removed only by this fixture
+        # (release_all), so a preserved straggler directory also survives
+        # interpreter shutdown (#1520).
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="queue-equal-priority-"))
         self.state = self.root / "state"
         self.state.mkdir(mode=0o2770)
         self.state.chmod(0o2770)
@@ -87,6 +157,11 @@ class EqualPriorityTests(unittest.TestCase):
                 child.wait(timeout=60)
             except subprocess.TimeoutExpired:
                 child.kill()
+                child.wait()
+        teardown_state_directory(self.state, self.root)
+
+    def state_processes(self):
+        return state_processes(self.state)
 
     def until(self, what, test, seconds=60):
         # This deadline detects a broken fixture; it does not bound a compiler.
@@ -177,6 +252,23 @@ class EqualPriorityTests(unittest.TestCase):
                 return True
         self.until("%s sampler released its descriptor" % name, observation_published)
 
+    def clear_retained_peaks(self):
+        """Remove the recorded peaks and finished keys of an earlier round.
+
+        Under #1501 an unmeasured request is bounded by the largest recorded
+        peak of its kind, so retained peaks from an earlier round admit the
+        next round's requests immediately and no waiter ever queues. Each
+        round measures ordering among equal-priority unmeasured requests, so
+        the retained evidence is removed between rounds."""
+        history = self.state / "history"
+        if history.is_dir():
+            for record in history.iterdir():
+                record.unlink()
+        keys = self.state / "keys"
+        if keys.is_dir():
+            for key in keys.iterdir():
+                shutil.rmtree(key, ignore_errors=True)
+
     def test_the_oldest_equal_priority_waiter_starts_first(self):
         for round_number in range(3):
             with self.subTest(round=round_number):
@@ -198,31 +290,55 @@ class EqualPriorityTests(unittest.TestCase):
                 self.holds[blocker].touch()
                 order = self.drain_in_start_order(names)
                 for child in self.children[first:]:
-                    out, err = child.communicate(timeout=60)
+                    out, err = child.communicate(timeout=240)
                     self.assertEqual(child.returncode, 0, out + err)
+                # A supervisor can publish its result long after its compiler
+                # finished under a loaded host; until every process of this
+                # state root is gone a straggler watcher can still write a
+                # retained peak that would admit the next round immediately.
+                self.until("the round settled", lambda: not self.state_processes(),
+                           seconds=120)
                 self.wait_for_sampler(blocker)
                 self.assertEqual(order, names)
+                self.clear_retained_peaks()
 
     def test_an_older_waiter_that_is_not_eligible_does_not_block_an_eligible_one(self):
-        # Measure group m. An unmeasured request then runs; an unmeasured older waiter cannot
-        # start beside it, but a newer edited request of the measured group can.
-        self.request("measure", group="m")
-        self.until("measure started", lambda: "measure" in self.started())
+        # Measure a large group and a small group while memory is plentiful.
+        # Under #1501 an unmeasured request of a new group is bounded by the
+        # largest recorded peak of its kind: with available memory below that
+        # bound the older waiter is ineligible, while a request of the measured
+        # small group is bounded by its own smaller peak and starts beside the
+        # running claim.
+        self.request("large", group="large", mb=512)
+        self.until("large started", lambda: "large" in self.started())
         time.sleep(1.5)
-        self.holds["measure"].touch()
-        self.until("the measurement is recorded",
+        self.holds["large"].touch()
+        self.until("the large measurement is recorded",
                    lambda: (self.state / "history").is_dir() and any((self.state / "history").iterdir()))
-        self.wait_for_sampler("measure")
-        self.request("running", group="r")
+        self.wait_for_sampler("large")
+        self.request("small", group="small", mb=8)
+        self.until("small started", lambda: "small" in self.started())
+        time.sleep(1.5)
+        self.holds["small"].touch()
+        self.until("the small measurement is recorded",
+                   lambda: len(list((self.state / "history").iterdir())) >= 2)
+        self.wait_for_sampler("small")
+        self.state.joinpath("meminfo").write_text(
+            "total_kb=230946084\navailable_kb=131072\n")
+        self.request("running", group="small", mb=8)
         self.until("running has a claim", lambda: self.claim("running") is not None)
         time.sleep(2)
-        self.request("older", group="o")
+        self.request("older", group="fresh", mb=8)
         self.until("older waiting", lambda: "older" in self.waiting())
         time.sleep(1)
-        self.request("newer", group="m")
+        self.request("newer", group="small", mb=8)
         self.until("the newer measured request started beside the running claim",
                    lambda: "newer" in self.started())
         self.assertNotIn("older", self.started())
+        # Restore plentiful memory so the waiting older request is admitted and
+        # the cleanup does not wait on an ineligible waiter.
+        self.state.joinpath("meminfo").write_text(
+            "total_kb=230946084\navailable_kb=155203664\n")
         self.finish(*self.holds)
 
     def test_a_higher_priority_request_still_starts_before_older_waiters(self):
@@ -302,6 +418,48 @@ class EqualPriorityTests(unittest.TestCase):
         ticket.unlink()
         self.until("waits started once the higher ticket was removed", lambda: "waits" in self.started())
         self.finish(*self.holds)
+
+    def test_teardown_reports_and_preserves_when_a_supervisor_straggles(self):
+        # #1520: teardown either completes, or reports a bounded explicit
+        # failure and preserves the fixture directory. A live process whose
+        # command line carries the state root plays the straggler supervisor.
+        straggler = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", str(self.state)])
+        self.addCleanup(lambda: (straggler.kill(), straggler.wait()))
+        with self.assertRaises(AssertionError) as caught:
+            self.release_all()
+        self.assertIn("still hold the fixture state", str(caught.exception))
+        self.assertIn(str(self.root), str(caught.exception))
+        self.assertTrue(self.root.exists(),
+                        "the fixture directory is preserved where the straggler left it")
+
+    def test_a_preserved_fixture_directory_survives_the_test_process(self):
+        # #1520: the fixture directory is a mkdtemp creation removed only by
+        # this fixture, so a straggler's directory also survives the exit of
+        # the test process that reported it. A child process runs the real
+        # teardown with a straggler present and exits; the directory must
+        # still exist afterwards, with the straggler still holding it.
+        child = subprocess.Popen(
+            [sys.executable, "-c", EXIT_CHILD, str(pathlib.Path(__file__).resolve().parent)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        output, _ = child.communicate(timeout=60)
+        self.assertEqual(child.returncode, 0, output)
+        preserved_path, straggler_pid = output.splitlines()[-2:]
+        preserved = pathlib.Path(preserved_path)
+        try:
+            self.assertTrue(preserved.exists(),
+                            "the preserved directory outlived the test process")
+            self.assertTrue(pathlib.Path("/proc", straggler_pid).exists(),
+                            "the straggler still holds the preserved directory")
+        finally:
+            # The straggler was the exiting child's process and has been
+            # reparented; killing it lets the reaper finish the cleanup.
+            os.kill(int(straggler_pid), signal.SIGKILL)
+            try:
+                os.waitpid(int(straggler_pid), 0)
+            except ChildProcessError:
+                pass
+            shutil.rmtree(preserved, ignore_errors=True)
 
 
 if __name__ == "__main__":
