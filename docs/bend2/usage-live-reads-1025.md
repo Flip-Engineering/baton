@@ -71,16 +71,20 @@ A reader has two parts.
    token is reported and never refreshed, because a refresh writes the account's
    credentials. The account's own Claude Code login renews the token, and the
    unreadable report names it. Until then the read is unknown and the seat is not
-   held), `file:PATH` (the first line of `PATH`) and
+   held), `muse-auth:PATH` (the Muse device-login access token
+   `providers.meta.access_token` in the `auth.json` file at `PATH`,
+   `$XDG_CONFIG_HOME/muse/auth.json` when `PATH` is empty), `file:PATH` (the
+   first line of `PATH`) and
    `codex-home:PATH` (Codex app-server
    `account/rateLimits/read` with that `CODEX_HOME`; an empty `PATH` inherits the
    environment). The coordinator chooses the reference: an `accounts` row with
    `api_key` funding passes its `secret_ref`, a Codex subscription account passes
    `codex-home:` with its store, a Claude Code subscription account passes
-   `claude-oauth:` with the store's `.credentials.json`, and otherwise the provider's
-   default applies (`zai` and `kimi-code` use `omp-models:` with the provider name,
-   `deepseek` uses `omp-auth:deepseek`, `codex` uses `codex-home:` and `claude` uses
-   `claude-oauth:`).
+   `claude-oauth:` with the store's `.credentials.json`, a Muse subscription
+   account passes `muse-auth:` with the store's `muse/auth.json`, and otherwise
+   the provider's default applies (`zai` and `kimi-code` use `omp-models:` with
+   the provider name, `deepseek` uses `omp-auth:deepseek`, `codex` uses
+   `codex-home:`, `claude` uses `claude-oauth:` and `muse` uses `muse-auth:`).
 
    An HTTP reader plugs into the helper as four functions: `source()`, `request(key)`
    (one `Http.request` with the credential in its headers), `windows_sql(response)`
@@ -88,8 +92,9 @@ A reader has two parts.
    `read_http` in the helper resolves the credential, makes the request, checks the
    HTTP status and builds the document. The helper answers unreadable for an
    Anthropic API-credit account (no documented endpoint for the remaining API credit
-   balance was found) and for Muse (no authenticated usage endpoint was identified
-   for the configured API key). A transport failure, an HTTP status other than 2xx, or a
+   balance was found) and for a Muse account without a `muse-auth:` device login
+   (a Model API key has no subscription snapshot). A transport failure, an HTTP
+   status other than 2xx, or a
    response the parser cannot read prints `state:"unreadable"` with the exact
    reason. A failed wall-clock read prints `state:"unreadable"` with
    `"observedAt":null` and makes no provider request, because a read without its
@@ -174,4 +179,4 @@ owed input starts a new turn.
 | Kimi Code | `GET https://api.kimi.com/coding/v1/usages`, Bearer key from `omp-models:kimi-code`. `usages.limit_5h` and `usages.limit_7d` with `used_ratio` and `reset_time`. | provider seat |
 | Claude Max | `GET https://api.anthropic.com/api/oauth/usage` with the OAuth access token and `anthropic-beta: oauth-2025-04-20`. `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet` with `utilization` and `resets_at`. | provider seat |
 | Claude API credit | No documented endpoint for the remaining API credit balance was found; unreadable. | helper |
-| Muse | No authenticated usage endpoint was identified for the configured API key; unreadable. | helper |
+| Muse | `POST https://api.meta.ai/muse-code/key` with the device-login access token, `x-api-version: 1.0.0`. `subs_usage.window` and `subs_usage.weekly` with `used_percent`, `window_duration_mins` and `resets_at` (Unix seconds). Omitted while idle; inactive subscriptions report no windows and read unreadable. A Model API key has no subscription snapshot. | provider seat |

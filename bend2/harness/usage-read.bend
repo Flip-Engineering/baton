@@ -11,6 +11,7 @@ import ../src/coordinator/usage-reads.bend as UR
 import ../src/coordinator/zai-quota.bend as Zai
 import ../src/coordinator/deepseek-usage.bend as Deepseek
 import ../src/coordinator/kimi-usage.bend as Kimi
+import ../src/coordinator/muse-usage.bend as Muse
 import ../src/coordinator/claude-usage.bend as Claude
 import ../src/coordinator/codex-rate-limits.bend as Codex
 
@@ -25,8 +26,11 @@ import ../src/coordinator/codex-rate-limits.bend as Codex
 # in $HOME/.omp/agent/models.yml; omp-auth:PROVIDER is the key field of the provider's
 # enabled row in $HOME/.omp/agent/agent.db auth_credentials; claude-oauth:PATH is the
 # Claude Code OAuth access token in PATH, $HOME/.claude/.credentials.json when PATH is
-# empty; file:PATH is the first line of PATH; codex-home:PATH runs codex app-server
-# with CODEX_HOME=PATH, or with the inherited environment when PATH is empty.
+# empty; muse-auth:PATH is the Muse device-login access token
+# (providers.meta.access_token) in the auth.json file at PATH,
+# $XDG_CONFIG_HOME/muse/auth.json when PATH is empty; file:PATH is the first line
+# of PATH; codex-home:PATH runs codex app-server with CODEX_HOME=PATH, or with the
+# inherited environment when PATH is empty.
 #
 # The optional third argument is the codex executable the coordinator recorded for the
 # reading seat. The Codex read runs BATON_CODEX_BIN when it is set, else that recorded
@@ -40,7 +44,8 @@ def scheme_of(+reference: String) -> String:
   Bool.pick(String,Tx.starts_with(reference,"file:"),"file",
   Bool.pick(String,Tx.starts_with(reference,"codex-home:"),"codex-home",
   Bool.pick(String,Tx.starts_with(reference,"omp-auth:"),"omp-auth",
-  Bool.pick(String,Tx.starts_with(reference,"claude-oauth:"),"claude-oauth","")))))
+  Bool.pick(String,Tx.starts_with(reference,"claude-oauth:"),"claude-oauth",
+  Bool.pick(String,Tx.starts_with(reference,"muse-auth:"),"muse-auth",""))))))
 
 def after_colon(text: String) -> String:
   match text:
@@ -145,6 +150,57 @@ def claude_oauth_default(+reference: String) -> IO(Result<&1,&1,String,String>):
 def claude_oauth(+reference: String) -> IO(Result<&1,&1,String,String>):
   Bool.pick(IO(Result<&1,&1,String,String>),String.is_empty(after_colon(reference)),claude_oauth_default(reference),claude_oauth_path(reference,after_colon(reference)))
 
+# muse-auth:PATH: the Muse device-login access token
+# (providers.meta.access_token) of the auth.json file at PATH. An empty PATH
+# reads $XDG_CONFIG_HOME/muse/auth.json, the profile store the coordinator
+# binds, or $HOME/.config/muse/auth.json when XDG_CONFIG_HOME names nothing.
+def muse_auth_sql(+text: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ C.q(text) ++ ") AND json_extract(" ++ C.q(text) ++ ",'$.providers.meta.access_token') IS NOT NULL THEN 'key'||char(31)||json_extract(" ++ C.q(text) ++ ",'$.providers.meta.access_token') ELSE 'none'||char(31) END;"
+
+def muse_auth_key(+reference: String, fields: List<&2,String>) -> Result<&1,&1,String,String>:
+  match fields:
+    case "key" <> +value <> Nil{}: secret_checked(value,reference)
+    case other: Fail{"no Muse device access token (providers.meta.access_token) is recorded at " ++ reference}
+
+def muse_auth_found(+reference: String, found: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,String,String>:
+  match found:
+    case Fail{(code,detail)}: Fail{"cannot read the Muse auth file of " ++ reference ++ ": " ++ U32.show(code)}
+    case Done{+value}: muse_auth_key(reference,String.split(Tx.trim_nl(value),Char.from_u32(31)))
+
+def muse_auth_text(+reference: String, read: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,String,String>):
+  match read:
+    case Fail{(code,detail)}: IO.pure(Result<&1,&1,String,String>,Fail{"cannot read the Muse auth file of " ++ reference ++ ": " ++ U32.show(code)})
+    case Done{+text}: do IO<Result<&1,&1,String,String>>:
+      found : Result<&1,&1,U32 & String,String> <- DB.Sql.query(":memory:",muse_auth_sql(text))
+      IO.pure(Result<&1,&1,String,String>,muse_auth_found(reference,found))
+
+def muse_auth_file(+reference: String, +path: String) -> IO(Result<&1,&1,String,String>):
+  do IO<Result<&1,&1,String,String>>:
+    read : Result<&1,&1,U32 & String,String> <- Text.Text.read(path)
+    muse_auth_text(reference,read)
+
+def muse_auth_home(+reference: String, home: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,String,String>):
+  match home:
+    case Fail{error}: IO.pure(Result<&1,&1,String,String>,Fail{"HOME is not set, so " ++ reference ++ " cannot be resolved"})
+    case Done{+path}: muse_auth_file(reference,Tx.trim_nl(path) ++ "/.config/muse/auth.json")
+
+def muse_auth_xdg(+reference: String, xdg: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,String,String>):
+  match xdg:
+    case Done{+path}: Bool.pick(IO(Result<&1,&1,String,String>),String.is_empty(Tx.trim_nl(path)),do IO<Result<&1,&1,String,String>>:
+      home : Result<&1,&1,U32 & String,String> <- IO.get_env("HOME")
+      muse_auth_home(reference,home),muse_auth_file(reference,Tx.trim_nl(path) ++ "/muse/auth.json"))
+    case Fail{error}: do IO<Result<&1,&1,String,String>>:
+      home : Result<&1,&1,U32 & String,String> <- IO.get_env("HOME")
+      muse_auth_home(reference,home)
+
+def muse_auth_configured(+reference: String) -> IO(Result<&1,&1,String,String>):
+  do IO<Result<&1,&1,String,String>>:
+    xdg : Result<&1,&1,U32 & String,String> <- IO.get_env("XDG_CONFIG_HOME")
+    muse_auth_xdg(reference,xdg)
+
+def muse_auth(+reference: String) -> IO(Result<&1,&1,String,String>):
+  Bool.pick(IO(Result<&1,&1,String,String>),String.is_empty(after_colon(reference)),muse_auth_configured(reference),muse_auth_file(reference,after_colon(reference)))
+
 def resolve_scheme(+scheme: String, +reference: String) -> IO(Result<&1,&1,String,String>):
   match scheme:
     case "omp-models": do IO<Result<&1,&1,String,String>>:
@@ -157,7 +213,8 @@ def resolve_scheme(+scheme: String, +reference: String) -> IO(Result<&1,&1,Strin
       home : Result<&1,&1,U32 & String,String> <- IO.get_env("HOME")
       omp_auth_home(reference,home)
     case "claude-oauth": claude_oauth(reference)
-    case _: IO.pure(Result<&1,&1,String,String>,Fail{"the credential reference " ++ reference ++ " is not omp-models:BLOCK, omp-auth:PROVIDER, claude-oauth:PATH or file:PATH"})
+    case "muse-auth": muse_auth(reference)
+    case _: IO.pure(Result<&1,&1,String,String>,Fail{"the credential reference " ++ reference ++ " is not omp-models:BLOCK, omp-auth:PROVIDER, claude-oauth:PATH, muse-auth:PATH or file:PATH"})
 
 def resolve(+reference: String) -> IO(Result<&1,&1,String,String>):
   resolve_scheme(scheme_of(reference),reference)
@@ -280,8 +337,17 @@ def read_claude_max(+observed: String, +reference: String) -> IO(Unit):
 def read_claude(+observed: String, +reference: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(scheme_of(reference),"claude-oauth"),read_claude_max(observed,reference),print_unreadable("claude","",observed,claude_credit_reason()))
 
-def muse_reason() -> String:
-  "no authenticated usage endpoint was identified for the configured API key"
+# --- Muse --------------------------------------------------------------------------
+
+# POST https://api.meta.ai/muse-code/key with the CLI device-login access
+# token, the endpoint Meta's own CLI uses for /usage. The plan meter is
+# subs_usage with the rolling window and the weekly window; Meta omits it while
+# the subscription is idle. A Model API key has no subscription snapshot.
+def muse_request(+key: String) -> IO(Result<&1,&1,U32 & String,String & String>):
+  Http.Http.request("POST","https://api.meta.ai/muse-code/key","Authorization: Bearer " ++ key ++ "\nx-api-version: 1.0.0\nAccept: application/json\nContent-Type: application/json\nUser-Agent: baton2-usage-read/1.0\n","{}")
+
+def read_muse(+observed: String, +reference: String) -> IO(Unit):
+  read_http("muse",Muse.muse_source(),observed,reference,key => muse_request(key),response => Muse.muse_windows_sql(response),response => Muse.muse_problem_sql(response))
 
 # --- Codex -------------------------------------------------------------------------
 
@@ -401,7 +467,7 @@ def read_provider(+provider: String, +reference: String, +observed: String, +rec
     case "kimi-code": read_kimi(observed,reference)
     case "codex": read_codex(observed,reference,recorded)
     case "claude": read_claude(observed,reference)
-    case "muse": print_unreadable("muse","",observed,muse_reason())
+    case "muse": read_muse(observed,reference)
     case _: print_unreadable(provider,"",observed,"no usage reader for provider " ++ provider ++ " is in this build")
 
 # A read without its observation clock cannot be ordered against the account's other
