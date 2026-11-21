@@ -168,12 +168,42 @@ class KnowledgeBehavior(unittest.TestCase):
         self.assertIn('json_group_array', status)
         self.assertIn("'endpointArgv'", status)
 
+    def test_author_promotion_reports_the_destination_owner(self):
+        self.call('record', 'authored-finding', 'worker', 'observation',
+                  'Observed result', 'run:promotion', 'One run')
+        with sqlite3.connect(self.db) as database:
+            database.execute("INSERT INTO ensembles(id,owner,coupling) VALUES('reviewers','root','loose')")
+        for kind, destination in [('session', 'root'), ('group', 'reviewers')]:
+            with self.subTest(kind=kind):
+                identity = 'promotion-' + kind
+                refused = self.call('promote-scoped', identity, 'worker', 'session',
+                                    'worker', kind, destination, 'authored-finding', ok=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertEqual(refused.stdout, '')
+                answer = json.loads(refused.stderr)
+                self.assertEqual(answer['error'], 'knowledge-promotion-refused')
+                self.assertEqual(answer['reason'], 'destination-owner-required')
+                self.assertEqual((answer['id'], answer['finding'], answer['findingAuthor']),
+                                 (identity, 'authored-finding', 'worker'))
+                self.assertEqual((answer['promoter'], answer['sourceKind'], answer['source']),
+                                 ('worker', 'session', 'worker'))
+                self.assertEqual((answer['destinationKind'], answer['destination'],
+                                  answer['destinationOwner']), (kind, destination, 'root'))
+                with sqlite3.connect(self.db) as database:
+                    self.assertEqual(database.execute(
+                        'SELECT id FROM knowledge_promotions WHERE id=?', (identity,)
+                    ).fetchall(), [])
+                pending = self.json_call('inbox', 'root')
+                self.assertNotIn(identity + ':promotion-notice', [row['id'] for row in pending])
+        finding = self.json_call('detail', 'root', 'authored-finding')[0]
+        self.assertEqual((finding['author'], finding['claim']), ('worker', 'Observed result'))
+
     def test_refused_classification_covers_every_stored_term(self):
         for term in ('player-assignment-conflict', 'message-route-denied',
                      'invalid-endpoint', 'message-id-conflict',
                      'relation-id-conflict', 'finding-id-conflict',
                      'knowledge-notice-conflict', 'promotion-id-conflict',
-                     'promotion-notice-conflict', 'attach-parent-conflict',
+                     'promotion-notice-conflict', 'knowledge-promotion-refused', 'attach-parent-conflict',
                      'native-request-id-conflict', 'invalid-role',
                      'section-refused', 'ensemble-owner-conflict',
                      'ensemble-member-refused', 'report-recipient-missing'):
