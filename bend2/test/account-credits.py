@@ -243,7 +243,8 @@ class AccountCredits(unittest.TestCase):
         self.assertEqual(len(pooled['organizations']), 1, pooled)
         organization = pooled['organizations'][0]
         self.assertEqual(organization['organization'], 'org-fixture')
-        self.assertEqual(sorted(organization['accounts']), ['claude-api', 'claude-max'])
+        self.assertEqual(sorted((row['id'], row['state']) for row in organization['accounts']),
+                         [('claude-api', 'active'), ('claude-max', 'active')])
         facts = {fact['fact']: fact for fact in organization['facts']}
         self.assertEqual(facts['promotional_credit']['balance'], '200.00')
 
