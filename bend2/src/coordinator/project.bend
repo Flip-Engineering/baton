@@ -204,7 +204,10 @@ def project_sql(input: String, canonical: String, key: String, ok: Bool, cause: 
   "SELECT " ++ project_object(input, canonical, key, ok, cause, rule,database) ++ ";"
 
 def project_sessions_sql(input: String, canonical: String, key: String, ok: Bool, cause: String, rule: String, database: String, condition: String) -> String:
-  "SELECT json_object('project'," ++ project_object(input, canonical, key, ok, cause, rule,database) ++ ",'sessions'," ++ C.players_json(condition) ++ ");"
+  String.concat(["WITH project_players AS (SELECT s.id AS id,", C.surface_item(),
+    " AS item FROM sessions s WHERE ", condition, ") SELECT json_object('project',",
+    project_object(input, canonical, key, ok, cause, rule,database),
+    ",'sessions',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT item FROM project_players ORDER BY id)));"])
 
 # --- resume: continue the selected session through its registered receiver --
 
