@@ -60,9 +60,24 @@ def regular_files(rows: List<String>) -> List<&2,TreeEntry>:
     case SNil{} <> rest: regular_files(rest)
     case +row <> rest: entry{String.drop(row, 68n), "file", String.take(row, 64n)} <> regular_files(rest)
 
+def link_parts(parts: List<&2,String>) -> List<&2,String>:
+  match parts:
+    case Nil{}: []
+    case "" <> rest: link_parts(rest)
+    case "." <> rest: link_parts(rest)
+    case part <> rest: part <> link_parts(rest)
+
+# The v1 receipt encodes symlink targets after POSIX path normalization.
+def link_target(+target: String) -> String:
+  +absolute = String.starts_with(target, "/")
+  +double_slash = Bool.and(String.starts_with(target, "//"), Bool.not(String.starts_with(target, "///")))
+  +prefix = Bool.pick(String, double_slash, "//", Bool.pick(String, absolute, "/", ""))
+  +path = prefix ++ String.join(link_parts(String.split(target, '/')), "/")
+  Bool.pick(String, String.is_empty(path), ".", path)
+
 def links(rows: List<String>) -> List<&2,TreeEntry>:
   match rows:
-    case path <> target <> tail: entry{path, "symlink", target} <> links(tail)
+    case path <> target <> tail: entry{path, "symlink", link_target(target)} <> links(tail)
     case other: []
 
 def compare_paths(a: List<&2,String>, b: List<&2,String>) -> Cmp:

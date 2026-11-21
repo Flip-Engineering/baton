@@ -111,7 +111,7 @@ def tree_test(+work: String, fixture: String) -> IO(Unit):
     unused : String <- S.command(".", "mkdir", ["-p", "--", sdk ++ "/usr/include"])
     IO.try(Unit, Files.Files.write_private(header, "original"))
     IO.try(Unit, Files.Files.write_private(sdk ++ "/SDKSettings.json", "{\"CanonicalName\":\"macosx30.9\",\"Version\":\"30.9\"}"))
-    IO.try(Unit, Files.Files.symlink("fixture.h", sdk ++ "/usr/include/link.h"))
+    IO.try(Unit, Files.Files.symlink("./fixture.h", sdk ++ "/usr/include/link.h"))
     +hash : String <- SDK.tree_sha256(sdk)
     S.require(String.eq(hash, "2c59346d3b08d9c6011d0c107907b614f0747bd142621ed2666cc0f21f44432e"), "The SDK tree digest differs from the expected file and symlink digest.")
     IO.try(Unit, Files.Files.write_private(SDK.receipt_path(sdk), "{\"schema\":" ++ Json.string_literal(SDK.schema())
