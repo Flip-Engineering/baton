@@ -1,6 +1,6 @@
 # Provision the additional Linux runner
 
-The native workflow's `darwin-arm64` job runs its cross-build on a Linux x64 self-hosted runner. It requests runner group `baton2-native-homelab` and labels `self-hosted`, `Linux`, `X64`, `baton2-native-linux-x64`, and `baton2-native-darwin-cross`. The capability label is for runner accounts with verified read and execute access to the pinned Darwin LLVM tree and GNU cpio for SDK extraction. Linux jobs continue to request only the Linux runner labels. The group restricts repository and workflow access. The runner service binds `/var/tmp/baton2-compile-queue` and runs as a dedicated account with the existing systemd isolation profile.
+The native workflow's `darwin-arm64` job runs its cross-build on a Linux x64 self-hosted runner. It requests runner group `baton2-native-homelab` and labels `self-hosted`, `Linux`, `X64`, `baton2-native-linux-x64`, and `baton2-native-darwin-cross`. The capability label is for runner accounts with GNU cpio for SDK extraction and zstd for LLVM toolchain extraction. Linux jobs continue to request only the Linux runner labels. The group restricts repository and workflow access. The runner service binds `/var/tmp/baton2-compile-queue` and runs as a dedicated account with the existing systemd isolation profile.
 
 `deploy/provision-baton2-native-homelab-runner-3.sh` provisions one additional runner on the homelab host. Before running it, confirm host capacity, verify the group policy for the exact workflow ref with `bend2/scripts/check-runner-group-readiness.py`, and confirm the target runner name is absent from the organization. For the current release workflow, run:
 
@@ -19,6 +19,7 @@ Update catalog, verifies the SDK package against the catalog digest, and
 extracts it into the job's private directory. The job log and package manifest
 record the SDK version. The retained selection receipt records the Apple
 product and the package and SDK tree hashes.
+The job stages and verifies the LLVM release in the same private directory.
 
 Run from a trusted checkout with the organization's authenticated GitHub CLI context:
 

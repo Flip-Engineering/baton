@@ -958,9 +958,6 @@ jobs:
           export BUN_JSC_maxPerThreadStackUsage=67108864
           export BATON2_QUEUE_RUN_ROOT="$BATON2_NATIVE_RUN/compile-queue"
           unset BEND_GENERATED_C
-          llvm_root="${BATON2_DARWIN_LLVM_ROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm}"
-          test -r "$llvm_root/bin/clang" && test -x "$llvm_root/bin/clang"
-          test -r "$llvm_root/bin/ld64.lld" && test -x "$llvm_root/bin/ld64.lld"
           settings="$BATON2_NATIVE_RUN/build-settings"
           test ! -e "$settings"
           mkdir "$settings"
@@ -970,6 +967,23 @@ jobs:
           sdkroot=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sdkroot"])' "$sdk_selection")
           sdk_version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$sdk_selection")
           printf 'macOS SDK %s\n' "$sdk_version" | tee "$settings/sdk-version.txt"
+          # LLVM 23 supports arm64e.x1 targets in Apple's linker stubs.
+          llvm_release=23.1.6
+          llvm_prefix="LLVM-$llvm_release-Linux-X64"
+          llvm_url="https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvm_release/$llvm_prefix.tar.zst"
+          llvm_archive="$BATON2_NATIVE_RUN/darwin-llvm.tar.zst"
+          llvm_root="$BATON2_NATIVE_RUN/darwin-llvm"
+          printf '%s\n' "$llvm_url" > "$settings/llvm-source.txt"
+          printf '%s  %s\n' 59e14234f145927f982b50627e8bafaf2fca50151b7d973d6a0b40796ddcfe9a "$llvm_archive" > "$settings/llvm-archive.sha256"
+          curl --fail --silent --show-error --location "$llvm_url" --output "$llvm_archive"
+          sha256sum --check "$settings/llvm-archive.sha256"
+          mkdir "$llvm_root"
+          tar -I 'zstd --long=30' -xf "$llvm_archive" -C "$llvm_root" --strip-components=1 \
+            "$llvm_prefix/bin/clang" "$llvm_prefix/bin/clang-23" \
+            "$llvm_prefix/bin/ld64.lld" "$llvm_prefix/bin/lld" "$llvm_prefix/lib/clang"
+          rm -- "$llvm_archive"
+          "$llvm_root/bin/clang" --version > "$settings/clang-version.txt"
+          "$llvm_root/bin/ld64.lld" --version > "$settings/linker-version.txt"
           printf '%s\n' "$llvm_root/bin/clang" > "$settings/clang-path.txt"
           sha256sum "$llvm_root/bin/clang" > "$settings/clang.sha256"
           printf '%s\n' "$llvm_root/bin/ld64.lld" > "$settings/linker-path.txt"
