@@ -94,7 +94,7 @@ def unpack_chunks(+data: String, +work: String, +position: Nat, +total: Nat) -> 
       S.require(Nat.is_le(start, total), "The PBZX chunk header is incomplete.")
       header : String <- S.command(".", "od", ["-An", "-v", "--endian=big", "-t", "u8",
         "-j", Nat.show(position), "-N", "16", "--", data])
-      +sizes : Nat & Nat <- chunk_sizes(Text.split_spaces(String.trim(header)))
+      +sizes : Nat & Nat <- chunk_sizes(Text.split_spaces(S.normalize_spaces(header, True{}, "")))
       +raw : Nat <- IO.pure(Nat, Pair.fst(Nat, Nat, sizes))
       +stored : Nat <- IO.pure(Nat, Pair.snd(Nat, Nat, sizes))
       +end : Nat <- IO.pure(Nat, Nat.add(start, stored))

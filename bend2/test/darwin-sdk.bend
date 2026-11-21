@@ -90,6 +90,20 @@ def payload_test(+work: String, +fixture: String) -> IO(Unit):
     expect_failure([fixture, "payload", corrupted, catalog_digest(), work], "payload differs")
     expect_failure([fixture, "payload", package, "0000000000000000000000000000000000000000", work], "differs from its catalog digest")
 
+def unpack_test(+work: String) -> IO(Unit):
+  +output = work ++ "/extracted"
+  +block = work ++ "/fixture.pbzx"
+  do IO<Unit>:
+    IO.try(Unit, Files.Files.write_private(work ++ "/pbzx.h", "PBZX fixture"))
+    unused : String <- S.command(work, "mkdir", ["extracted"])
+    # The PBZX header describes one 512-byte uncompressed cpio block.
+    unused : String <- S.command(work, "sh", ["-c",
+      "printf %s \"$1\" | base64 --decode > fixture.pbzx && printf '%s\\n' pbzx.h | cpio -o -H newc --quiet >> fixture.pbzx",
+      "pbzx", "cGJ6eAAAAAAAAAAAAAAAAAAAAgAAAAAAAAACAA=="])
+    Archive.unpack(block, work, output)
+    body : String <- S.command(output, "cat", ["pbzx.h"])
+    S.require(String.eq(body, "PBZX fixture"), "The resolver did not extract the PBZX archive.")
+
 def tree_test(+work: String, fixture: String) -> IO(Unit):
   +sdk = work ++ "/MacOSX30.9.sdk"
   +header = sdk ++ "/usr/include/fixture.h"
@@ -121,8 +135,9 @@ def run(args: List<String>) -> IO(Unit):
         stable_test(work)
         product_test(work)
         payload_test(work, fixture)
+        unpack_test(work)
         tree_test(work, fixture)
-        IO.print("Darwin SDK release, product, payload and receipt tests passed.")
+        IO.print("Darwin SDK release, product, XAR, PBZX and receipt tests passed.")
     case other: IO.die(Unit, 2, "Usage: darwin-sdk-test WORK FIXTURE")
 
 def main() -> IO(Unit):

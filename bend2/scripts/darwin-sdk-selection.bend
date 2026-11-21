@@ -45,7 +45,7 @@ def before(text: String, marker: String) -> String:
 def between(text: String, begin: String, end: String) -> String:
   before(after(text, begin), end)
 
-def words(s: String, +space: Bool, +acc: String) -> String:
+def normalize_spaces(s: String, +space: Bool, +acc: String) -> String:
   match s:
     case SNil{}: String.trim(String.reverse(acc))
     case SCon{+head, tail}:
@@ -53,11 +53,11 @@ def words(s: String, +space: Bool, +acc: String) -> String:
       +next = Bool.pick(String, gap,
         Bool.pick(String, space, acc, SCon{Char.from_u32(32), acc}),
         SCon{head, acc})
-      words(tail, gap, next)
+      normalize_spaces(tail, gap, next)
 
 def html_text(s: String, +tag: Bool, +acc: String) -> String:
   match s:
-    case SNil{}: words(String.reverse(acc), True{}, "")
+    case SNil{}: normalize_spaces(String.reverse(acc), True{}, "")
     case SCon{+head, +tail}:
       +opening = Bool.and(Bool.not(tag), Char.is_eq(head, '<'))
       +closing = Bool.and(tag, Char.is_eq(head, '>'))
