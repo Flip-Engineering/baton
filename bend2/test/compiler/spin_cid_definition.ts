@@ -5,6 +5,7 @@
 // referenced CID_ARTIFACT with no macro of that name and clang refused the
 // queue bootstrap (issue #1176: "use of undeclared identifier 'CID_ARTIFACT'").
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -15,7 +16,6 @@ import * as Comp from "../../compiler/upstream/comp.ts";
 
 const fixture = path.join(import.meta.dir, "fixtures/spin_cid.bend");
 const upstream = path.resolve(import.meta.dir, "../../compiler/upstream");
-const root = path.resolve(import.meta.dir, "../..");
 
 const book = Bend.book_nil();
 await Bend.book_load(book, fixture, "", new Map());
@@ -61,8 +61,15 @@ try {
 
   // The compiler at the base commit emits the same construction with no macro
   // of that name. The base commit is the main revision before this repair, and
-  // its comp.ts matches the source the selected compiler archive carries.
+  // its comp.ts matches the source the selected compiler archive carries. The
+  // historical input lives in fixtures/historical so frozen source snapshots
+  // run this test without a Git object store.
   const baseCommit = "0ff762e55071bffd09b58d37fd4d4019da701e53";
+  const baseSource = fs.readFileSync(path.join(import.meta.dir,
+    "fixtures/historical/comp-" + baseCommit + ".ts"), "utf8");
+  assert.equal(createHash("sha256").update(baseSource).digest("hex"),
+    "9ff6a17b3bc8b7c24e5c039e0134e8999c9bb5e1e2b7977d23693b1ac274355e",
+    "historical comp.ts matches " + baseCommit);
   const baseDir = path.join(temp, "base");
   fs.mkdirSync(baseDir);
   for (const name of fs.readdirSync(upstream).filter(name =>
@@ -70,9 +77,7 @@ try {
     fs.copyFileSync(path.join(upstream, name), path.join(baseDir, name));
   }
   fs.symlinkSync(path.join(upstream, "effs"), path.join(baseDir, "effs"));
-  fs.writeFileSync(path.join(baseDir, "comp.ts"),
-    execFileSync("git", ["show", `${baseCommit}:bend2/compiler/upstream/comp.ts`],
-      { cwd: root, maxBuffer: 1 << 28 }));
+  fs.writeFileSync(path.join(baseDir, "comp.ts"), baseSource);
   const probe = path.join(baseDir, "probe.ts");
   fs.writeFileSync(probe, `import * as Bend from "./bend.ts";
 import * as Comp from "./comp.ts";

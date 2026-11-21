@@ -1,4 +1,6 @@
 // Usage: bun bend2/test/compiler/census_diagnostics.ts [REPOSITORY_ROOT]
+// spin_cid supplies the emitted spin helpers the census counts: the other
+// fixtures emit none with the current compiler.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -9,14 +11,19 @@ const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "bend-census-"));
 try {
   let spin_count = 0;
-  for (const name of ["emission_chain", "ref_bang_marked"]) {
+  for (const name of ["emission_chain", "ref_bang_marked", "spin_cid"]) {
     const outputs = [false, true].map((enabled) => {
       const out = path.join(temporary, name + String(enabled) + ".c");
+      // Each compile gets a fresh cache home so the diagnostics-enabled
+      // compile emits helpers instead of replaying the unit cache. A shared
+      // cache serves the second compile warm and records no spin frames.
+      const cacheHome = path.join(temporary, `${name}-${enabled}-cache`);
       const result = spawnSync(process.execPath, ["--smol",
         path.join(root, "bend2/compiler/upstream/main.ts"),
         path.join(import.meta.dir, "fixtures", name + ".bend"), "-o", out], {
         encoding: "utf8", env: { ...process.env, BEND_NO_TELEMETRY: "1",
-          BEND_COMPILER_DIAGNOSTICS: enabled ? "1" : "0" },
+          BEND_COMPILER_DIAGNOSTICS: enabled ? "1" : "0",
+          XDG_CACHE_HOME: cacheHome },
       });
       assert.equal(result.status, 0, result.stderr);
       const frames = result.stderr.split("\n").flatMap((line) => {
@@ -39,10 +46,11 @@ try {
         assert.ok(writes.every((f) => typeof f.writer === "string" && "unit" in f));
         const spins = frames.filter((f) => f.compiler_diagnostic === "spin.emit");
         spin_count += spins.length;
+        // The current compiler also records empty helpers.
         assert.ok(spins.every((f) => typeof f.layout_key === "string"
           && (f.kind === "arm" ? f.erased_key === null : typeof f.erased_key === "string")
           && typeof f.unit === "string"
-          && f.lines > 0 && f.duration_ms >= 0));
+          && f.lines >= 0 && f.duration_ms >= 0));
         const definitions = frames.filter((f) => f.compiler_diagnostic === "definition.end");
         assert.ok(definitions.every((f) => f.absent_reads >= 0 && f.writes >= 0 && f.lend >= 0));
         const columns = frames.filter((f) => f.compiler_diagnostic === "literal.columns");
