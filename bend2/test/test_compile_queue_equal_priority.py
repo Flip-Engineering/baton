@@ -95,21 +95,25 @@ class EqualPriorityTests(unittest.TestCase):
         # still removes its tickets and claim while TemporaryDirectory cleanup is
         # already deleting the tree, which fails with ENOTEMPTY. Wait until no
         # process of this state root remains before cleanup proceeds.
-        state = str(self.state).encode()
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            alive = []
-            for entry in pathlib.Path("/proc").iterdir():
-                if not entry.name.isdigit():
-                    continue
-                try:
-                    if state in (entry / "cmdline").read_bytes():
-                        alive.append(entry.name)
-                except OSError:
-                    continue
-            if not alive:
+            if not self.state_processes():
                 return
             time.sleep(0.05)
+
+    def state_processes(self):
+        """Every live process whose command line carries this state root."""
+        state = str(self.state).encode()
+        alive = []
+        for entry in pathlib.Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                if state in (entry / "cmdline").read_bytes():
+                    alive.append(entry.name)
+            except OSError:
+                continue
+        return alive
 
     def until(self, what, test, seconds=60):
         # This deadline detects a broken fixture; it does not bound a compiler.
@@ -238,8 +242,14 @@ class EqualPriorityTests(unittest.TestCase):
                 self.holds[blocker].touch()
                 order = self.drain_in_start_order(names)
                 for child in self.children[first:]:
-                    out, err = child.communicate(timeout=60)
+                    out, err = child.communicate(timeout=240)
                     self.assertEqual(child.returncode, 0, out + err)
+                # A supervisor can publish its result long after its compiler
+                # finished under a loaded host; until every process of this
+                # state root is gone a straggler watcher can still write a
+                # retained peak that would admit the next round immediately.
+                self.until("the round settled", lambda: not self.state_processes(),
+                           seconds=120)
                 self.wait_for_sampler(blocker)
                 self.assertEqual(order, names)
                 self.clear_retained_peaks()
