@@ -58,7 +58,7 @@ def check_route(+db: String, +session: String, +harness: String, home: String, r
       result : Result<&1,&1,U32 & String,String> <- Refresh.refresh(db,home,harness,alias)
       refreshed(db,session,path,result)
 
-def check(+db: String, session: String, harness: String, command: String, enabled: Bool) -> IO(Selection):
+def check(+db: String, session: String, +harness: String, command: String, enabled: Bool) -> IO(Selection):
   match enabled:
     case False{}: IO.pure(Selection,Selected{command,""})
     case True{}: do IO<Selection>:
