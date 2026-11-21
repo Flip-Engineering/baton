@@ -92,7 +92,7 @@ def read_staged(+db: String, +harness: String, +command: String, cwd: String, st
     case Fail{(code,detail)}: IO.pure(T.RunRes,T.RSpawn{detail})
     case Done{+dir}: do IO<T.RunRes>:
       +stderr : String = dir ++ "/stderr"
-      +args : List<String> = List.append(&1,String,["/usr/bin/env","MUSE_NO_AUTO_UPDATE=1","DISABLE_AUTOUPDATER=1",command],arguments(harness))
+      args : List<String> = List.append(&1,String,["/usr/bin/env","MUSE_NO_AUTO_UPDATE=1","DISABLE_AUTOUPDATER=1",command],arguments(harness))
       started : Result<&1,&1,U32 & String,U32> <- Child.ProcessChild.spawn(Child.argv(args),cwd,stderr)
       answer : T.RunRes <- read_child(db,harness,command,stderr,started)
       removed : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(stderr)
