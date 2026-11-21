@@ -135,11 +135,10 @@ def restore(paths: List<String>, +stage: String, +index: U32) -> IO(String):
       errors : String <- restore(rest,stage,U32.add(index,1))
       IO.pure(String,restore_error(path,result) ++ errors)
 
-def update_args(+harness: String, command: String, path: String) -> List<String>:
-  +prefix = vendor_env(path,String.eq(harness,"claude-code"))
+def update_args(harness: String, command: String, path: String) -> List<String>:
   match harness:
-    case "muse": List.append(&1,String,prefix,["MUSE_LAUNCHER_INSTALL=1",command])
-    case other: List.append(&1,String,prefix,[command,"update"])
+    case "muse": List.append(&1,String,vendor_env(path,False{}),["MUSE_LAUNCHER_INSTALL=1",command])
+    case other: List.append(&1,String,vendor_env(path,String.eq(other,"claude-code")),[command,"update"])
 
 def verify_update(+harness: String, +alias: String, +command: String, +home: String, +stage: String, path: String, +old: String, +status: String) -> IO(Result<&1,&1,U32 & String,String>):
   match status:

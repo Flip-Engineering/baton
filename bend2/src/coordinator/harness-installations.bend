@@ -133,13 +133,22 @@ def same_file(+left: String, +right: String) -> Bool:
 type Route is Data:
   Route{alias: String, command: String}
 
-def legacy(+home: String, +harness: String, +given: String) -> Bool:
+def legacy_codex(+given: String, root: String) -> Bool:
   +parent = Subs.directory_of(given)
   +release = Bool.pick(String,String.eq(name(parent),"bin"),Subs.directory_of(parent),parent)
+  Bool.and(String.eq(name(given),"codex"),String.eq(Subs.directory_of(release),root))
+
+def legacy(harness: String, given: String, root: String) -> Bool:
   match harness:
-    case "codex": Bool.and(String.eq(name(given),"codex"),String.eq(Subs.directory_of(release),home ++ "/.codex/packages/standalone/releases"))
-    case "claude-code": String.eq(parent,home ++ "/.local/share/claude/versions")
+    case "codex": legacy_codex(given,root)
+    case "claude-code": String.eq(Subs.directory_of(given),root)
     case other: False{}
+
+def legacy_root(harness: String, home: String) -> String:
+  match harness:
+    case "codex": home ++ "/.codex/packages/standalone/releases"
+    case "claude-code": home ++ "/.local/share/claude/versions"
+    case other: ""
 
 @unsafe
 def select_path(+paths: List<&2,String>, +fallback: Route, +given: String, +stat: String, +wrapper: String, +command: String) -> IO(Route):
@@ -155,8 +164,10 @@ def route_given(+paths: List<&2,String>, +home: String, +harness: String, +given
   do IO<Route>:
     wrapper : String <- wrapper_target(home,harness,given)
     stat : Result<&1,&1,U32 & String,String> <- F.Files.stat(given)
+    +root : String = legacy_root(harness,home)
+    resolved : Result<&1,&1,U32 & String,String> <- F.Files.realpath(root)
     +first : String = Directory.first(paths)
-    fallback : Route = Bool.pick(Route,Bool.and(Bool.not(String.is_empty(first)),legacy(home,harness,given)),Route{first,first},Route{"",command})
+    fallback : Route = Bool.pick(Route,Bool.and(Bool.not(String.is_empty(first)),legacy(harness,given,P.value_or(resolved,root))),Route{first,first},Route{"",command})
     select_path(paths,fallback,given,P.value_or(stat,""),wrapper,command)
 
 def route(+home: String, +harness: String, +command: String, +paths: List<&2,String>) -> IO(Route):
