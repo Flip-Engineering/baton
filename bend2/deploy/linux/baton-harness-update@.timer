@@ -1,9 +1,9 @@
 [Unit]
-Description=Check Baton native harness updates hourly
+Description=Check Baton native harness updates periodically
 
 [Timer]
-OnCalendar=hourly
-Persistent=true
+OnActiveSec=0
+OnUnitInactiveSec=3600
 
 [Install]
 WantedBy=timers.target
