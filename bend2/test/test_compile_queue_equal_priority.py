@@ -3,7 +3,10 @@
 Set BATON2_COMPILE_QUEUE_BIN to the candidate native queue. Each test uses a private state
 root, a fake compiler that records when it starts, and a state/meminfo override so that
 memory-aware admission is on and memory is plentiful. Requests of different options are
-different history groups; none of them has a recorded peak unless a test measures it first.
+different history groups. Under the retained-peak rules of #1501 an unmeasured request of
+a new group is bounded by the largest recorded peak of its kind, so a test that needs
+waiting requests either starts before any peak is recorded, or removes the retained
+evidence between rounds, or lowers available memory below the retained bound.
 
 * The oldest of several equal-priority waiters starts first when the running claim ends,
   although a newer waiter polls more often than an older one that has backed off.
@@ -19,6 +22,7 @@ different history groups; none of them has a recorded peak unless a test measure
 import fcntl
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -87,6 +91,25 @@ class EqualPriorityTests(unittest.TestCase):
                 child.wait(timeout=60)
             except subprocess.TimeoutExpired:
                 child.kill()
+        # A supervisor can outlive its client: after the result is published it
+        # still removes its tickets and claim while TemporaryDirectory cleanup is
+        # already deleting the tree, which fails with ENOTEMPTY. Wait until no
+        # process of this state root remains before cleanup proceeds.
+        state = str(self.state).encode()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            alive = []
+            for entry in pathlib.Path("/proc").iterdir():
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    if state in (entry / "cmdline").read_bytes():
+                        alive.append(entry.name)
+                except OSError:
+                    continue
+            if not alive:
+                return
+            time.sleep(0.05)
 
     def until(self, what, test, seconds=60):
         # This deadline detects a broken fixture; it does not bound a compiler.
@@ -177,6 +200,23 @@ class EqualPriorityTests(unittest.TestCase):
                 return True
         self.until("%s sampler released its descriptor" % name, observation_published)
 
+    def clear_retained_peaks(self):
+        """Remove the recorded peaks and finished keys of an earlier round.
+
+        Under #1501 an unmeasured request is bounded by the largest recorded
+        peak of its kind, so retained peaks from an earlier round admit the
+        next round's requests immediately and no waiter ever queues. Each
+        round measures ordering among equal-priority unmeasured requests, so
+        the retained evidence is removed between rounds."""
+        history = self.state / "history"
+        if history.is_dir():
+            for record in history.iterdir():
+                record.unlink()
+        keys = self.state / "keys"
+        if keys.is_dir():
+            for key in keys.iterdir():
+                shutil.rmtree(key, ignore_errors=True)
+
     def test_the_oldest_equal_priority_waiter_starts_first(self):
         for round_number in range(3):
             with self.subTest(round=round_number):
@@ -202,27 +242,45 @@ class EqualPriorityTests(unittest.TestCase):
                     self.assertEqual(child.returncode, 0, out + err)
                 self.wait_for_sampler(blocker)
                 self.assertEqual(order, names)
+                self.clear_retained_peaks()
 
     def test_an_older_waiter_that_is_not_eligible_does_not_block_an_eligible_one(self):
-        # Measure group m. An unmeasured request then runs; an unmeasured older waiter cannot
-        # start beside it, but a newer edited request of the measured group can.
-        self.request("measure", group="m")
-        self.until("measure started", lambda: "measure" in self.started())
+        # Measure a large group and a small group while memory is plentiful.
+        # Under #1501 an unmeasured request of a new group is bounded by the
+        # largest recorded peak of its kind: with available memory below that
+        # bound the older waiter is ineligible, while a request of the measured
+        # small group is bounded by its own smaller peak and starts beside the
+        # running claim.
+        self.request("large", group="large", mb=512)
+        self.until("large started", lambda: "large" in self.started())
         time.sleep(1.5)
-        self.holds["measure"].touch()
-        self.until("the measurement is recorded",
+        self.holds["large"].touch()
+        self.until("the large measurement is recorded",
                    lambda: (self.state / "history").is_dir() and any((self.state / "history").iterdir()))
-        self.wait_for_sampler("measure")
-        self.request("running", group="r")
+        self.wait_for_sampler("large")
+        self.request("small", group="small", mb=8)
+        self.until("small started", lambda: "small" in self.started())
+        time.sleep(1.5)
+        self.holds["small"].touch()
+        self.until("the small measurement is recorded",
+                   lambda: len(list((self.state / "history").iterdir())) >= 2)
+        self.wait_for_sampler("small")
+        self.state.joinpath("meminfo").write_text(
+            "total_kb=230946084\navailable_kb=131072\n")
+        self.request("running", group="small", mb=8)
         self.until("running has a claim", lambda: self.claim("running") is not None)
         time.sleep(2)
-        self.request("older", group="o")
+        self.request("older", group="fresh", mb=8)
         self.until("older waiting", lambda: "older" in self.waiting())
         time.sleep(1)
-        self.request("newer", group="m")
+        self.request("newer", group="small", mb=8)
         self.until("the newer measured request started beside the running claim",
                    lambda: "newer" in self.started())
         self.assertNotIn("older", self.started())
+        # Restore plentiful memory so the waiting older request is admitted and
+        # the cleanup does not wait on an ineligible waiter.
+        self.state.joinpath("meminfo").write_text(
+            "total_kb=230946084\navailable_kb=155203664\n")
         self.finish(*self.holds)
 
     def test_a_higher_priority_request_still_starts_before_older_waiters(self):
