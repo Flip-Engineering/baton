@@ -23,6 +23,7 @@ import fcntl
 import os
 import pathlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -30,8 +31,68 @@ import time
 import unittest
 
 # Fixture directories whose teardown reported a straggler supervisor (#1520).
-# A live reference keeps TemporaryDirectory from collecting and deleting them.
+# The directories are mkdtemp creations with no interpreter-shutdown cleanup:
+# they are removed only by an explicit rmtree, so a record of a preserved path
+# stays valid after the test process exits.
 PRESERVED = []
+
+EXIT_CHILD = '''
+import pathlib, subprocess, sys, tempfile
+directory = sys.argv[1]
+sys.path.insert(0, directory)
+import test_compile_queue_equal_priority as fixture
+root = pathlib.Path(tempfile.mkdtemp(prefix="queue-equal-priority-exit-"))
+state = root / "state"
+state.mkdir(mode=0o2770)
+straggler = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)",
+                              str(state)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+try:
+    fixture.teardown_state_directory(state, root, settle_seconds=2.0)
+except AssertionError:
+    print(root)
+    print(straggler.pid)
+    sys.exit(0)
+straggler.kill()
+straggler.wait()
+sys.exit(1)
+'''
+
+
+def state_processes(state):
+    """Every live process whose command line carries this state root."""
+    wanted = str(state).encode()
+    alive = []
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if wanted in (entry / "cmdline").read_bytes():
+                alive.append(entry.name)
+        except OSError:
+            continue
+    return alive
+
+
+def teardown_state_directory(state, root, settle_seconds=15.0):
+    """Remove root once no process of the state root remains (#1520).
+
+    A supervisor can outlive its client: after the result is published it still
+    removes its tickets and claim. Teardown waits a bounded interval for every
+    such process to leave, then removes the fixture directory. A straggler past
+    the bound is an explicit failure naming the surviving processes and the
+    preserved directory, which no later automatic cleanup removes."""
+    deadline = time.monotonic() + settle_seconds
+    while time.monotonic() < deadline:
+        if not state_processes(state):
+            shutil.rmtree(root)
+            return
+        time.sleep(0.05)
+    alive = state_processes(state)
+    PRESERVED.append(str(root))
+    raise AssertionError(
+        "supervisors still hold the fixture state after teardown: %s; "
+        "fixture directory preserved at %s" % (alive, root))
 
 COMPILER = '''#!{python}
 import pathlib, sys, time
@@ -72,8 +133,10 @@ class EqualPriorityTests(unittest.TestCase):
             raise unittest.SkipTest("BATON2_COMPILE_QUEUE_BIN is required")
 
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="queue-equal-priority-")
-        self.root = pathlib.Path(self.temporary.name)
+        # mkdtemp owns nothing: the directory is removed only by this fixture
+        # (release_all), so a preserved straggler directory also survives
+        # interpreter shutdown (#1520).
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="queue-equal-priority-"))
         self.state = self.root / "state"
         self.state.mkdir(mode=0o2770)
         self.state.chmod(0o2770)
@@ -95,37 +158,10 @@ class EqualPriorityTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait()
-        # A supervisor can outlive its client: after the result is published it
-        # still removes its tickets and claim. Teardown waits a bounded interval
-        # for every process of this state root to leave, then removes the
-        # fixture directory. A straggler past the bound is an explicit failure
-        # (#1520) and the fixture directory is preserved where the straggler
-        # left it, instead of racing TemporaryDirectory cleanup against it.
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if not self.state_processes():
-                self.temporary.cleanup()
-                return
-            time.sleep(0.05)
-        alive = self.state_processes()
-        PRESERVED.append(self.temporary)
-        raise AssertionError(
-            "supervisors still hold the fixture state after teardown: %s; "
-            "fixture directory preserved at %s" % (alive, self.root))
+        teardown_state_directory(self.state, self.root)
 
     def state_processes(self):
-        """Every live process whose command line carries this state root."""
-        state = str(self.state).encode()
-        alive = []
-        for entry in pathlib.Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                if state in (entry / "cmdline").read_bytes():
-                    alive.append(entry.name)
-            except OSError:
-                continue
-        return alive
+        return state_processes(self.state)
 
     def until(self, what, test, seconds=60):
         # This deadline detects a broken fixture; it does not bound a compiler.
@@ -396,6 +432,34 @@ class EqualPriorityTests(unittest.TestCase):
         self.assertIn(str(self.root), str(caught.exception))
         self.assertTrue(self.root.exists(),
                         "the fixture directory is preserved where the straggler left it")
+
+    def test_a_preserved_fixture_directory_survives_the_test_process(self):
+        # #1520: the fixture directory is a mkdtemp creation removed only by
+        # this fixture, so a straggler's directory also survives the exit of
+        # the test process that reported it. A child process runs the real
+        # teardown with a straggler present and exits; the directory must
+        # still exist afterwards, with the straggler still holding it.
+        child = subprocess.Popen(
+            [sys.executable, "-c", EXIT_CHILD, str(pathlib.Path(__file__).resolve().parent)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        output, _ = child.communicate(timeout=60)
+        self.assertEqual(child.returncode, 0, output)
+        preserved_path, straggler_pid = output.splitlines()[-2:]
+        preserved = pathlib.Path(preserved_path)
+        try:
+            self.assertTrue(preserved.exists(),
+                            "the preserved directory outlived the test process")
+            self.assertTrue(pathlib.Path("/proc", straggler_pid).exists(),
+                            "the straggler still holds the preserved directory")
+        finally:
+            # The straggler was the exiting child's process and has been
+            # reparented; killing it lets the reaper finish the cleanup.
+            os.kill(int(straggler_pid), signal.SIGKILL)
+            try:
+                os.waitpid(int(straggler_pid), 0)
+            except ChildProcessError:
+                pass
+            shutil.rmtree(preserved, ignore_errors=True)
 
 
 if __name__ == "__main__":
