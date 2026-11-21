@@ -42,6 +42,8 @@ empty array.
 
 Any registered session can read all findings and their promotions. An unregistered reader receives an empty array. A promotion records the finding, its original author, source, destination, and promoting session. The promoter is the destination session or the recorded owner of a destination Ensemble. A session source can be the original author. A session or group source can hold the finding through an earlier promotion to that same endpoint kind and ID. Repeating a promotion ID with identical values returns its stored record; conflicting reuse fails.
 
+A promotion that cannot write a row returns `knowledge-promotion-refused` with the requested coordinates, stored finding author, destination owner and failed condition. `destination-owner-required` identifies a promoting session that differs from the destination's owner. The destination owner reviews the finding and supplies the promotion.
+
 ## Scoped graphs
 
 `knowledge READER` returns all stored findings for discovery. `knowledge-scope` selects holdings by the requested scope:

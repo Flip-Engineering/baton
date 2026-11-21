@@ -409,6 +409,21 @@ def promotion_statement(+id: String, +promoter: String, +source_kind: String, +s
 def promotion_answer(id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String) -> String:
   "SELECT json_patch(json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by)," ++ endpoint_fields("",True{}) ++ ") FROM knowledge_promotions WHERE " ++ promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ";"
 
+# An unwritten promotion reports its failed authorization or provenance rule.
+def promotion_refusal(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  +exists = "EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(finding) ++ ")"
+  +owner = promotion_owner(destination_kind,destination)
+  +carries = "EXISTS(SELECT 1 FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ source_carries(source_kind,source) ++ ")"
+  +allowed = "coalesce(" ++ promotion_admitted(promoter,destination_kind,destination) ++ ",0) AND " ++ carries
+  +reason = "CASE WHEN NOT " ++ exists ++ " THEN 'finding-missing' WHEN " ++ owner ++ " IS NULL THEN 'destination-missing' WHEN " ++ C.q(promoter) ++ "<>" ++ owner ++ " THEN 'destination-owner-required' ELSE 'source-does-not-hold-finding' END"
+  "SELECT json_object('error','knowledge-promotion-refused','id'," ++ C.q(id)
+  ++ ",'finding'," ++ C.q(finding) ++ ",'findingAuthor',(SELECT author FROM knowledge WHERE id=" ++ C.q(finding) ++ ")"
+  ++ ",'promoter'," ++ C.q(promoter) ++ ",'sourceKind'," ++ C.q(source_kind) ++ ",'source'," ++ C.q(source)
+  ++ ",'destinationKind'," ++ C.q(destination_kind) ++ ",'destination'," ++ C.q(destination) ++ ",'destinationOwner'," ++ owner
+  ++ ",'reason'," ++ reason
+  ++ ",'next',CASE " ++ reason ++ " WHEN 'finding-missing' THEN 'Select a stored finding.' WHEN 'destination-missing' THEN 'Select a registered session or Ensemble destination.' WHEN 'destination-owner-required' THEN 'Ask the destination owner to review and promote the finding.' ELSE 'Select a source that authored or received the finding.' END)"
+  ++ " WHERE NOT EXISTS(SELECT 1 FROM knowledge_promotions WHERE " ++ promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ") AND NOT (" ++ allowed ++ ");"
+
 def promotion_notice_id(id: String) -> String:
   id ++ ":promotion-notice"
 
@@ -426,7 +441,7 @@ def promotion_notice_statement(+id: String, +promoter: String, +source_kind: Str
   ++ knowledge_conflict_sql("promotion-notice-conflict","messages",C.q(promotion_notice_id(id)),"EXISTS(SELECT 1 FROM knowledge_promotions WHERE " ++ coordinates ++ ")","sender=" ++ C.q(promoter) ++ " AND recipient=" ++ owner ++ " AND kind='question' AND body=" ++ promotion_notice_stored_body(id),"'sender',sender,'recipient',recipient")
 
 def promote_statements(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
-  promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding)
+  promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_refusal(id,promoter,source_kind,source,destination_kind,destination,finding)
 
 # Promotion delivery failures retain the committed promotion and report an error.
 def answered(delivery: Result<&1,&1,U32 & String,String>) -> IO(Unit):
