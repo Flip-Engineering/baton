@@ -158,7 +158,7 @@ def m8_the_destinations_are_all_recorded_for_the_finding():
   {==}
 
 
-law m1_the_promote_statement_carries_the_promotion_notice_and_answer:
+law m1_the_promote_statement_carries_the_promotion_notice_answer_and_refusal:
   for +id: String
   for +promoter: String
   for +source_kind: String
@@ -166,9 +166,13 @@ law m1_the_promote_statement_carries_the_promotion_notice_and_answer:
   for +destination_kind: String
   for +destination: String
   for +finding: String
-  {K.promote_statements(id,promoter,source_kind,source,destination_kind,destination,finding) == K.promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ K.promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ K.promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding) : String}
+  {K.promote_statements(id,promoter,source_kind,source,destination_kind,destination,finding)
+    == K.promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding)
+    ++ K.promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding)
+    ++ K.promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding)
+    ++ K.promotion_refusal(id,promoter,source_kind,source,destination_kind,destination,finding) : String}
 
-def m1_the_promote_statement_carries_the_promotion_notice_and_answer(id,promoter,source_kind,source,destination_kind,destination,finding):
+def m1_the_promote_statement_carries_the_promotion_notice_answer_and_refusal(id,promoter,source_kind,source,destination_kind,destination,finding):
   {==}
 
 # M-14: each promotion notice has its own identity and full sharing coordinates.
