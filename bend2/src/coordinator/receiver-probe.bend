@@ -7,6 +7,7 @@ import ../host/files.bend as F
 import ../host/control.bend as Host
 import ../host/session-lock.bend as Lock
 import ../harness/omp-player.bend as Omp
+import ./harness-update.bend as HarnessUpdate
 import ../git/text.bend as Tx
 import ../json/canonical.bend as J
 
@@ -159,7 +160,9 @@ def refusal(+session: String, +cmd: String, probed: Probe) -> IO(Unit):
 def registration(+db: String, +session: String, cmd: String, model: String, +workspace: String) -> IO(Unit):
   do IO<Unit>:
     effort : String <- IO.try(String,DB.Sql.read(db,"SELECT effort FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    +native : String <- IO.try(String,Host.Control.command(cmd))
+    recorded : String <- IO.try(String,Host.Control.command(cmd))
+    selection : HarnessUpdate.Selection <- HarnessUpdate.check(db,session,"omp",recorded,True{})
+    +native : String <- IO.pure(String,HarnessUpdate.command(selection))
     +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
     token : String <- probe_token(database)
     +scratch : String = probe_sessions_path(database,token)
