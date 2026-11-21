@@ -23,6 +23,9 @@ def decimal(value: Maybe<&2,Nat>) -> Nat:
     case Some{number}: number
     case None{}: 0n
 
+def drop_fraction(+time: String, digits: Nat) -> String:
+  String.take(time,Nat.sub(String.length(time),digits))
+
 def version_list(+harness: String, result: T.RunRes) -> String:
   match result:
     case T.RRun{T.SExit{0},out}:
@@ -48,8 +51,10 @@ def vendor_env(+path: String, claude_update: Bool) -> List<String>:
       ["PATH=" ++ path,"MUSE_NO_AUTO_UPDATE=1","DISABLE_AUTOUPDATER=1"]))
 
 def version(+harness: String, +command: String, +home: String, +stage: String, path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  P.bind_result(P.Capture,String,P.capture(List.append(&1,String,vendor_env(path,False{}),[command,"--version"]),home,stage ++ "/version.stderr"),
-    captured => parse_version(harness,command,home,stage,captured))
+  +stderr = stage ++ "/version.stderr"
+  P.bind_result(Unit,String,F.Files.remove(stderr),removed =>
+    P.bind_result(P.Capture,String,P.capture(List.append(&1,String,vendor_env(path,False{}),[command,"--version"]),home,stderr),
+      captured => parse_version(harness,command,home,stage,captured)))
 
 def codex_paths(+target: String, +current: String, +alias: String, link: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,List<String>>):
   match link:
@@ -238,7 +243,7 @@ def publish(+db: String, +home: String, +harness: String, +alias: String, +dir: 
     directory : Result<&1,&1,U32 & String,String> <- P.directory(Subs.directory_of(alias) ++ "/.baton-update-XXXXXXXXXX",home)
     result : Observation <- staged(home,harness,alias,directory)
     +path : String = dir ++ "/" ++ id ++ ".json"
-    P.bind_result(Unit,String,F.Files.write_group_read(path,record(id,Nat.show(Nat.div(decimal(Nat.read(now)),1000000n)),harness,alias,result)),
+    P.bind_result(Unit,String,F.Files.write_group_read(path,record(id,drop_fraction(now,6n),harness,alias,result)),
       written => IO.pure(Result<&1,&1,U32 & String,String>,Done{path})))
 
 def latest_file(entries: List<&2,String>, +latest: String) -> String:
@@ -251,7 +256,7 @@ def fresh(+now: String, stat: Result<&1,&1,U32 & String,String>) -> Bool:
     case Fail{error}: False{}
     case Done{+record}:
       modified = decimal(Nat.read(Directory.at(String.split(record,Char.from_u32(9)),5)))
-      Bool.and(String.eq(Directory.observation_kind(record),"file"),Nat.is_lt(Nat.div(decimal(Nat.read(now)),1000000000n),Nat.add(modified,3600n)))
+      Bool.and(String.eq(Directory.observation_kind(record),"file"),Nat.is_lt(decimal(Nat.read(drop_fraction(now,9n))),Nat.add(modified,3600n)))
 
 def receipt(+db: String, +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   P.bind_result(String,String,Text.Text.read(path),text =>

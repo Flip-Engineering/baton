@@ -85,7 +85,7 @@ def paths(home: String, harness: String) -> IO(List<&2,String>):
     platform : Result<&1,&1,U32 & String,String> <- Posix.HostPosix.platform()
     Choice.choose(IO(List<&2,String>),String.eq(P.value_or(platform,""),"linux"), _update_unit => candidates(home,harness), _update_unit => IO.pure(List<&2,String>,Nil{}))
 
-# These tokens are inspected as text. Wrapper substitutions and commands are never evaluated.
+# Read literal arguments from the installed wrapper's exec line.
 def emit_token(token: String, +words: List<&2,String>) -> List<&2,String>:
   match token:
     case SNil{}: words
@@ -105,13 +105,17 @@ def wrapper_words(line: String, +quote: U32, +escaped: Bool, +token: String, +wo
                 Choice.choose(List<&2,String>,Bool.and(plain,Bool.or(U32.is_eq(code,39),U32.is_eq(code,34))), _word_unit => wrapper_words(rest,code,False{},token,words), _word_unit =>
                   wrapper_words(rest,quote,False{},SCon{c,token},words)))))))
 
+def exec_target(words: List<&2,String>) -> String:
+  match words:
+    case "exec" <> target <> "$@" <> Nil{}: target
+    case other: ""
+
 def wrapper_exec(lines: List<&2,String>) -> String:
   match lines:
     case Nil{}: ""
     case line <> rest:
-      match wrapper_words(line,0,False{},"",Nil{}):
-        case "exec" <> target <> "$@" <> Nil{}: target
-        case other: wrapper_exec(rest)
+      +target = exec_target(wrapper_words(line,0,False{},"",Nil{}))
+      Choice.choose(String,String.is_empty(target), _word_unit => wrapper_exec(rest), _word_unit => target)
 
 def wrapper_target(+home: String, +harness: String, +given: String) -> IO(String):
   Choice.choose(IO(String),Bool.and(String.eq(harness,"omp"),String.eq(given,home ++ "/.local/libexec/omp-batonci-env")),

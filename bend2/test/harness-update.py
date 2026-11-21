@@ -186,6 +186,11 @@ class HarnessUpdate(unittest.TestCase):
         self.assertEqual(json.loads(self.call('harness-update'))['id'], receipt['id'])
         record, = self.records('omp')
         self.assertGreater(record['time'], 0)
+        os.utime(receipt['log'], (0, 0))
+        next_receipt = json.loads(self.call('harness-update'))
+        self.assertNotEqual(next_receipt['id'], receipt['id'])
+        self.assertEqual((next_receipt['oldVersion'], next_receipt['newVersion'],
+                          next_receipt['result']), ('2.0.0', '2.0.0', 'current'))
 
     def test_failure_restores_prior_selection_and_reaches_the_root(self):
         old = self.install_codex()
