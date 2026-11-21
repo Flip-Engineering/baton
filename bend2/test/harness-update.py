@@ -90,12 +90,12 @@ class HarnessUpdate(unittest.TestCase):
                     if key not in ('BATON_DATABASE', 'BATON_SESSION', 'BATON2_GIT_REGISTRY',
                                    'BATON_COORDINATOR', 'BATON_ATTEMPT_DIRECTORY')}
         self.env['HOME'] = str(self.home)
-        self.env['XDG_DATA_HOME'] = str(self.home / '.local/share')
+        data = self.home / 'xdg-data'
+        self.env['XDG_DATA_HOME'] = str(data)
         name = 'baton-harness-update@.timer'
-        self.timer = self.home / '.local/share/systemd/user' / name
+        self.timer = data / 'systemd/user' / name
         self.timer.parent.mkdir(parents=True)
-        self.timer_source = (ROOT / 'bend2/deploy/linux' / name).read_text()
-        self.timer.write_text(self.timer_source)
+        self.timer.write_text((ROOT / 'bend2/deploy/linux' / name).read_text())
         self.call('attach', 'root', 'codex', 'native-root', '')
         self.addCleanup(self.shutdown)
 
