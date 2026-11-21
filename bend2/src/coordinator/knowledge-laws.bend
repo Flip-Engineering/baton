@@ -211,7 +211,7 @@ def record_io(+db: String, +id: String, author: String, claim: String, evidence:
     +saved : String <- IO.try(String,Store.transact_sql(db,K.commit_sql(K.record_statements(id,author,claim,evidence,limits))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- K.deliver_record(db,id,saved)
-      K.answered(delivery))
+      K.record_answer(db,saved,delivery))
 
 law m1_the_record_io_queries_delivers_and_answers:
   for db: String

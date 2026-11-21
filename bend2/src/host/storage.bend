@@ -40,6 +40,14 @@ def StorageHost.uid_boundary(path: String) -> IO(Result<&1,&1,U32 & String,Strin
 def StorageHost.remove(path: String, identity: String, root: String, root_identity: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
+# Filesystem capacity and ownership facts for one path:
+# `device<TAB>owner<TAB>blockSize<TAB>freeBytes<TAB>totalBytes`. Device and
+# owner come from lstat of the path itself; the byte counts come from the
+# mounted filesystem that holds it, and freeBytes counts the blocks available
+# to unprivileged writers. A path that cannot be observed answers an error.
+def StorageHost.filesystem(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./storage.c"
+
 # Cargo cache-tag and native lock-layout observation:
 # `cargo<TAB>dir:device:inode<TAB>tag|layout`, or `unclassified`.
 def StorageHost.cargo_probe(path: String) -> IO(Result<&1,&1,U32 & String,String>):

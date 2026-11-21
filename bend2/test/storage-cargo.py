@@ -906,16 +906,25 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         self.assertIn('remote-identity-mismatch', answer)
         self.assertTrue(clone.exists())
 
-    def test_staging_source_linked_worktree_registration_is_preserved(self):
+    def test_staging_source_linked_worktree_registration_settles_through_git(self):
         upstream, staging, clone, remote = self.staging_clone()
         linked = staging / 'linked-checkout'
         subprocess.run(['git', '-C', str(clone), 'worktree', 'add', '-q', str(linked)],
                        check=True, capture_output=True)
         answer = self.staging_apply(staging, upstream)
+        # The main checkout records a live linked registration and stays
+        # preserved. The released linked candidate is registered under its
+        # own path, so Git removes its working tree and administration and
+        # keeps its branch in the shared store.
         self.assertIn('worktree-dependency', answer)
         self.assertTrue(clone.exists())
-        self.assertTrue(linked.exists())
-        self.assertTrue((linked / '.git').is_file())
+        self.assertFalse(linked.exists())
+        listed = subprocess.check_output(
+            ['git', '-C', str(clone), 'worktree', 'list', '--porcelain'], text=True)
+        self.assertNotIn(str(linked), listed)
+        branches = subprocess.check_output(
+            ['git', '-C', str(clone), 'branch', '--list', 'linked-checkout'], text=True)
+        self.assertIn('linked-checkout', branches)
 
     def test_staging_source_root_without_authenticated_repo_is_refused(self):
         upstream, staging, clone, remote = self.staging_clone()

@@ -198,20 +198,6 @@ removing a job does not remove it (`repo-template/videos/scripts/farm.py:312`).
 No Baton source reads the shared model store or the ACP caches. This document
 makes no shared-consumer or shared-deduplication claim for them.
 
-## Unqualified storage lifecycle
-
-Root selected the product command contract `storage-policy`,
-`storage-preview SESSION` and `storage-apply SESSION`, with roots resolved from
-the recorded project or workspace. The competing `BATON_STORAGE_ROOTS` surface
-and a second preview/apply shape are not part of the selected contract.
-
-That implementation is unqualified work in progress. Before merge it must
-prove leaf replacement and exclusive-writer race protection, and it must
-protect every active coordinator database and its ancestors, including the
-unlinked-owner case in #920. It must preserve unknown content, unpublished
-source, shared immutable assets and Git objects. The platform templates in
-this repository do not schedule it.
-
 ## macOS
 
 Issue #912 records the operator's Mac with 17 GB free on a 228 GB internal

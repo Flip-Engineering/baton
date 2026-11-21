@@ -23,6 +23,9 @@ name: bend2-native-development
       - 'bend2/test/**'
       - 'bend2/scripts/build-native.sh'
       - 'bend2/scripts/darwin-arm64-clang.sh'
+      - 'bend2/scripts/darwin-sdk*.bend'
+      - 'bend2/scripts/check-native.sh'
+      - 'deploy/provision-baton2-native-homelab-runner-3.sh'
       - 'bend2/scripts/package-native.py'
       - 'bend2/scripts/stage-repl-compiler.py'
       - 'bend2/scripts/check-install.py'
@@ -957,15 +960,39 @@ jobs:
           export BUN_JSC_maxPerThreadStackUsage=67108864
           export BATON2_QUEUE_RUN_ROOT="$BATON2_NATIVE_RUN/compile-queue"
           unset BEND_GENERATED_C
-          llvm_root="${BATON2_DARWIN_LLVM_ROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm}"
-          sdkroot="${BATON2_DARWIN_SDKROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk}"
-          sdk_manifest="${sdkroot}.transfer-manifest.json"
-          test -r "$llvm_root/bin/clang" && test -x "$llvm_root/bin/clang"
-          test -r "$llvm_root/bin/ld64.lld" && test -x "$llvm_root/bin/ld64.lld"
-          test -r "$sdk_manifest"
           settings="$BATON2_NATIVE_RUN/build-settings"
           test ! -e "$settings"
           mkdir "$settings"
+          sdk_selection="$settings/sdk-selection.json"
+          source="$BATON2_NATIVE_RUN/build-source"
+          sdk_resolver="$BATON2_NATIVE_RUN/bin/darwin-sdk"
+          BEND="$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" \
+            sh "$source/bend2/scripts/build-native.sh" "$source/bend2/scripts/darwin-sdk.bend" "$sdk_resolver" \
+            > "$settings/sdk-resolver-build.stdout" 2> "$settings/sdk-resolver-build.stderr"
+          sha256sum "$sdk_resolver" > "$settings/sdk-resolver.sha256"
+          "$sdk_resolver" resolve "$BATON2_NATIVE_RUN/darwin-sdk" > "$sdk_selection" 2> "$settings/sdk-resolver.stderr"
+          sdkroot=$(jq -er .sdkroot "$sdk_selection")
+          sdk_version=$(jq -er .version "$sdk_selection")
+          printf 'macOS SDK %s\n' "$sdk_version" | tee "$settings/sdk-version.txt"
+          clang_root="${BATON2_DARWIN_LLVM_ROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm}"
+          test -x "$clang_root/bin/clang"
+          # LLVM 23 supports arm64e.x1 targets in Apple's linker stubs.
+          llvm_release=23.1.6
+          llvm_prefix="LLVM-$llvm_release-Linux-X64"
+          llvm_url="https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvm_release/$llvm_prefix.tar.zst"
+          llvm_archive="$BATON2_NATIVE_RUN/darwin-llvm.tar.zst"
+          llvm_root="$BATON2_NATIVE_RUN/darwin-llvm"
+          printf '%s\n' "$llvm_url" > "$settings/llvm-source.txt"
+          printf '%s  %s\n' 59e14234f145927f982b50627e8bafaf2fca50151b7d973d6a0b40796ddcfe9a "$llvm_archive" > "$settings/llvm-archive.sha256"
+          curl --fail --silent --show-error --location "$llvm_url" --output "$llvm_archive"
+          sha256sum --check "$settings/llvm-archive.sha256"
+          mkdir "$llvm_root"
+          tar -I 'zstd --long=30' -xf "$llvm_archive" -C "$llvm_root" --strip-components=1 \
+            "$llvm_prefix/bin/ld64.lld" "$llvm_prefix/bin/lld"
+          ln -s "$(realpath "$clang_root/bin/clang")" "$llvm_root/bin/clang"
+          rm -- "$llvm_archive"
+          "$llvm_root/bin/clang" --version > "$settings/clang-version.txt"
+          "$llvm_root/bin/ld64.lld" --version > "$settings/linker-version.txt"
           printf '%s\n' "$llvm_root/bin/clang" > "$settings/clang-path.txt"
           sha256sum "$llvm_root/bin/clang" > "$settings/clang.sha256"
           printf '%s\n' "$llvm_root/bin/ld64.lld" > "$settings/linker-path.txt"
@@ -981,8 +1008,6 @@ jobs:
           sha256sum "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.sha256"
           stat -Lc '%s' "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.size"
           file -L "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.file"
-          sha256sum "$sdk_manifest" > "$settings/sdk-transfer-manifest.sha256"
-          python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["verification"]["destination_tree_sha256"])' "$sdk_manifest" > "$settings/sdk-tree.sha256"
           ulimit -a > "$settings/limits-soft-before.txt"
           ulimit -H -a > "$settings/limits-hard-before.txt"
           requested_stack_kib=65536
@@ -1021,6 +1046,7 @@ jobs:
             --target-machine arm64
             --darwin-llvm-root "$llvm_root"
             --darwin-sdkroot "$sdkroot"
+            --darwin-sdk-resolver "$sdk_resolver"
             --generated-c "$RUNNER_TEMP/baton2-generated-c-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/generated/baton2.c"
             --context-typescript-package "$BATON2_NATIVE_RUN/typescript-runtime/node_modules/typescript"
           )

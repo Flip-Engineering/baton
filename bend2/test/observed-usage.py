@@ -96,7 +96,7 @@ class ObservedUsage(unittest.TestCase):
         return answer
 
     def provider_command(self, body, exit_code=0, identity_prefix=False, remove_database=False,
-                         session='reader', native='native-1'):
+                         session='reader', native='native-1', dialogue=()):
         workspace = self.directory / ('provider workspace ' + session)
         workspace.mkdir()
         program = workspace / 'provider fixture'
@@ -105,7 +105,11 @@ class ObservedUsage(unittest.TestCase):
                            "pathlib.Path('queried.json').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': str(pathlib.Path.cwd())}))\n"
                            + ('pathlib.Path(' + repr(str(self.db)) + ').unlink()\n'
                               if remove_database else '')
-                           + 'print(' + repr(body) + ', flush=True)\n'
+                           + ''.join('assert json.loads(sys.stdin.readline())[' + repr(key)
+                                     + '] == ' + repr(value) + '\n'
+                                     + ('print(' + repr(json.dumps(frame)) + ', flush=True)\n' if frame else '')
+                                     for key, value, frame in dialogue)
+                           + ('print(' + repr(body) + ', flush=True)\n' if body else '')
                            + 'sys.exit(' + repr(exit_code) + ')\n')
         program.chmod(0o755)
         command = './provider fixture'
@@ -262,23 +266,38 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
                          {'argv': ['models', '--json'], 'cwd': str(workspace)})
 
-    def test_models_keeps_muse_profile_text_without_claiming_model_existence(self):
-        profile = 'model: requested-but-unverified\nprovider: fixture\nprofile: retained text'
-        workspace, command = self.provider_command(profile)
+    def muse_catalog_fixture(self, catalog, **kwargs):
+        return self.provider_command('', dialogue=[
+            ('method', 'initialize', {'jsonrpc': '2.0', 'id': 1, 'result': {}}),
+            ('method', 'initialized', None),
+            ('method', 'model/list', {'jsonrpc': '2.0', 'id': 2, 'result': catalog}),
+        ], **kwargs)
+
+    def test_models_reads_the_muse_catalog(self):
+        catalog = {'models': [{'modelId': 'muse-fixture'}], 'source': 'providerCatalog'}
+        workspace, command = self.muse_catalog_fixture(catalog)
         with sqlite3.connect(self.db) as database:
-            database.execute("UPDATE sessions SET harness='muse', model='requested-but-unverified', effort='high' WHERE id='reader'")
+            database.execute("UPDATE sessions SET harness='muse', model='muse-fixture' WHERE id='reader'")
         answer = self.models()
         self.assertEqual(answer['state'], 'reported')
         self.assertEqual(answer['harness'], 'muse')
         self.assertEqual(answer['command'], command)
-        self.assertEqual(answer['argv'], ['model-profile', 'show', 'requested-but-unverified'])
-        self.assertEqual(answer['requestedModel'], 'requested-but-unverified')
-        self.assertEqual(answer['requestedEffort'], 'high')
-        self.assertEqual(answer['modelExistence'], 'unknown')
-        self.assertEqual(answer['profileText'], profile + '\n')
+        self.assertEqual(answer['requestedModel'], 'muse-fixture')
+        self.assertEqual(answer['response'], catalog)
         self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
-                         {'argv': ['model-profile', 'show', 'requested-but-unverified'],
-                          'cwd': str(workspace)})
+                         {'argv': ['serve', '--no-session-log'], 'cwd': str(workspace)})
+
+    def test_models_reads_claude_sdk_supported_models(self):
+        catalog = {'models': [{'value': 'claude-fixture', 'displayName': 'Fixture'}]}
+        self.provider_command('', dialogue=[
+            ('request_id', 'models', {'type': 'control_response', 'response': {
+                'request_id': 'models', 'subtype': 'success', 'response': catalog}}),
+        ])
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET harness='claude-code' WHERE id='reader'")
+        answer = self.models()
+        self.assertEqual(answer['state'], 'reported')
+        self.assertEqual(answer['response'], catalog)
 
     def test_models_reports_provider_failure_and_unknown_routes_without_gating(self):
         workspace, command = self.provider_command('provider says unavailable', exit_code=7)
@@ -296,7 +315,7 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(host_failure['code'], 2)
         self.assertFalse(marker.exists())
         with sqlite3.connect(self.db) as database:
-            database.execute("UPDATE sessions SET harness='claude-code' WHERE id='reader'")
+            database.execute("UPDATE sessions SET harness='dsh' WHERE id='reader'")
         unsupported = self.models()
         self.assertEqual(unsupported['state'], 'unknown')
         self.assertEqual(unsupported['reason'], 'unsupportedHarness')
@@ -316,10 +335,10 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(attached.returncode, 0, attached.stderr)
         codex_workspace, _ = self.provider_command(json.dumps(codex_catalog),
                                                    session='second', native='native-2')
-        profile = 'model: fixture-muse-model\nprovider: fixture\nprofile: retained text'
+        muse_catalog = {'models': [{'modelId': 'fixture-muse-model'}]}
         attached = self.call('attach', 'third', 'muse', 'native-3', '')
         self.assertEqual(attached.returncode, 0, attached.stderr)
-        muse_workspace, _ = self.provider_command(profile, session='third', native='native-3')
+        muse_workspace, _ = self.muse_catalog_fixture(muse_catalog, session='third', native='native-3')
         with sqlite3.connect(self.db) as database:
             database.execute("UPDATE sessions SET model='fixture-muse-model', effort='high'"
                              " WHERE id='third'")
@@ -342,12 +361,10 @@ class ObservedUsage(unittest.TestCase):
                          {'argv': ['debug', 'models'], 'cwd': str(codex_workspace)})
         self.assertEqual(by_harness['muse']['session'], 'third')
         self.assertEqual(by_harness['muse']['requestedModel'], 'fixture-muse-model')
-        self.assertEqual(by_harness['muse']['requestedEffort'], 'high')
-        self.assertEqual(by_harness['muse']['modelExistence'], 'unknown')
-        self.assertEqual(by_harness['muse']['profileText'], profile + '\n')
+        self.assertEqual(by_harness['muse']['response'], muse_catalog)
         self.assertEqual(by_harness['muse']['workspace'], str(muse_workspace))
         self.assertEqual(json.loads((muse_workspace / 'queried.json').read_text()),
-                         {'argv': ['model-profile', 'show', 'fixture-muse-model'],
+                         {'argv': ['serve', '--no-session-log'],
                           'cwd': str(muse_workspace)})
 
     def test_models_all_reports_empty_routes_when_no_harness_recorded(self):
@@ -366,7 +383,7 @@ class ObservedUsage(unittest.TestCase):
         attached = self.call('attach', 'third', 'omp', 'native-3', '')
         self.assertEqual(attached.returncode, 0, attached.stderr)
         with sqlite3.connect(self.db) as database:
-            database.execute("UPDATE sessions SET harness='claude-code' WHERE id='second'")
+            database.execute("UPDATE sessions SET harness='dsh' WHERE id='second'")
             database.execute("UPDATE sessions SET endpoint='[]' WHERE id='third'")
         answer = self.models_all()
         self.assertEqual(answer['state'], 'reported')
@@ -378,7 +395,7 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertEqual(reported[0]['state'], 'reported')
         unsupported = [route for route in answer['routes']
-                       if route['harness'] == 'claude-code']
+                       if route['harness'] == 'dsh']
         self.assertEqual(len(unsupported), 1)
         self.assertEqual(unsupported[0]['state'], 'unknown')
         self.assertEqual(unsupported[0]['reason'], 'unsupportedHarness')
