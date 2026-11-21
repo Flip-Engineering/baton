@@ -174,8 +174,11 @@ class PackageLicenses(unittest.TestCase):
         manifest['selected_dependencies'] = [self.repl_fixture()]
         manifest['required_system_dependencies'] = CHECK.system_dependencies(CHECK.platform.system())
         PACKAGE.write_json(prefix / 'manifest.json', manifest)
-        helper = prefix / 'libexec/baton2/task-start.mjs'
-        shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', helper)
+        helpers = prefix / 'libexec/baton2'
+        shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', helpers / 'task-start.mjs')
+        for name in ('mcp-conductor.mjs', 'codex-root-relay.mjs', 'root-channel-config.mjs',
+                     'agent-summary-check.mjs', 'no-agent-summary.js'):
+            shutil.copyfile(ROOT / 'bend2/scripts' / name, helpers / name)
         LAYOUT.FINALIZE.finalize(prefix)
         output = self.home / 'unusable-runtime-check'
         output.mkdir()
@@ -187,6 +190,14 @@ class PackageLicenses(unittest.TestCase):
         actual_run = subprocess.run
 
         def run(argv, **kwargs):
+            if argv[-1] == 'register-receiver':
+                probe = pathlib.Path(kwargs['cwd'])
+                self.assertEqual(probe.parent, output)
+                self.assertEqual(argv, [str(probe / 'baton'), str(probe / 'unused.sqlite'),
+                                        'register-receiver'])
+                return subprocess.CompletedProcess(
+                    argv, 78, stdout='', stderr='baton: focused receiver is missing or not '
+                    'executable. Install the complete Baton package.\n')
             if argv in help_commands:
                 return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
             if argv == guide_command:
