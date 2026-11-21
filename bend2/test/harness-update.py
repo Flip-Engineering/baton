@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -89,6 +90,12 @@ class HarnessUpdate(unittest.TestCase):
                     if key not in ('BATON_DATABASE', 'BATON_SESSION', 'BATON2_GIT_REGISTRY',
                                    'BATON_COORDINATOR', 'BATON_ATTEMPT_DIRECTORY')}
         self.env['HOME'] = str(self.home)
+        self.env['XDG_DATA_HOME'] = str(self.home / '.local/share')
+        name = 'baton-harness-update@.timer'
+        self.timer = self.home / '.local/share/systemd/user' / name
+        self.timer.parent.mkdir(parents=True)
+        self.timer_source = (ROOT / 'bend2/deploy/linux' / name).read_text()
+        self.timer.write_text(self.timer_source)
         self.call('attach', 'root', 'codex', 'native-root', '')
         self.addCleanup(self.shutdown)
 
@@ -213,6 +220,21 @@ class HarnessUpdate(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn(record['id'], body)
         self.assertIn('vendor updater exited 17', body)
+
+    def test_launch_and_scheduled_refresh_use_the_installed_timer_interval(self):
+        self.route(self.install_codex())
+        first = json.loads(self.call('harness-update'))
+        self.timer.write_text('[Timer]\nOnUnitInactiveSec=120\n')
+        past = time.time() - 125
+        os.utime(first['log'], (past, past))
+        self.call('models', 'worker')
+        self.assertEqual(len(self.records('codex')), 2)
+        current = json.loads(self.call('harness-update'))
+        self.assertNotEqual(current['id'], first['id'])
+        self.timer.write_text('[Timer]\nOnUnitInactiveSec=7200\n')
+        past = time.time() - 4000
+        os.utime(current['log'], (past, past))
+        self.assertEqual(json.loads(self.call('harness-update'))['id'], current['id'])
 
     def test_legacy_omp_wrapper_and_standard_install_both_update(self):
         default = self.install_omp()

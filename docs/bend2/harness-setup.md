@@ -17,10 +17,10 @@ runs the updated copy. Other receiver paths continue to select their recorded
 executable.
 
 Before each managed attempt or model discovery, Baton checks the installation.
-It reuses the most recent update result for one hour. It runs `codex update`,
-`claude update`, `omp update` or the Muse launcher installer under the service
-account. A running process keeps the version it started with. Baton reads
-catalogs from the selected clients through Codex `debug models`, OMP
+It reuses the most recent update result for the timer interval. It runs
+`codex update`, `claude update`, `omp update` or the Muse launcher installer
+under the service account. A running process keeps the version it started with.
+Baton reads catalogs from the selected clients through Codex `debug models`, OMP
 `models --json`, Claude Code SDK initialization and Muse MSP `model/list`.
 
 Each completed check writes its time, versions, result and updater output under
@@ -40,6 +40,14 @@ ln -sfn ../baton-harness-update@.timer "$unit_dir/timers.target.wants/$timer"
 systemctl --user daemon-reload
 systemctl --user start "$timer"
 ```
+
+Starting the timer triggers a check. It schedules the next check after the
+service exits and the interval in `OnUnitInactiveSec=` elapses. The packaged
+template sets 3600 seconds. To change the interval, edit that line in
+`$unit_dir/baton-harness-update@.timer` using a positive integer in seconds,
+reload the user manager and restart the timer.
+Baton reads that same template before deciding whether to reuse a receipt.
+Before the user template is installed, Baton reads the packaged template.
 
 Run `baton DATABASE harness-update` for the same sweep from the command line.
 

@@ -250,12 +250,48 @@ def latest_file(entries: List<&2,String>, +latest: String) -> String:
     case Nil{}: latest
     case +file <> rest: latest_file(rest,Bool.pick(String,Bool.and(String.ends_with(file,".json"),String.is_lt(latest,file)),file,latest))
 
-def fresh(+now: String, stat: Result<&1,&1,U32 & String,String>) -> Bool:
+def timer_name() -> String:
+  "baton-harness-update@.timer"
+
+def timer_seconds(lines: List<&2,String>) -> Nat:
+  match lines:
+    case Nil{}: 0n
+    case line <> rest:
+      +text = String.trim(line)
+      +setting : String = "OnUnitInactiveSec="
+      Choice.choose(Nat,String.starts_with(text,setting),
+        _read => decimal(Nat.read(String.trim(String.drop(text,String.length(setting))))),
+        _read => timer_seconds(rest))
+
+def read_interval(path: String) -> IO(Nat):
+  do IO<Nat>:
+    text : Result<&1,&1,U32 & String,String> <- Text.Text.read(path)
+    IO.pure(Nat,timer_seconds(String.lines(P.value_or(text,""))))
+
+def default_interval() -> IO(Nat):
+  do IO<Nat>:
+    exe : Result<&1,&1,U32 & String,String> <- F.Files.realpath("/proc/self/exe")
+    +dir : String = Subs.directory_of(P.value_or(exe,""))
+    +packaged : Nat <- read_interval(dir ++ "/../share/baton2/systemd/user/" ++ timer_name())
+    Choice.choose(IO(Nat),Nat.is_lt(0n,packaged),
+      _read => IO.pure(Nat,packaged),
+      _read => read_interval(dir ++ "/../../bend2/deploy/linux/" ++ timer_name()))
+
+def interval(home: String) -> IO(Nat):
+  do IO<Nat>:
+    env : Result<&1,&1,U32 & String,String> <- IO.get_env("XDG_DATA_HOME")
+    +data : String = P.value_or(env,"")
+    root : String = Bool.pick(String,String.is_empty(data),home ++ "/.local/share",data)
+    +seconds : Nat <- read_interval(root ++ "/systemd/user/" ++ timer_name())
+    Choice.choose(IO(Nat),Nat.is_lt(0n,seconds),_read => IO.pure(Nat,seconds),_read => default_interval())
+
+def fresh(+now: String, +seconds: Nat, stat: Result<&1,&1,U32 & String,String>) -> Bool:
   match stat:
     case Fail{error}: False{}
     case Done{+record}:
       modified = decimal(Nat.read(Directory.at(String.split(record,Char.from_u32(9)),5)))
-      Bool.and(String.eq(Directory.observation_kind(record),"file"),Nat.is_lt(decimal(Nat.read(drop_fraction(now,9n))),Nat.add(modified,3600n)))
+      Bool.and(Nat.is_lt(0n,seconds),Bool.and(String.eq(Directory.observation_kind(record),"file"),
+        Nat.is_lt(decimal(Nat.read(drop_fraction(now,9n))),Nat.add(modified,seconds))))
 
 def receipt(+db: String, +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   P.bind_result(String,String,Text.Text.read(path),text =>
@@ -266,8 +302,9 @@ def refresh_locked(+db: String, +home: String, +harness: String, +alias: String,
   P.bind_result(String,String,Directory.list_dir(dir),names => do IO<Result<&1,&1,U32 & String,String>>:
     +latest : String = dir ++ "/" ++ latest_file(String.split(names,Char.from_u32(0)),"")
     stat : Result<&1,&1,U32 & String,String> <- F.Files.stat(latest)
+    +seconds : Nat <- interval(home)
     P.bind_result(String,String,Posix.HostPosix.now_ns(),+now =>
-      P.bind_result(String,String,Bool.pick(IO(Result<&1,&1,U32 & String,String>),fresh(now,stat),
+      P.bind_result(String,String,Bool.pick(IO(Result<&1,&1,U32 & String,String>),fresh(now,seconds,stat),
         IO.pure(Result<&1,&1,U32 & String,String>,Done{latest}),publish(db,home,harness,alias,dir,now)),
         path => receipt(db,path))))
 
