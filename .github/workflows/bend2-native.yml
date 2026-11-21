@@ -967,6 +967,8 @@ jobs:
           sdkroot=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sdkroot"])' "$sdk_selection")
           sdk_version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$sdk_selection")
           printf 'macOS SDK %s\n' "$sdk_version" | tee "$settings/sdk-version.txt"
+          clang_root="${BATON2_DARWIN_LLVM_ROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm}"
+          test -x "$clang_root/bin/clang"
           # LLVM 23 supports arm64e.x1 targets in Apple's linker stubs.
           llvm_release=23.1.6
           llvm_prefix="LLVM-$llvm_release-Linux-X64"
@@ -979,8 +981,8 @@ jobs:
           sha256sum --check "$settings/llvm-archive.sha256"
           mkdir "$llvm_root"
           tar -I 'zstd --long=30' -xf "$llvm_archive" -C "$llvm_root" --strip-components=1 \
-            "$llvm_prefix/bin/clang" "$llvm_prefix/bin/clang-23" \
-            "$llvm_prefix/bin/ld64.lld" "$llvm_prefix/bin/lld" "$llvm_prefix/lib/clang"
+            "$llvm_prefix/bin/ld64.lld" "$llvm_prefix/bin/lld"
+          ln -s "$(realpath "$clang_root/bin/clang")" "$llvm_root/bin/clang"
           rm -- "$llvm_archive"
           "$llvm_root/bin/clang" --version > "$settings/clang-version.txt"
           "$llvm_root/bin/ld64.lld" --version > "$settings/linker-version.txt"

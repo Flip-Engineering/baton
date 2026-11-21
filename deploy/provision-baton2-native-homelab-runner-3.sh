@@ -18,6 +18,7 @@ readonly UNIT_SOURCE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/systemd
 readonly UNIT_DEST=/etc/systemd/system/baton2-native-homelab-3.service
 readonly ARCHIVE=/mnt/nvme4tb/ci-runners/_dist/actions-runner-linux-x64-2.337.0.tar.gz
 readonly ARCHIVE_SHA256=70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613
+readonly DARWIN_LLVM_SOURCE=/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm
 readonly CONFIG_STDOUT=$BASE/.provision-config.stdout
 readonly CONFIG_STDERR=$BASE/.provision-config.stderr
 
@@ -125,6 +126,7 @@ getent group baton-compile >/dev/null || fail 'shared compile queue group baton-
     || fail "shared compile queue group baton-compile must have GID $QUEUE_GROUP_GID"
 [[ -d /var/tmp/baton2-compile-queue && -x /var/tmp/baton2-compile-queue/compile-queue-runner ]] \
     || fail 'maintained shared compile queue is unavailable'
+[[ -x $DARWIN_LLVM_SOURCE/bin/clang ]] || fail 'staged Darwin Clang is unavailable'
 command -v cpio >/dev/null 2>&1 || fail 'GNU cpio is required to extract the resolved macOS SDK'
 command -v zstd >/dev/null 2>&1 || fail 'zstd is required to extract the Darwin LLVM toolchain'
 
