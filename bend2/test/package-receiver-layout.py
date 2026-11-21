@@ -441,7 +441,7 @@ class ReceiverLayout(unittest.TestCase):
                 mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'):
             self.assertEqual(PACKAGE.artifact_target(args), ('Darwin', 'arm64'))
 
-    def test_cross_host_build_selects_the_staged_sdk_and_queue_compiler(self):
+    def test_cross_host_build_selects_the_resolved_sdk_and_queue_compiler(self):
         args = self.args(target_system='Darwin', target_machine='arm64',
                          focused_binary=None, full_binary=None, recovery_binary=None)
         llvm = self.home / 'llvm'
@@ -450,26 +450,31 @@ class ReceiverLayout(unittest.TestCase):
         (llvm / 'bin/ld64.lld').touch()
         sdk = self.home / 'sdk'
         (sdk / 'usr/include').mkdir(parents=True)
-        sdk_tree_sha = 'f' * 64
-        sdk_manifest = sdk.with_name(sdk.name + '.transfer-manifest.json')
-        sdk_manifest.write_text(json.dumps({
-            'schema': 'baton2-private-sdk-transfer-v1', 'destination': str(sdk.resolve()),
-            'verification': {'destination_tree_sha256': sdk_tree_sha},
-        }))
-        sdk_manifest_sha = PACKAGE.sha256(sdk_manifest)
+        resolver = self.home / 'darwin-sdk'
+        resolver.touch()
+        sdk_manifest = self.home / 'sdk.selection.json'
+        sdk_tree_sha = 'b' * 64
+        receipt = json.dumps({
+            'schema': 'baton2-darwin-sdk-selection-v1', 'sdkroot': str(sdk.resolve()),
+            'version': '30.1', 'tree_sha256': sdk_tree_sha,
+        })
+        sdk_manifest.write_text(receipt)
         args.darwin_llvm_root = llvm
         args.darwin_sdkroot = sdk
+        args.darwin_sdk_resolver = resolver
         with mock.patch.object(PACKAGE.platform, 'system', return_value='Linux'), \
                 mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'), \
-                mock.patch.object(PACKAGE, 'DARWIN_SDK_TREE_SHA256', sdk_tree_sha), \
-                mock.patch.object(PACKAGE, 'DARWIN_SDK_MANIFEST_SHA256', sdk_manifest_sha):
+                mock.patch.object(PACKAGE.subprocess, 'check_output', return_value=receipt) as verify:
             environment, cross_host = PACKAGE.configure_cross_host_build(
                 args, {}, 'Darwin', 'arm64')
+        verify.assert_called_once_with([resolver.resolve(), 'verify', sdk.resolve()], text=True)
         self.assertTrue(cross_host)
         self.assertEqual(environment['CC'],
                          str(ROOT / 'bend2/scripts/darwin-arm64-clang.sh'))
         self.assertEqual(environment['BATON2_DARWIN_LLVM_ROOT'], str(llvm.resolve()))
         self.assertEqual(environment['BATON2_DARWIN_SDKROOT'], str(sdk.resolve()))
+        self.assertEqual(environment['BATON2_DARWIN_SDK_VERSION'], '30.1')
+        self.assertEqual(environment['BATON2_DARWIN_SDK_MANIFEST_SHA256'], PACKAGE.sha256(sdk_manifest))
         self.assertEqual(environment['BATON2_DARWIN_SDK_TREE_SHA256'], sdk_tree_sha)
 
     def test_cross_host_build_refuses_an_unqueued_compiler_override(self):

@@ -13,6 +13,7 @@ import ../host/control.bend as HostControl
 import ./guidance.bend as Guidance
 import ./native-requests.bend as NativeRequests
 import ./native-initial-input.bend as NativeInitialInput
+import ./harness-update.bend as HarnessUpdate
 import ./usage-windows.bend as UW
 import ./observer-checkpoint.bend as Observer
 import ./../coordinator/logs.bend as Logs
@@ -1661,7 +1662,7 @@ def retained_identity(executable: String, next: String & String -> IO(Result<&1,
     identity : Result<&1,&1,U32 & String,String & String> <- HostControl.Control.identity(executable)
     retained_identity_result(identity,next)
 
-def retained_prepare_checked(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, +predecessor: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+def retained_prepare_checked(+db: String, +player: String, +directory: String, +recorded_cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, +predecessor: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match checked:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
     case Done{made}: do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
@@ -1669,6 +1670,10 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +native : String <- retained_native(db,player,sessions,session,harness)
       +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
+      +kind : String <- IO.pure(String,Tx.trim_nl(harness))
+      +selection : HarnessUpdate.Selection <- HarnessUpdate.check(db,player,kind,recorded_cmd,HarnessUpdate.supported(kind))
+      +cmd : String <- IO.pure(String,HarnessUpdate.command(selection))
+      update_env : List<String> <- IO.pure(List<String>,HarnessUpdate.environment(selection,kind))
       retained_identity(executable, identity => do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
         +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
         +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
@@ -1683,7 +1688,7 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         completion_extension : String <- omp_completion_extension(omp,executable)
         claude_entries : List<String> <- claude_environment_if(claude,executable)
         seat_checked : Unit <- claude_seat_check(claude,executable,absolute_db,player,cmd,directory)
-        +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON2_CREDIT_RESERVATION=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],claude_entries)) ++ identity_prefix(parts))
+        +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON2_CREDIT_RESERVATION=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],List.append(&1,String,claude_entries,update_env))) ++ identity_prefix(parts))
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
         history : String <- current_history(db,player)

@@ -23,12 +23,16 @@ fi
 sh bend2/scripts/build-native.sh
 sh bend2/scripts/build-native.sh bend2/src/host/compile-queue.bend .scratch/bend2/compile-queue-test
 BATON_ROOT_TEST_BINARY="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/root-inbox-delivery.py
+BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/harness-update.py
 sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry
 sh bend2/scripts/build-native.sh bend2/test/prompt-status-entry.bend .scratch/bend2/prompt-status-entry
 "$PYTHON3" bend2/test/sqlite-read-reuse.py
 BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/stop.py \
   Stop.test_retained_dsh_stop_preserves_work_and_exits_native_and_tool \
   Stop.test_explicit_force_reconciles_dsh_attempt_after_observer_loss
+if [ "$(uname -s)" = Linux ]; then
+  BEND="$compiler" sh bend2/test/darwin-sdk.sh
+fi
 "$PYTHON3" bend2/test/package-receiver-layout.py
 "$PYTHON3" bend2/test/omp-completion-extension.py
 "$PYTHON3" bend2/test/package-licenses.py
@@ -74,6 +78,8 @@ if .scratch/bend2/storage-focused > /dev/null 2>&1; then
   exit 1
 fi
 "$PYTHON3" bend2/test/stage-storage-clean.py
+sh bend2/scripts/build-native.sh bend2/src/coordinator/receive-focused.bend .scratch/bend2/receive-focused
+BATON2_STORAGE_FOCUSED_BINARY="$root/.scratch/bend2/receive-focused" "$PYTHON3" bend2/test/storage-focused-routes.py
 sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
 .scratch/bend2/subscription-profiles-test
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads

@@ -68,7 +68,7 @@ worktree whose origin is the authenticated repository and every local ref and
 HEAD is an advertised remote tip or an ancestor of one (`git ls-remote origin`
 plus ancestry checks). `git fsck --no-reflogs --unreachable` reports no objects
 outside those refs, no process, runtime input, lease, live reference, database
-path or pending attempt names it, and every other preservation fact is absent.
+path or pending attempt names it, and every other preservation fact is absent. A released linked worktree registered under its own path is admitted and leaves through `git worktree remove` without `--force`, so Git settles the worktree administration and keeps the branch. A Git refusal keeps the tree with Git's answer. A main checkout that still registers linked worktrees stays preserved, as does a linked path with no matching worktree registration.
 The object check includes commits retained only by reflogs and otherwise
 unreachable objects. The candidate root and every descendant must be owned by
 the cleaner's effective uid. Process references are checked across observable
@@ -82,6 +82,13 @@ keeps a staging candidate eligible when a session is supplied. The policy report
 root list is empty. storage-apply SESSION acquires the per-root writer lease
 described below. An empty root list returns an empty receipt. Preview and
 policy commands remain available.
+
+Each root object also reports a `filesystem` object with the root's device
+and owner uid from lstat and the mounted filesystem's block size, free bytes
+and total bytes. Free bytes counts the blocks available to unprivileged
+writers. A root that cannot be observed reports `{"unknown":detail}` with the
+host error. The values are status facts for operators; no cleanup decision
+reads them.
 
 ## Preservation evidence
 
@@ -239,8 +246,13 @@ The focused native test builds its own database and fixture tree:
 
 ```sh
 sh bend2/scripts/build-native.sh bend2/tests/storage.bend .scratch/bend2/storage-test
-.scratch/bend2/storage-test
+mkdir -p .scratch/bend2-storage-proc
+BATON_STORAGE_TEST_PROC="$PWD/.scratch/bend2-storage-proc" .scratch/bend2/storage-test
 ```
+
+The test build reads its process view from `BATON_STORAGE_TEST_PROC`.
+Fixture peers register their process ids there; use a fresh directory per
+run so stale registrations cannot preserve a candidate.
 
 It covers owner, database-path, lease, process, dirty, unpublished,
 runtime-input, ref, retained-generation and pending-attempt preservation; descendant cwd and

@@ -33,7 +33,9 @@ def wait_for(description, predicate, process, evidence, seconds=15):
 class BootstrapCancellation(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith('linux'), 'the bootstrap uses Linux process custody')
     def test_interrupt_waits_for_the_exact_background_child(self):
-        evidence = Path(tempfile.mkdtemp(prefix='bootstrap-compile-queue-cancel-'))
+        fixtures = ROOT / '.scratch/bend2'
+        fixtures.mkdir(parents=True, exist_ok=True)
+        evidence = Path(tempfile.mkdtemp(prefix='bootstrap-compile-queue-cancel-', dir=fixtures))
         source = evidence / 'source'
         scripts = source / 'bend2/scripts'
         entry = source / 'bend2/src/host/compile-queue.bend'

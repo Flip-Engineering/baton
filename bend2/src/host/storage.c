@@ -33,6 +33,10 @@
 #include <unistd.h>
 #ifdef __linux__
 #include <sys/syscall.h>
+#include <sys/statvfs.h>
+#endif
+#if defined(__APPLE__)
+#include <sys/mount.h>
 #endif
 
 #ifndef O_CLOEXEC
@@ -221,6 +225,44 @@ static void baton_storage_observe_call(IoWork *w) {
 static Term baton_storage_observe_pack(Env e, IoWork *w) {
   BatonStorageObserve *call = (BatonStorageObserve *)w->data;
   Term result = call->error ? io_fail(e, call->error, "storage observation failed")
+    : io_done(e, io_str(e, call->answer, strlen(call->answer)));
+  free(call->path); free(call->answer); free(call);
+  w->data = NULL;
+  return result;
+}
+
+/* ---------- filesystem ---------- */
+
+typedef struct { char *path, *answer; int error; } BatonStorageFilesystem;
+
+static void baton_storage_filesystem_call(IoWork *w) {
+  BatonStorageFilesystem *call = (BatonStorageFilesystem *)w->data;
+  struct stat info;
+  if (lstat(call->path, &info)) { call->error = errno; return; }
+  baton_u64 block, free_bytes, total_bytes;
+#if defined(__APPLE__)
+  struct statfs fs;
+  if (statfs(call->path, &fs)) { call->error = errno; return; }
+  block = (baton_u64)fs.f_bsize;
+  free_bytes = (baton_u64)fs.f_bavail * block;
+  total_bytes = (baton_u64)fs.f_blocks * block;
+#else
+  struct statvfs fs;
+  if (statvfs(call->path, &fs)) { call->error = errno; return; }
+  block = fs.f_frsize ? (baton_u64)fs.f_frsize : (baton_u64)fs.f_bsize;
+  free_bytes = (baton_u64)fs.f_bavail * block;
+  total_bytes = (baton_u64)fs.f_blocks * block;
+#endif
+  char text[256];
+  snprintf(text, sizeof(text), "%llu\t%llu\t%llu\t%llu\t%llu",
+    (baton_u64)info.st_dev, (baton_u64)info.st_uid, block, free_bytes, total_bytes);
+  call->answer = strdup(text);
+  if (!call->answer) call->error = ENOMEM;
+}
+
+static Term baton_storage_filesystem_pack(Env e, IoWork *w) {
+  BatonStorageFilesystem *call = (BatonStorageFilesystem *)w->data;
+  Term result = call->error ? io_fail(e, call->error, "filesystem observation failed")
     : io_done(e, io_str(e, call->answer, strlen(call->answer)));
   free(call->path); free(call->answer); free(call);
   w->data = NULL;
@@ -1789,6 +1831,19 @@ static Term baton_storage_observe_run(Env e, Term *f, IoWork *w) {
   return io_work(w, baton_storage_observe_call, baton_storage_observe_pack);
 }
 static void __attribute__((constructor)) baton_storage_observe_use(void) {io_eff(CID_STORAGEHOST_OBSERVE, baton_storage_observe_run, 0);}
+#endif
+
+#ifdef CID_STORAGEHOST_FILESYSTEM
+static Term baton_storage_filesystem_run(Env e, Term *f, IoWork *w) {
+  BatonStorageFilesystem *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  u64 length = 0;
+  call->path = io_cstr(e, f[0], &length);
+  if (!call->path || strlen(call->path) != length) { free(call->path); free(call); return io_fail(e, EINVAL, "path contains NUL"); }
+  w->data = (char *)call;
+  return io_work(w, baton_storage_filesystem_call, baton_storage_filesystem_pack);
+}
+static void __attribute__((constructor)) baton_storage_filesystem_use(void) {io_eff(CID_STORAGEHOST_FILESYSTEM, baton_storage_filesystem_run, 0);}
 #endif
 
 #ifdef CID_STORAGEHOST_MEASURE

@@ -174,8 +174,11 @@ class PackageLicenses(unittest.TestCase):
         manifest['selected_dependencies'] = [self.repl_fixture()]
         manifest['required_system_dependencies'] = CHECK.system_dependencies(CHECK.platform.system())
         PACKAGE.write_json(prefix / 'manifest.json', manifest)
-        helper = prefix / 'libexec/baton2/task-start.mjs'
-        shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', helper)
+        helpers = prefix / 'libexec/baton2'
+        shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', helpers / 'task-start.mjs')
+        for name in ('mcp-conductor.mjs', 'codex-root-relay.mjs', 'root-channel-config.mjs',
+                     'agent-summary-check.mjs', 'no-agent-summary.js'):
+            shutil.copyfile(ROOT / 'bend2/scripts' / name, helpers / name)
         LAYOUT.FINALIZE.finalize(prefix)
         output = self.home / 'unusable-runtime-check'
         output.mkdir()
@@ -187,6 +190,14 @@ class PackageLicenses(unittest.TestCase):
         actual_run = subprocess.run
 
         def run(argv, **kwargs):
+            if argv[-1] == 'register-receiver':
+                probe = pathlib.Path(kwargs['cwd'])
+                self.assertEqual(probe.parent, output)
+                self.assertEqual(argv, [str(probe / 'baton'), str(probe / 'unused.sqlite'),
+                                        'register-receiver'])
+                return subprocess.CompletedProcess(
+                    argv, 78, stdout='', stderr='baton: focused receiver is missing or not '
+                    'executable. Install the complete Baton package.\n')
             if argv in help_commands:
                 return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
             if argv == guide_command:
@@ -271,7 +282,7 @@ class PackageLicenses(unittest.TestCase):
             source = (self.source / entry['source_path']).read_bytes()
             self.assertEqual((prefix / entry['path']).read_bytes(), source)
 
-    def stage_runtime_files(self):
+    def stage_runtime_files(self, system='Darwin'):
         scripts = self.source / 'bend2/scripts'
         scripts.mkdir(parents=True)
         names = [harness + '-' + suffix + '.mjs'
@@ -297,8 +308,17 @@ class PackageLicenses(unittest.TestCase):
             path.write_bytes(('File-only ' + name + ' fixture; never run.\n').encode())
             path.chmod(0o755)
         shutil.copytree(ROOT / 'bend2/ui/orchestra', self.source / 'bend2/ui/orchestra')
-        PACKAGE.stage_adapters(self.payload)
+        shutil.copytree(ROOT / 'bend2/deploy/linux', self.source / 'bend2/deploy/linux')
+        PACKAGE.stage_adapters(self.payload, system=system)
         return names
+
+    def test_linux_install_stages_the_harness_update_schedule(self):
+        self.stage_runtime_files(system='Linux')
+        directory = self.payload / 'share/baton2/systemd/user'
+        for suffix in ('service', 'timer'):
+            name = 'baton-harness-update@.' + suffix
+            self.assertEqual((directory / name).read_bytes(),
+                             (ROOT / 'bend2/deploy/linux' / name).read_bytes())
 
     def test_archive_keeps_canonical_and_compatibility_adapter_bytes(self):
         names = self.stage_runtime_files()
