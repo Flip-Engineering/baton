@@ -24,7 +24,6 @@ def load(name, path):
 
 
 PACKAGE = load('package_native', ROOT / 'bend2/scripts/package-native.py')
-SDK = load('darwin_sdk', ROOT / 'bend2/scripts/darwin-sdk.py')
 STAGE = load('stage_native_install', ROOT / 'bend2/scripts/stage-native-install.py')
 CHECK = load('check_install', ROOT / 'bend2/scripts/check-install.py')
 VERIFY = load('verify_receiver_install', ROOT / 'bend2/scripts/verify-receiver-install.py')
@@ -451,21 +450,24 @@ class ReceiverLayout(unittest.TestCase):
         (llvm / 'bin/ld64.lld').touch()
         sdk = self.home / 'sdk'
         (sdk / 'usr/include').mkdir(parents=True)
-        (sdk / 'SDKSettings.json').write_text(json.dumps({
-            'CanonicalName': 'macosx30.1', 'Version': '30.1',
-        }))
-        sdk_manifest = SDK.receipt_path(sdk)
-        sdk_tree_sha = SDK.tree_sha256(sdk)
-        sdk_manifest.write_text(json.dumps({
-            'schema': SDK.SCHEMA, 'sdkroot': str(sdk.resolve()),
+        resolver = self.home / 'darwin-sdk'
+        resolver.touch()
+        sdk_manifest = self.home / 'sdk.selection.json'
+        sdk_tree_sha = 'b' * 64
+        receipt = json.dumps({
+            'schema': 'baton2-darwin-sdk-selection-v1', 'sdkroot': str(sdk.resolve()),
             'version': '30.1', 'tree_sha256': sdk_tree_sha,
-        }))
+        })
+        sdk_manifest.write_text(receipt)
         args.darwin_llvm_root = llvm
         args.darwin_sdkroot = sdk
+        args.darwin_sdk_resolver = resolver
         with mock.patch.object(PACKAGE.platform, 'system', return_value='Linux'), \
-                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'):
+                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'), \
+                mock.patch.object(PACKAGE.subprocess, 'check_output', return_value=receipt) as verify:
             environment, cross_host = PACKAGE.configure_cross_host_build(
                 args, {}, 'Darwin', 'arm64')
+        verify.assert_called_once_with([resolver.resolve(), 'verify', sdk.resolve()], text=True)
         self.assertTrue(cross_host)
         self.assertEqual(environment['CC'],
                          str(ROOT / 'bend2/scripts/darwin-arm64-clang.sh'))

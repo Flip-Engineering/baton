@@ -29,7 +29,9 @@ sh bend2/scripts/build-native.sh bend2/test/prompt-status-entry.bend .scratch/be
 BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/stop.py \
   Stop.test_retained_dsh_stop_preserves_work_and_exits_native_and_tool \
   Stop.test_explicit_force_reconciles_dsh_attempt_after_observer_loss
-"$PYTHON3" bend2/test/test_darwin_sdk.py
+if [ "$(uname -s)" = Linux ]; then
+  BEND="$compiler" sh bend2/test/darwin-sdk.sh
+fi
 "$PYTHON3" bend2/test/package-receiver-layout.py
 "$PYTHON3" bend2/test/omp-completion-extension.py
 "$PYTHON3" bend2/test/package-licenses.py

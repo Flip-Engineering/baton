@@ -14,7 +14,8 @@ readonly RUNNER_VERSION=2.337.0
 readonly RESUME_UID=980
 readonly RESUME_GID=971
 readonly QUEUE_GROUP_GID=974
-readonly UNIT_SOURCE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/systemd/baton2-native-homelab-3.service
+readonly SOURCE_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+readonly UNIT_SOURCE=$SOURCE_ROOT/deploy/systemd/baton2-native-homelab-3.service
 readonly UNIT_DEST=/etc/systemd/system/baton2-native-homelab-3.service
 readonly ARCHIVE=/mnt/nvme4tb/ci-runners/_dist/actions-runner-linux-x64-2.337.0.tar.gz
 readonly ARCHIVE_SHA256=70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613
@@ -127,7 +128,6 @@ getent group baton-compile >/dev/null || fail 'shared compile queue group baton-
 [[ -d /var/tmp/baton2-compile-queue && -x /var/tmp/baton2-compile-queue/compile-queue-runner ]] \
     || fail 'maintained shared compile queue is unavailable'
 [[ -x $DARWIN_LLVM_SOURCE/bin/clang ]] || fail 'staged Darwin Clang is unavailable'
-command -v cpio >/dev/null 2>&1 || fail 'GNU cpio is required to extract the resolved macOS SDK'
 command -v zstd >/dev/null 2>&1 || fail 'zstd is required to extract the Darwin LLVM toolchain'
 
 printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" | sha256sum --check --status \
@@ -160,6 +160,23 @@ done
 
 if ! id -nG "$RUNNER_USER" | tr ' ' '\n' | grep -Fxq baton-compile; then
     usermod --append --groups baton-compile "$RUNNER_USER"
+fi
+
+sdk_check=$(runuser --user "$RUNNER_USER" -- mktemp -d "$BASE/temp/darwin-sdk-check.XXXXXXXX")
+if ! runuser --user "$RUNNER_USER" -- env TMPDIR="$sdk_check" \
+    BATON2_QUEUE_RUN_ROOT="$sdk_check/queue" CC=/usr/bin/clang-19 \
+    BUN_JSC_maxPerThreadStackUsage=67108864 /bin/bash -c '
+        set -euo pipefail
+        cd "$1"
+        mkdir -p "$2/compiler/evidence" "$2/compiler/toolchain-home"
+        python3 .github/scripts/prepare-native-compiler.py --runner homelab \
+            --default-selection .github/native-compiler-selection.json --run "$2/compiler"
+        BEND="$2/compiler/toolchain-home/bin/bend" \
+            sh bend2/scripts/build-native.sh bend2/scripts/darwin-sdk.bend "$2/darwin-sdk"
+        "$2/darwin-sdk" resolve "$2/sdk" > "$2/selection.json"
+        rm -r -- "$2/sdk"
+    ' darwin-sdk-check "$SOURCE_ROOT" "$sdk_check" </dev/null > "$sdk_check/check.log" 2>&1; then
+    fail "macOS SDK resolver failed as $RUNNER_USER. See $sdk_check/check.log."
 fi
 
 registration_token=

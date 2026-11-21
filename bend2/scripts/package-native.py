@@ -9,7 +9,6 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import re
-import runpy
 import shutil
 import subprocess
 import tarfile
@@ -741,10 +740,11 @@ def configure_cross_host_build(args, environment, target_system, target_machine)
     require((llvm_root / 'bin/clang').is_file() and (llvm_root / 'bin/ld64.lld').is_file()
             and (sdkroot / 'usr/include').is_dir(),
             'The staged Darwin compiler, linker and SDK inputs are required for cross-host builds')
-    resolver = runpy.run_path(str(Path(__file__).with_name('darwin-sdk.py')))
-    sdk_receipt = resolver['receipt_path'](sdkroot)
-    require(sdk_receipt.is_file(), 'Resolve the macOS SDK for this build with darwin-sdk.py.')
-    sdk = resolver['verify'](sdkroot)
+    resolver = getattr(args, 'darwin_sdk_resolver', None)
+    require(resolver is not None and resolver.is_file(),
+            'Cross-host compilation requires the built Bend2 SDK resolver.')
+    sdk_receipt = sdkroot.with_name(sdkroot.name + '.selection.json')
+    sdk = json.loads(subprocess.check_output([resolver.resolve(), 'verify', sdkroot], text=True))
     environment.update(CC=str(ROOT / 'bend2/scripts/darwin-arm64-clang.sh'),
                        BATON2_DARWIN_LLVM_ROOT=str(llvm_root),
                        BATON2_DARWIN_SDKROOT=str(sdkroot),
@@ -935,7 +935,9 @@ def main():
     parser.add_argument('--darwin-llvm-root', type=Path,
                         help='staged homelab LLVM directory for a queued Darwin arm64 cross-build')
     parser.add_argument('--darwin-sdkroot', type=Path,
-                        help='macOS SDK resolved for this build by darwin-sdk.py')
+                        help='macOS SDK resolved for this build')
+    parser.add_argument('--darwin-sdk-resolver', type=Path,
+                        help='built Bend2 SDK resolver used to verify the selected SDK')
     for role in ('focused', 'full', 'recovery'):
         parser.add_argument('--' + role + '-binary', type=Path,
                             help='prebuilt ' + role + ' binary; otherwise build from source')

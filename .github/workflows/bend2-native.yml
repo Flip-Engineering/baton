@@ -23,7 +23,9 @@ name: bend2-native-development
       - 'bend2/test/**'
       - 'bend2/scripts/build-native.sh'
       - 'bend2/scripts/darwin-arm64-clang.sh'
-      - 'bend2/scripts/darwin-sdk.py'
+      - 'bend2/scripts/darwin-sdk*.bend'
+      - 'bend2/scripts/check-native.sh'
+      - 'deploy/provision-baton2-native-homelab-runner-3.sh'
       - 'bend2/scripts/package-native.py'
       - 'bend2/scripts/stage-repl-compiler.py'
       - 'bend2/scripts/check-install.py'
@@ -962,10 +964,15 @@ jobs:
           test ! -e "$settings"
           mkdir "$settings"
           sdk_selection="$settings/sdk-selection.json"
-          python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/darwin-sdk.py" \
-            "$BATON2_NATIVE_RUN/darwin-sdk" > "$sdk_selection"
-          sdkroot=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sdkroot"])' "$sdk_selection")
-          sdk_version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$sdk_selection")
+          source="$BATON2_NATIVE_RUN/build-source"
+          sdk_resolver="$BATON2_NATIVE_RUN/bin/darwin-sdk"
+          BEND="$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" \
+            sh "$source/bend2/scripts/build-native.sh" "$source/bend2/scripts/darwin-sdk.bend" "$sdk_resolver" \
+            > "$settings/sdk-resolver-build.stdout" 2> "$settings/sdk-resolver-build.stderr"
+          sha256sum "$sdk_resolver" > "$settings/sdk-resolver.sha256"
+          "$sdk_resolver" resolve "$BATON2_NATIVE_RUN/darwin-sdk" > "$sdk_selection" 2> "$settings/sdk-resolver.stderr"
+          sdkroot=$(jq -er .sdkroot "$sdk_selection")
+          sdk_version=$(jq -er .version "$sdk_selection")
           printf 'macOS SDK %s\n' "$sdk_version" | tee "$settings/sdk-version.txt"
           clang_root="${BATON2_DARWIN_LLVM_ROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm}"
           test -x "$clang_root/bin/clang"
@@ -1039,6 +1046,7 @@ jobs:
             --target-machine arm64
             --darwin-llvm-root "$llvm_root"
             --darwin-sdkroot "$sdkroot"
+            --darwin-sdk-resolver "$sdk_resolver"
             --generated-c "$RUNNER_TEMP/baton2-generated-c-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/generated/baton2.c"
             --context-typescript-package "$BATON2_NATIVE_RUN/typescript-runtime/node_modules/typescript"
           )
