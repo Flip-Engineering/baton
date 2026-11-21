@@ -1,0 +1,56 @@
+diff --git a/bend2/compiler/repl-upstream.lock.json b/bend2/compiler/repl-upstream.lock.json
+index 25a48d9e77eb20e577b330096fdd448757f7693d..a37c528e618d8c2d7428083edb9c3f61f7130a57 100644
+--- a/bend2/compiler/repl-upstream.lock.json
++++ b/bend2/compiler/repl-upstream.lock.json
+@@ -12,9 +12,9 @@
+       "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
+     },
+     {
+-      "bytes": 185634,
++      "bytes": 185675,
+       "path": "bend.ts",
+-      "sha256": "8abfac33e5f5136c474f1a496ec649d9ec81490840f93d2ab298eaaca5c0516d"
++      "sha256": "acad9090d14c14ffd883d2553b49d20da609637543bdf29711d64e68825d59c5"
+     },
+     {
+       "bytes": 277839,
+diff --git a/bend2/compiler/repl-upstream.provenance.json b/bend2/compiler/repl-upstream.provenance.json
+index e13dadca45f44abfd5c301e4acd2ba7cb68169c0..d2c35d1b5afe6e14d0d8db87a8c2e100ac5afd2a 100644
+--- a/bend2/compiler/repl-upstream.provenance.json
++++ b/bend2/compiler/repl-upstream.provenance.json
+@@ -3,7 +3,7 @@
+   "upstream": "Baton fork of Bend 2.0.25",
+   "compiler_archive_sha256": "5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3",
+   "official_release_artifact": false,
+-  "lock_sha256": "4abcb7bfe1535fb1e274c99c1ace67eb82ccecf6eec0c869ede207c37c0aeb8c",
++  "lock_sha256": "c9f6c6aca6e57fc4cf551144f51e87e6a83616eca7315f9df1cce187a49ef387",
+   "files": [
+     {
+       "bytes": 9973,
+@@ -16,9 +16,9 @@
+       "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
+     },
+     {
+-      "bytes": 185634,
++      "bytes": 185675,
+       "path": "bend.ts",
+-      "sha256": "8abfac33e5f5136c474f1a496ec649d9ec81490840f93d2ab298eaaca5c0516d"
++      "sha256": "acad9090d14c14ffd883d2553b49d20da609637543bdf29711d64e68825d59c5"
+     },
+     {
+       "bytes": 277839,
+diff --git a/bend2/compiler/upstream/bend.ts b/bend2/compiler/upstream/bend.ts
+index 80342df3735eb0ac0af7e61a0cb512d99616647d..98efe96f118d4af3c37521167a9e5cb1d704f049 100644
+--- a/bend2/compiler/upstream/bend.ts
++++ b/bend2/compiler/upstream/bend.ts
+@@ -738,7 +738,9 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm
+     }
+     if ("build" in task) {
+       const tm = task.build;
+-      const kids = results.splice(results.length - task.count, task.count);
++      const base = results.length - task.count;
++      const kids = results.slice(base);
++      results.length = base;
+       switch (tm.$) {
+         case "Let": {
+           const b = tm;
