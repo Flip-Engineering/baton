@@ -30,7 +30,7 @@ def slice(path: String, output: String, offset: Nat, length: Nat) -> IO(Unit):
       "skip=" ++ Nat.show(offset), "count=" ++ Nat.show(length), "status=none"])
     IO.pure(Unit, Unit{})
 
-def xword(path: String, offset: String, width: String) -> IO(Nat):
+def xword(path: String, offset: String, +width: String) -> IO(Nat):
   do IO<Nat>:
     value : String <- S.command(".", "od", ["-An", "-v", "--endian=big", "-t", "u" ++ width,
       "-j", offset, "-N", width, "--", path])
@@ -45,7 +45,7 @@ def payload(+package: String, +expected_size: String, expected_digest: String, +
   +compressed = work ++ "/toc.zlib"
   +toc = work ++ "/toc.xml"
   +output = work ++ "/payload.pbzx"
-  +entry = "/xar/toc/file[name='Payload']/data"
+  +entry : String = "/xar/toc/file[name='Payload']/data"
   do IO<String>:
     actual_size : String <- size(package)
     S.require(String.eq(actual_size, expected_size), "The Apple SDK package size differs from its catalog entry.")
@@ -100,7 +100,7 @@ def unpack_chunks(+data: String, +work: String, +position: Nat, +total: Nat) -> 
       +end : Nat <- IO.pure(Nat, Nat.add(start, stored))
       S.require(Nat.is_le(end, total), "The PBZX chunk data is incomplete.")
       slice(data, work ++ "/block", start, stored)
-      decoded : String <- Choice.choose(IO(String), Nat.is_eq(raw, stored),
+      +decoded : String <- Choice.choose(IO(String), Nat.is_eq(raw, stored),
         _ => IO.pure(String, work ++ "/block"),
         _ => do IO<String>:
           unused : String <- S.command(work, "sh", ["-c", "exec xz --decompress --stdout block > decoded"])

@@ -97,7 +97,7 @@ def tree_sha256(+sdk: String) -> IO(String):
 
 def verify(+sdk: String) -> IO(String):
   +receipt = receipt_path(sdk)
-  +error = "The macOS SDK resolution receipt does not match the selected SDK tree."
+  +error : String = "The macOS SDK resolution receipt does not match the selected SDK tree."
   do IO<String>:
     format : String <- json_member(receipt, "schema")
     root : String <- json_member(receipt, "sdkroot")
@@ -114,7 +114,7 @@ def gzip(source: String, output: String) -> IO(Unit):
     unused : String <- S.command(".", "sh", ["-c", "exec gzip -dc -- \"$1\" > \"$2\"", "gzip", source, output])
     IO.pure(Unit, Unit{})
 
-def fetch_installer(+work: String, url: String) -> IO(String):
+def fetch_installer(work: String, url: String) -> IO(String):
   +file = work ++ "/installer.dist"
   do IO<String>:
     S.fetch(url, "swdist.apple.com", file)
@@ -180,7 +180,7 @@ def resolve_stable(+output: String, +work: String, stable: S.Stable) -> IO(Unit)
         S.fetch(catalog, "swscan.apple.com", work ++ "/catalog.gz")
         gzip(work ++ "/catalog.gz", work ++ "/catalog.xml")
         rows : List<&2,S.Product> <- S.catalog_products(work ++ "/catalog.xml")
-        choice : S.Selected <- S.choose_product(~(url => fetch_installer(work, url)), rows, releases)
+        choice : S.Selected <- S.choose_product(~fetch_installer, work, rows, releases)
         install(output, work, catalog, expected, choice)
 
 def resolve(+path: String) -> IO(Unit):

@@ -43,7 +43,7 @@ def distribution_version(url: String) -> String:
     case "https://swdist.apple.com/beta": "31 beta 2"
     case other: ""
 
-def distribution(url: String) -> IO(String):
+def distribution(work: String, url: String) -> IO(String):
   IO.pure(String, "<choice title=\"SU_TITLE\"/>\"SU_TITLE\" = \"Command Line Tools for Xcode " ++ distribution_version(url) ++ "\";")
 
 def assert_product(choice: S.Selected) -> IO(Unit):
@@ -59,7 +59,7 @@ def product_test(work: String) -> IO(Unit):
       ++ product_row("older", "2030-01-01T00:00:00Z") ++ product_row("beta", "2030-01-03T00:00:00Z")
       ++ product_row("stable-patch", "2030-01-02T00:00:00Z") ++ "</dict></dict></plist>"))
     products : List<&2,S.Product> <- S.catalog_products(catalog)
-    choice : S.Selected <- S.choose_product(~distribution, products, ["30.9", "30.9.1"])
+    choice : S.Selected <- S.choose_product(~distribution, "", products, ["30.9", "30.9.1"])
     assert_product(choice)
 
 def assert_failure(+expected: String, result: Git.RunRes) -> IO(Unit):

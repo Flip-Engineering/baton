@@ -178,7 +178,7 @@ def apple_url(url: String, host: String) -> Bool:
 def fetch(+url: String, +host: String, path: String) -> IO(Unit):
   do IO<Unit>:
     require(apple_url(url, host), "Expected HTTPS from " ++ host ++ " at " ++ url)
-    location : String <- command(".", "curl", ["--disable", "--fail", "--silent", "--show-error",
+    +location : String <- command(".", "curl", ["--disable", "--fail", "--silent", "--show-error",
       "--location", "--proto", "=https", "--proto-redir", "=https", "--write-out", "%{url_effective}",
       "--output", path, "--", url])
     require(apple_url(location, host), "Expected HTTPS from " ++ host ++ " at " ++ location)
@@ -222,13 +222,13 @@ def newest_first(a: Product, b: Product) -> Bool:
 
 def catalog_products(path: String) -> IO(List<&2,Product>):
   # Select the key, date, English distribution and SDK pkg dictionaries for each product.
-  +sdk = "/CLTools_macOSNMOS_SDK.pkg"
-  +url = "key[.='URL']/following-sibling::*[1][self::string]"
-  +pkg = "key[.='Packages']/following-sibling::*[1][self::array]/dict["
+  +sdk : String = "/CLTools_macOSNMOS_SDK.pkg"
+  +url : String = "key[.='URL']/following-sibling::*[1][self::string]"
+  +pkg : String = "key[.='Packages']/following-sibling::*[1][self::array]/dict["
     ++ url ++ "[substring(., string-length(.) - " ++ Nat.show(Nat.sub(String.length(sdk), 1n))
     ++ ")='" ++ sdk ++ "']]"
-  +dist = "key[.='Distributions']/following-sibling::*[1][self::dict]/key[.='English']/following-sibling::*[1][self::string]"
-  +products = "/plist/dict/key[.='Products']/following-sibling::*[1][self::dict]/dict[" ++ pkg ++ "][" ++ dist ++ "]"
+  +dist : String = "key[.='Distributions']/following-sibling::*[1][self::dict]/key[.='English']/following-sibling::*[1][self::string]"
+  +products : String = "/plist/dict/key[.='Products']/following-sibling::*[1][self::dict]/dict[" ++ pkg ++ "][" ++ dist ++ "]"
   +xpath = products ++ "/preceding-sibling::*[1][self::key] | "
     ++ products ++ "/key[.='PostDate']/following-sibling::*[1][self::date] | "
     ++ products ++ "/" ++ dist ++ " | " ++ products ++ "/" ++ pkg
@@ -240,7 +240,7 @@ def catalog_products(path: String) -> IO(List<&2,Product>):
 def installer_version(text: String) -> String:
   +assignment = String.trim_start(after(text, "\"SU_TITLE\""))
   +title = String.trim_start(after(assignment, "="))
-  +prefix = "\"Command Line Tools for Xcode "
+  +prefix : String = "\"Command Line Tools for Xcode "
   +version = before(String.drop(title, String.length(prefix)), "\";")
   Choice.choose(String, String.is_empty(assignment), _ => "", _ =>
     Choice.choose(String, Bool.and(String.starts_with(assignment, "="), Bool.and(String.starts_with(title, prefix),
@@ -253,17 +253,22 @@ type Selected is Data:
 def property(+pkg: String, name: String, +tag: String) -> String:
   between(after(pkg, "<key>" ++ name ++ "</key>"), "<" ++ tag ++ ">", "</" ++ tag ++ ">")
 
-def choose_product(~fetch_text: String -> IO(String), +products: List<&2,Product>, +releases: List<&2,String>) -> IO(Selected):
+def offered_version(releases: List<&2,String>, +version: String) -> Bool:
+  match releases:
+    case Nil{}: False{}
+    case head <> tail: Bool.or(String.eq(version, head), offered_version(tail, version))
+
+def choose_product(~fetch_text: String -> String -> IO(String), +work: String, +products: List<&2,Product>, +releases: List<&2,String>) -> IO(Selected):
   match products:
     case Nil{}: IO.die(Selected, 1, "Apple Software Update has no SDK package for stable Xcode " ++ String.join(releases, ", "))
     case product{+id, _, dist, +pkg} <> rest:
       do IO<Selected>:
-        installer : String <- fetch_text(dist)
+        installer : String <- fetch_text(work, dist)
         +version : String <- IO.pure(String, installer_version(installer))
         Choice.choose(IO(Selected), Bool.and(valid_version(version),
-          List.any(~&2, ~String, ~(value => String.eq(version, value)), releases)),
+          offered_version(releases, version)),
           _ => do IO<Selected>:
             require(String.is_empty(after(pkg, "</dict>")), "Apple product " ++ id ++ " has multiple current SDK packages.")
             IO.pure(Selected, selected{id, version, property(pkg, "URL", "string"),
               property(pkg, "Size", "integer"), property(pkg, "Digest", "string")}),
-          _ => choose_product(fetch_text, rest, releases))
+          _ => choose_product(fetch_text, work, rest, releases))
