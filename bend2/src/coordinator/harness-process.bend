@@ -24,8 +24,8 @@ def value_or(result: Result<&1,&1,U32 & String,String>, fallback: String) -> Str
 def unit_result(result: T.RunRes) -> Result<&1,&1,U32 & String,Unit>:
   match result:
     case T.RRun{T.SExit{0},out}: Done{Unit{}}
-    case T.RRun{T.SExit{code},out}: Fail{(code,"exit " ++ U32.show(code) ++ " " ++ out)}
-    case T.RRun{T.SSignal{signal},out}: Fail{(signal,"signal " ++ U32.show(signal))}
+    case T.RRun{T.SExit{+code},out}: Fail{(code,"exit " ++ U32.show(code) ++ " " ++ out)}
+    case T.RRun{T.SSignal{+signal},out}: Fail{(signal,"signal " ++ U32.show(signal))}
     case T.RSpawn{detail}: Fail{(1,detail)}
 
 def run(args: List<String>, cwd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -36,8 +36,8 @@ def run(args: List<String>, cwd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def directory_result(result: T.RunRes) -> Result<&1,&1,U32 & String,String>:
   match result:
     case T.RRun{T.SExit{0},out}: Done{Tx.trim_nl(out)}
-    case T.RRun{T.SExit{code},out}: Fail{(code,"mktemp exited " ++ U32.show(code) ++ " " ++ out)}
-    case T.RRun{T.SSignal{signal},out}: Fail{(signal,"mktemp killed by signal " ++ U32.show(signal))}
+    case T.RRun{T.SExit{+code},out}: Fail{(code,"mktemp exited " ++ U32.show(code) ++ " " ++ out)}
+    case T.RRun{T.SSignal{+signal},out}: Fail{(signal,"mktemp killed by signal " ++ U32.show(signal))}
     case T.RSpawn{detail}: Fail{(1,detail)}
 
 def directory(template: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String>):
