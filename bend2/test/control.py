@@ -669,6 +669,7 @@ class Control(unittest.TestCase):
 
     def test_project_discovery_keeps_worktree_sessions_and_shared_knowledge(self):
         self.root()
+        self.git('remote', 'add', 'origin', str(self.repo))
         assignment = self.recruit('project-linked', 'muse')
         workspace = pathlib.Path(assignment['workspace'])
         shared_workspace = self.repo / 'shared λ 🙂'
