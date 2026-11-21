@@ -1678,6 +1678,30 @@ def waiters_reap_stale(+dir: String, +name: String) -> IO(Unit):
     read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
     waiters_reap_first(read, dir ++ "/" ++ name)
 
+# A supervisor publishes a second ticket under $state/admission/waiting when
+# it competes for host memory and removes it only when admission succeeds. A
+# supervisor that dies while waiting, or a host restart, leaves its record
+# behind. Each supervisor start and each admission decision reaps waiting
+# records through the same parse, liveness and second-read proof as the
+# scheduling tickets, so the directory holds only records of live processes
+# and unreadable leftovers.
+
+def admission_waiting_dir(+state: String) -> String:
+  admission_root(state) ++ "/waiting"
+
+def admission_waiting_reap_names(names: List<&1,String>, +dir: String) -> IO(Unit):
+  match names:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case Con{+name, rest}:
+      do IO<Unit>:
+        reaped : Unit <- waiters_reap_stale(dir, name)
+        admission_waiting_reap_names(rest, dir)
+
+def admission_waiting_reap(+state: String) -> IO(Unit):
+  do IO<Unit>:
+    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(admission_waiting_dir(state)))
+    admission_waiting_reap_names(Tx.split_nul(names), admission_waiting_dir(state))
+
 def waiters_ticket_higher(+text: String, +token: String, +priority: U32) -> IO(Bool):
   do IO<Bool>:
     contender : Bool <- IO.pure(Bool,
@@ -2030,6 +2054,7 @@ def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state:
   do IO<AdmissionGate>:
     +priority : U32 <- refresh_priority(attempt,keydir,state,kind,key,token,pid,start,current)
     +guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
+    waiting_reaped : Unit <- admission_waiting_reap(state)
     +meminfo : String <- IO.try(String, admission_meminfo(state))
     +available : U32 <- IO.pure(U32,status_number(field(meminfo,"available_kb")))
     +total : U32 <- IO.pure(U32,status_number(field(meminfo,"total_kb")))
@@ -2093,6 +2118,7 @@ def admission_probe_result(result: Result<&1,&1,U32 & String,String>, +attempt: 
           made : Unit <- IO.try(Unit,L.CompileQueueLifecycle.mkdir_p(admission_root(state) ++ "/running"))
           made_usage : Unit <- IO.try(Unit,L.CompileQueueLifecycle.mkdir_p(admission_root(state) ++ "/usage"))
           made_waiting : Unit <- IO.try(Unit,L.CompileQueueLifecycle.mkdir_sticky(admission_root(state) ++ "/waiting"))
+          waiting_reaped : Unit <- admission_waiting_reap(state)
           +history_group : String <- attempt_group(attempt)
           admission_ticket : Unit <- IO.try(Unit,L.CompileQueueLifecycle.write_text(
             admission_root(state) ++ "/waiting/" ++ token,
