@@ -103,7 +103,7 @@ def wrapper_words(line: String, +quote: U32, +escaped: Bool, +token: String, +wo
             Choice.choose(List<&2,String>,Bool.and(plain,Char.is_space(c)), _word_unit => wrapper_words(rest,0,False{},"",emit_token(token,words)), _word_unit =>
               Choice.choose(List<&2,String>,U32.is_eq(quote,code), _word_unit => wrapper_words(rest,0,False{},token,words), _word_unit =>
                 Choice.choose(List<&2,String>,Bool.and(plain,Bool.or(U32.is_eq(code,39),U32.is_eq(code,34))), _word_unit => wrapper_words(rest,code,False{},token,words), _word_unit =>
-                  wrapper_words(rest,quote,False{},SCon{c,token},words))))))
+                  wrapper_words(rest,quote,False{},SCon{c,token},words)))))))
 
 def wrapper_exec(lines: List<&2,String>) -> String:
   match lines:

@@ -7,7 +7,6 @@ import ../git/text.bend as Tx
 import ../git/types.bend as T
 import ../host/choice.bend as Choice
 import ../host/compile-queue-files.bend as Directory
-import ../host/compile-queue-state.bend as State
 import ../host/digest.bend as Digest
 import ../host/files.bend as F
 import ../host/posix.bend as Posix
@@ -18,6 +17,11 @@ import ../coordinator/commands.bend as C
 
 type Observation is Data:
   Observed{old: String, new: String, status: String, stdout: String, stderr: String, error: String}
+
+def decimal(value: Maybe<&2,Nat>) -> Nat:
+  match value:
+    case Some{number}: number
+    case None{}: 0n
 
 def version_list(+harness: String, result: T.RunRes) -> String:
   match result:
@@ -70,6 +74,7 @@ def backup_paths(+harness: String, +home: String, +alias: String, +target: Strin
         IO.pure(Result<&1,&1,U32 & String,List<String>>,Done{[parent ++ "/muse-bin-" ++ String.trim(release),parent ++ "/.muse-release-info.json",state]}))
     case other: IO.pure(Result<&1,&1,U32 & String,List<String>>,Done{Nil{}})
 
+# The vendor can rewrite these files in place. Back up their bytes separately.
 def backup_options(file: String) -> List<String>:
   match file:
     case "auto-update-version": ["-a"]
@@ -161,6 +166,7 @@ type Plan is Data:
 
 def prepare(+harness: String, +alias: String, +target: String, +stage: String, +path: String) -> IO(Result<&1,&1,U32 & String,Plan>):
   match harness:
+    # OMP updates the executable on its PATH. Publish the staged inode after verification.
     case "omp":
       +command = stage ++ "/" ++ Install.name(alias)
       P.bind_result(Unit,Plan,F.Files.copy_file(target,command),copied =>
@@ -232,7 +238,7 @@ def publish(+db: String, +home: String, +harness: String, +alias: String, +dir: 
     directory : Result<&1,&1,U32 & String,String> <- P.directory(Subs.directory_of(alias) ++ "/.baton-update-XXXXXXXXXX",home)
     result : Observation <- staged(home,harness,alias,directory)
     +path : String = dir ++ "/" ++ id ++ ".json"
-    P.bind_result(Unit,String,F.Files.write_group_read(path,record(id,Nat.show(Nat.div(State.nat(now),1000000n)),harness,alias,result)),
+    P.bind_result(Unit,String,F.Files.write_group_read(path,record(id,Nat.show(Nat.div(decimal(Nat.read(now)),1000000n)),harness,alias,result)),
       written => IO.pure(Result<&1,&1,U32 & String,String>,Done{path})))
 
 def latest_file(entries: List<&2,String>, +latest: String) -> String:
@@ -244,8 +250,8 @@ def fresh(+now: String, stat: Result<&1,&1,U32 & String,String>) -> Bool:
   match stat:
     case Fail{error}: False{}
     case Done{+record}:
-      modified = State.nat(Directory.at(String.split(record,Char.from_u32(9)),5))
-      Bool.and(String.eq(Directory.observation_kind(record),"file"),Nat.is_lt(Nat.div(State.nat(now),1000000000n),Nat.add(modified,3600n)))
+      modified = decimal(Nat.read(Directory.at(String.split(record,Char.from_u32(9)),5)))
+      Bool.and(String.eq(Directory.observation_kind(record),"file"),Nat.is_lt(Nat.div(decimal(Nat.read(now)),1000000000n),Nat.add(modified,3600n)))
 
 def receipt(+db: String, +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   P.bind_result(String,String,Text.Text.read(path),text =>
