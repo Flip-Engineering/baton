@@ -8,6 +8,7 @@
 import Base
 import ./types.bend as T
 import ./observe.bend as O
+import ./worktree.bend as W
 import ../host/files.bend as F
 import ../host/storage.bend as H
 import ../host/sqlite.bend as DB
@@ -612,11 +613,13 @@ def single_worktree(+worklist: String, +toplevel: String) -> Bool:
   Bool.and(String.starts_with(worklist, prefix),
     Bool.not(String.contains(String.drop(worklist, String.length(prefix)), "\nworktree ")))
 
-def staging_worktree_evidence(toplevel: String, gitdir: String, commondir: String, worklist: String) -> T.Presence:
-  Bool.pick(T.Presence,
-    Bool.or(Bool.not(String.eq(Tx.trim_nl(gitdir), Tx.trim_nl(commondir))),
-      Bool.not(single_worktree(worklist, toplevel))),
-    T.Present{"worktree-dependency"}, T.Absent{})
+def staging_worktree_evidence(+toplevel: String, +gitdir: String, +commondir: String, +worklist: String,
+                            +candidate: String) -> T.Presence:
+  Bool.pick(T.Presence, Bool.not(String.eq(Tx.trim_nl(gitdir), Tx.trim_nl(commondir))),
+    Bool.pick(T.Presence, W.worktree_registered(worklist, Tx.trim_nl(toplevel), candidate),
+      T.Absent{}, T.Present{"worktree-unregistered"}),
+    Bool.pick(T.Presence, Bool.not(single_worktree(worklist, toplevel)),
+      T.Present{"worktree-dependency"}, T.Absent{}))
 
 def staging_publication_after_worktree(worktree: T.Presence, unreachable: Maybe<String>) -> T.Presence:
   match worktree:
@@ -624,18 +627,18 @@ def staging_publication_after_worktree(worktree: T.Presence, unreachable: Maybe<
     case other: other
 
 def staging_publication_evidence(toplevel: String, gitdir: String, commondir: String, worklist: String,
-                                 unreachable: Maybe<String>) -> T.Presence:
-  staging_publication_after_worktree(staging_worktree_evidence(toplevel, gitdir, commondir, worklist),
+                                 unreachable: Maybe<String>, +candidate: String) -> T.Presence:
+  staging_publication_after_worktree(staging_worktree_evidence(toplevel, gitdir, commondir, worklist, candidate),
     unreachable)
 
 def staging_remote_result(published: Maybe<Bool>, toplevel: String, gitdir: String, commondir: String,
-                          worklist: String, unreachable: Maybe<String>) -> IO(T.Presence):
+                          worklist: String, unreachable: Maybe<String>, +candidate: String) -> IO(T.Presence):
   match published:
     case None{}: IO.pure(T.Presence, T.Unknown{})
     case Some{False{}}: IO.pure(T.Presence, T.Present{"unpublished-object"})
     case Some{True{}}:
       IO.pure(T.Presence, staging_publication_evidence(Tx.trim_nl(toplevel), gitdir, commondir,
-        worklist, unreachable))
+        worklist, unreachable, candidate))
 
 def staging_remote_evidence(+source_path: String, +candidate_path: String,
                             remote_text: String, refs: String, +head: String, toplevel: String,
@@ -647,15 +650,17 @@ def staging_remote_evidence(+source_path: String, +candidate_path: String,
     IO.pure(T.Presence, T.Unknown{}),
     do IO<T.Presence>:
       published : Maybe<Bool> <- published_local_refs(source_path, candidate_path, local, commits)
-      staging_remote_result(published, toplevel, gitdir, commondir, worklist, unreachable))
+      staging_remote_result(published, toplevel, gitdir, commondir, worklist, unreachable, candidate_path))
 
 # A released staging source is a checkout whose ownership release is recorded
 # in its root class. Removal requires the candidate origin to be the
 # authenticated repository, every local ref object in every namespace and HEAD
 # to be published by that remote, no objects
-# unreachable from local refs (including reflog-only objects), and every
-# worktree registration to point at the candidate itself. Any command failure
-# preserves the candidate.
+# unreachable from local refs (including reflog-only objects), and a worktree
+# registration that the removal can settle: a standalone checkout with no other
+# registration, or a linked worktree registered under its own path. A main
+# checkout with live linked registrations and an unregistered linked path stay
+# preserved. Any command failure preserves the candidate.
 def staging_evidence(+source_path: String, +candidate_path: String,
                      +source_url: String, +candidate_url: String, remote_text: String,
                      refs: String, head: String, toplevel: String, gitdir: String,

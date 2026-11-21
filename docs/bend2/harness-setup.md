@@ -4,6 +4,45 @@ Baton2 launches an external harness executable for each session. Install and
 authenticate the harness under the account that runs the coordinator. Keep its
 configuration and conversation storage available across turns.
 
+## Harness updates on Linux
+
+Use the service account's installs at `~/.local/bin/codex`,
+`~/.local/bin/claude`, `~/.local/bin/omp` and `~/.local/bin/muse` as the managed
+receiver commands. Existing receiver records that contain a version path from
+the Codex standalone or Claude Code native installation also use the current
+installation. Baton updates OMP standalone copies under
+`~/.local/share/baton-native-clients/omp-VERSION-linux-ARCH/` in place. The
+service account's `omp-batonci-env` wrapper keeps its environment bindings and
+runs the updated copy. Other receiver paths continue to select their recorded
+executable.
+
+Before each managed attempt or model discovery, Baton checks the installation.
+It reuses the most recent update result for one hour. It runs `codex update`,
+`claude update`, `omp update` or the Muse launcher installer under the service
+account. A running process keeps the version it started with. Baton reads
+catalogs from the selected clients through Codex `debug models`, OMP
+`models --json`, Claude Code SDK initialization and Muse MSP `model/list`.
+
+Each completed check writes its time, versions, result and updater output under
+`~/.local/state/baton2/harness-updates/`. A failure keeps the previous
+installation available and sends its receipt to the Orchestra root.
+
+For periodic checks, enable the packaged systemd user timer under the service
+account. Use the installed Baton link at `~/.local/bin/baton` and the absolute
+path of the Orchestra database receiving the scheduled check reports.
+
+```sh
+unit_dir="${XDG_DATA_HOME:-$HOME/.local/share}/systemd/user"
+timer=$(systemd-escape --path --template=baton-harness-update@.timer "$BATON2_DATABASE")
+install -d "$unit_dir/timers.target.wants"
+install -m 0644 "$BATON2_PREFIX"/share/baton2/systemd/user/baton-harness-update@.* "$unit_dir/"
+ln -sfn ../baton-harness-update@.timer "$unit_dir/timers.target.wants/$timer"
+systemctl --user daemon-reload
+systemctl --user start "$timer"
+```
+
+Run `baton DATABASE harness-update` for the same sweep from the command line.
+
 ## Qualified routes
 
 The [native hierarchy qualification](native-qualification-2026-10-02/README.md)

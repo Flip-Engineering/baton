@@ -68,6 +68,7 @@ type Command is Data:
   Models{session: String}
   ModelsAll{session: String}
   HarnessInventory{}
+  HarnessUpdate{}
   UsageWindows{session: String}
   UsageWindowRefresh{session: String}
   Logs{session: String, level: String}
@@ -924,6 +925,7 @@ def sql(command: Command) -> String:
     case Account{action,id,provider,harness,funding,secret_ref,organization,detail,session}: ""
     case Models{session}: ""
     case ModelsAll{session}: ""
+    case HarnessUpdate{}: ""
     case HarnessInventory{}: ""
     case UsageWindows{session}: ""
     case UsageWindowRefresh{session}: ""
@@ -977,6 +979,7 @@ def parse_verb_only(+verb: String) -> Command:
     case "--help": Help{}
     case "status": Status{}
     case "harness-inventory": HarnessInventory{}
+    case "harness-update": HarnessUpdate{}
     case "workers": LegacySubordinates{}
     case "players": Players{}
     case "orchestra": Orchestra{}
