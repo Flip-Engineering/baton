@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import sys
 import unittest
 
@@ -61,6 +62,9 @@ class AccountCredits(unittest.TestCase):
 
     def setUp(self):
         identity.ControlIdentity.setUp(self)
+        helpers = self.prefix / 'libexec/baton2'
+        for name in ('dsh-worker.mjs', 'omp-completion.mjs'):
+            shutil.copyfile(ROOT / 'bend2/scripts' / name, helpers / name)
         # The fixture resolves the session it serves from the model it was launched with.
         config = self.directory / 'fixture.json'
         settings = json.loads(config.read_text())
@@ -411,7 +415,7 @@ class AccountCredits(unittest.TestCase):
         # The usage helper commits this input after the first native has ended
         # and its provider refusal has been recorded, before account selection.
         helper = self.prefix / 'libexec/baton2/usage-read'
-        helper.unlink()
+        helper.unlink(missing_ok=True)
         helper.write_text('#!' + sys.executable + '\n'
                           + 'database_path=' + repr(str(self.db)) + '\n'
                           + 'owed=' + repr(owed) + '\n' + r'''
