@@ -24,6 +24,7 @@ def load(name, path):
 
 
 PACKAGE = load('package_native', ROOT / 'bend2/scripts/package-native.py')
+SDK = load('darwin_sdk', ROOT / 'bend2/scripts/darwin-sdk.py')
 STAGE = load('stage_native_install', ROOT / 'bend2/scripts/stage-native-install.py')
 CHECK = load('check_install', ROOT / 'bend2/scripts/check-install.py')
 VERIFY = load('verify_receiver_install', ROOT / 'bend2/scripts/verify-receiver-install.py')
@@ -441,7 +442,7 @@ class ReceiverLayout(unittest.TestCase):
                 mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'):
             self.assertEqual(PACKAGE.artifact_target(args), ('Darwin', 'arm64'))
 
-    def test_cross_host_build_selects_the_staged_sdk_and_queue_compiler(self):
+    def test_cross_host_build_selects_the_resolved_sdk_and_queue_compiler(self):
         args = self.args(target_system='Darwin', target_machine='arm64',
                          focused_binary=None, full_binary=None, recovery_binary=None)
         llvm = self.home / 'llvm'
@@ -450,19 +451,19 @@ class ReceiverLayout(unittest.TestCase):
         (llvm / 'bin/ld64.lld').touch()
         sdk = self.home / 'sdk'
         (sdk / 'usr/include').mkdir(parents=True)
-        sdk_tree_sha = 'f' * 64
-        sdk_manifest = sdk.with_name(sdk.name + '.transfer-manifest.json')
-        sdk_manifest.write_text(json.dumps({
-            'schema': 'baton2-private-sdk-transfer-v1', 'destination': str(sdk.resolve()),
-            'verification': {'destination_tree_sha256': sdk_tree_sha},
+        (sdk / 'SDKSettings.json').write_text(json.dumps({
+            'CanonicalName': 'macosx30.1', 'Version': '30.1',
         }))
-        sdk_manifest_sha = PACKAGE.sha256(sdk_manifest)
+        sdk_manifest = SDK.receipt_path(sdk)
+        sdk_tree_sha = SDK.tree_sha256(sdk)
+        sdk_manifest.write_text(json.dumps({
+            'schema': SDK.SCHEMA, 'sdkroot': str(sdk.resolve()),
+            'version': '30.1', 'tree_sha256': sdk_tree_sha,
+        }))
         args.darwin_llvm_root = llvm
         args.darwin_sdkroot = sdk
         with mock.patch.object(PACKAGE.platform, 'system', return_value='Linux'), \
-                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'), \
-                mock.patch.object(PACKAGE, 'DARWIN_SDK_TREE_SHA256', sdk_tree_sha), \
-                mock.patch.object(PACKAGE, 'DARWIN_SDK_MANIFEST_SHA256', sdk_manifest_sha):
+                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'):
             environment, cross_host = PACKAGE.configure_cross_host_build(
                 args, {}, 'Darwin', 'arm64')
         self.assertTrue(cross_host)
@@ -470,6 +471,8 @@ class ReceiverLayout(unittest.TestCase):
                          str(ROOT / 'bend2/scripts/darwin-arm64-clang.sh'))
         self.assertEqual(environment['BATON2_DARWIN_LLVM_ROOT'], str(llvm.resolve()))
         self.assertEqual(environment['BATON2_DARWIN_SDKROOT'], str(sdk.resolve()))
+        self.assertEqual(environment['BATON2_DARWIN_SDK_VERSION'], '30.1')
+        self.assertEqual(environment['BATON2_DARWIN_SDK_MANIFEST_SHA256'], PACKAGE.sha256(sdk_manifest))
         self.assertEqual(environment['BATON2_DARWIN_SDK_TREE_SHA256'], sdk_tree_sha)
 
     def test_cross_host_build_refuses_an_unqueued_compiler_override(self):

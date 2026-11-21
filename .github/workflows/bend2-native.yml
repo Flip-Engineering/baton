@@ -23,6 +23,7 @@ name: bend2-native-development
       - 'bend2/test/**'
       - 'bend2/scripts/build-native.sh'
       - 'bend2/scripts/darwin-arm64-clang.sh'
+      - 'bend2/scripts/darwin-sdk.py'
       - 'bend2/scripts/package-native.py'
       - 'bend2/scripts/stage-repl-compiler.py'
       - 'bend2/scripts/check-install.py'
@@ -958,14 +959,17 @@ jobs:
           export BATON2_QUEUE_RUN_ROOT="$BATON2_NATIVE_RUN/compile-queue"
           unset BEND_GENERATED_C
           llvm_root="${BATON2_DARWIN_LLVM_ROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm}"
-          sdkroot="${BATON2_DARWIN_SDKROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk}"
-          sdk_manifest="${sdkroot}.transfer-manifest.json"
           test -r "$llvm_root/bin/clang" && test -x "$llvm_root/bin/clang"
           test -r "$llvm_root/bin/ld64.lld" && test -x "$llvm_root/bin/ld64.lld"
-          test -r "$sdk_manifest"
           settings="$BATON2_NATIVE_RUN/build-settings"
           test ! -e "$settings"
           mkdir "$settings"
+          sdk_selection="$settings/sdk-selection.json"
+          python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/darwin-sdk.py" \
+            "$BATON2_NATIVE_RUN/darwin-sdk" > "$sdk_selection"
+          sdkroot=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sdkroot"])' "$sdk_selection")
+          sdk_version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$sdk_selection")
+          printf 'macOS SDK %s\n' "$sdk_version" | tee "$settings/sdk-version.txt"
           printf '%s\n' "$llvm_root/bin/clang" > "$settings/clang-path.txt"
           sha256sum "$llvm_root/bin/clang" > "$settings/clang.sha256"
           printf '%s\n' "$llvm_root/bin/ld64.lld" > "$settings/linker-path.txt"
@@ -981,8 +985,6 @@ jobs:
           sha256sum "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.sha256"
           stat -Lc '%s' "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.size"
           file -L "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.file"
-          sha256sum "$sdk_manifest" > "$settings/sdk-transfer-manifest.sha256"
-          python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["verification"]["destination_tree_sha256"])' "$sdk_manifest" > "$settings/sdk-tree.sha256"
           ulimit -a > "$settings/limits-soft-before.txt"
           ulimit -H -a > "$settings/limits-hard-before.txt"
           requested_stack_kib=65536

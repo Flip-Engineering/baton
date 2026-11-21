@@ -7,4 +7,3 @@ Type=oneshot
 ExecStart=/usr/bin/setfacl -m u:batonci2:--x,u:batonci3:--x /mnt/nvme4tb/ci-runners/baton2-native-homelab
 ExecStart=/usr/bin/setfacl -m u:batonci2:--x,u:batonci3:--x /mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains
 ExecStart=/usr/bin/setfacl -m u:batonci2:--x,u:batonci3:--x /mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple
-ExecStart=/usr/bin/setfacl -m u:batonci2:r--,u:batonci3:r-- /mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk.transfer-manifest.json

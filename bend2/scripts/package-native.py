@@ -9,6 +9,7 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import re
+import runpy
 import shutil
 import subprocess
 import tarfile
@@ -32,8 +33,6 @@ RETAINED_LINUX_COMPILER_ARCHIVE_SHA256S = (
     '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d',
     '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3',
 )
-DARWIN_SDK_MANIFEST_SHA256 = 'f6d597415b05891fb8666415757f4a9c851df942421cd42c8d1a4234a88c132f'
-DARWIN_SDK_TREE_SHA256 = 'b6924d0319fefa3d5c7f218dcaf25898d46ea33c50f6c7ea4e0f436b6d0d5930'
 COMPILER_ARCHIVE_URL = 'https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz'
 COMPILER_LICENSE_URL = 'https://raw.githubusercontent.com/bendlang/bend/v2.0.25/LICENSE'
 COMPILER_LICENSE_SHA256 = '0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35'
@@ -742,20 +741,16 @@ def configure_cross_host_build(args, environment, target_system, target_machine)
     require((llvm_root / 'bin/clang').is_file() and (llvm_root / 'bin/ld64.lld').is_file()
             and (sdkroot / 'usr/include').is_dir(),
             'The staged Darwin compiler, linker and SDK inputs are required for cross-host builds')
-    sdk_manifest = sdkroot.with_name(sdkroot.name + '.transfer-manifest.json')
-    require(sdk_manifest.is_file(), 'The staged macOS SDK transfer manifest is required')
-    sdk_identity = json.loads(sdk_manifest.read_text())
-    verification = sdk_identity.get('verification', {})
-    require(sha256(sdk_manifest) == DARWIN_SDK_MANIFEST_SHA256
-            and sdk_identity.get('schema') == 'baton2-private-sdk-transfer-v1'
-            and Path(sdk_identity.get('destination', '')).resolve() == sdkroot
-            and verification.get('destination_tree_sha256') == DARWIN_SDK_TREE_SHA256,
-            'The staged macOS SDK transfer manifest does not identify this SDK tree')
+    resolver = runpy.run_path(str(Path(__file__).with_name('darwin-sdk.py')))
+    sdk_receipt = resolver['receipt_path'](sdkroot)
+    require(sdk_receipt.is_file(), 'Resolve the macOS SDK for this build with darwin-sdk.py.')
+    sdk = resolver['verify'](sdkroot)
     environment.update(CC=str(ROOT / 'bend2/scripts/darwin-arm64-clang.sh'),
                        BATON2_DARWIN_LLVM_ROOT=str(llvm_root),
                        BATON2_DARWIN_SDKROOT=str(sdkroot),
-                       BATON2_DARWIN_SDK_MANIFEST_SHA256=DARWIN_SDK_MANIFEST_SHA256,
-                       BATON2_DARWIN_SDK_TREE_SHA256=verification['destination_tree_sha256'])
+                       BATON2_DARWIN_SDK_VERSION=sdk['version'],
+                       BATON2_DARWIN_SDK_MANIFEST_SHA256=sha256(sdk_receipt),
+                       BATON2_DARWIN_SDK_TREE_SHA256=sdk['tree_sha256'])
     return environment, cross_host
 
 
@@ -898,6 +893,7 @@ def package(args):
                                        'compiler': str(Path(env['BATON2_DARWIN_LLVM_ROOT']) / 'bin/clang'),
                                        'linker': str(Path(env['BATON2_DARWIN_LLVM_ROOT']) / 'bin/ld64.lld'),
                                        'sysroot': env['BATON2_DARWIN_SDKROOT'],
+                                       'sdk_version': env['BATON2_DARWIN_SDK_VERSION'],
                                        'sdk_manifest_sha256': env['BATON2_DARWIN_SDK_MANIFEST_SHA256'],
                                        'sdk_tree_sha256': env['BATON2_DARWIN_SDK_TREE_SHA256']}
                                       if 'BATON2_DARWIN_SDK_TREE_SHA256' in env else None)},
@@ -939,7 +935,7 @@ def main():
     parser.add_argument('--darwin-llvm-root', type=Path,
                         help='staged homelab LLVM directory for a queued Darwin arm64 cross-build')
     parser.add_argument('--darwin-sdkroot', type=Path,
-                        help='staged macOS SDK used by the Darwin arm64 cross-build')
+                        help='macOS SDK resolved for this build by darwin-sdk.py')
     for role in ('focused', 'full', 'recovery'):
         parser.add_argument('--' + role + '-binary', type=Path,
                             help='prebuilt ' + role + ' binary; otherwise build from source')

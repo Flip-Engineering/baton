@@ -1,6 +1,6 @@
 # Provision the additional Linux runner
 
-The native workflow's `darwin-arm64` job runs its cross-build on a Linux x64 self-hosted runner. It requests runner group `baton2-native-homelab` and labels `self-hosted`, `Linux`, `X64`, `baton2-native-linux-x64`, and `baton2-native-darwin-cross`. The capability label is for runner accounts with verified read and execute access to the pinned Darwin LLVM tree and read access to the pinned SDK tree and transfer manifest. The primary runner and runner3 passed those checks; runner2 did not. Linux jobs continue to request only the Linux runner labels. The group restricts repository and workflow access. The runner service binds `/var/tmp/baton2-compile-queue` and runs as a dedicated account with the existing systemd isolation profile.
+The native workflow's `darwin-arm64` job runs its cross-build on a Linux x64 self-hosted runner. It requests runner group `baton2-native-homelab` and labels `self-hosted`, `Linux`, `X64`, `baton2-native-linux-x64`, and `baton2-native-darwin-cross`. The capability label is for runner accounts with verified read and execute access to the pinned Darwin LLVM tree and GNU cpio for SDK extraction. Linux jobs continue to request only the Linux runner labels. The group restricts repository and workflow access. The runner service binds `/var/tmp/baton2-compile-queue` and runs as a dedicated account with the existing systemd isolation profile.
 
 `deploy/provision-baton2-native-homelab-runner-3.sh` provisions one additional runner on the homelab host. Before running it, confirm host capacity, verify the group policy for the exact workflow ref with `bend2/scripts/check-runner-group-readiness.py`, and confirm the target runner name is absent from the organization. For the current release workflow, run:
 
@@ -11,7 +11,14 @@ python3 bend2/scripts/check-runner-group-readiness.py \
 
 The script verifies the pinned Actions Runner 2.337.0 archive, creates account `batonci3`, registers runner `atari-homelab-baton2-native-3` in the existing group with the workflow labels, installs the dedicated service unit, and starts only that new service. It copies the pinned `bin/runsvc.sh` to the runner root as `runsvc.sh`, as required by the SDK service-install procedure. It verifies the shared compile queue group name and GID before adding the runner account to that group. The service binds the maintained compile queue. Build invocations continue through `.github/scripts/queue-native-checks.py`.
 
-The Darwin package job reads the pinned LLVM tree at `/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm` and the `MacOSX15.5.sdk` tree and transfer manifest from the adjacent `toolchains/apple` directory. The service unit masks `/mnt/nvme4tb/ci-runners/baton2-native-homelab` with a private temporary filesystem, then binds those three exact assets read-only at their pinned paths. The provisioner verifies the transfer-manifest SHA256 before granting `batonci3` read access on that file only. The runner service sees the assets with the absolute paths required by the SDK transfer manifest, while files such as the private qualification credentials remain hidden. The workflow uses `BATON2_DARWIN_LLVM_ROOT` and `BATON2_DARWIN_SDKROOT` for compiler hashing and packaging.
+The Darwin package job reads the pinned LLVM tree at
+`/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm`.
+The service unit masks the primary runner directory and binds the LLVM tree
+read-only. Each build queries Apple's stable Xcode SDK table and Software
+Update catalog, verifies the SDK package against the catalog digest, and
+extracts it into the job's private directory. The job log and package manifest
+record the SDK version. The retained selection receipt records the Apple
+product and the package and SDK tree hashes.
 
 Run from a trusted checkout with the organization's authenticated GitHub CLI context:
 
