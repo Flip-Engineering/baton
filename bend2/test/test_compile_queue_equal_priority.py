@@ -29,6 +29,10 @@ import tempfile
 import time
 import unittest
 
+# Fixture directories whose teardown reported a straggler supervisor (#1520).
+# A live reference keeps TemporaryDirectory from collecting and deleting them.
+PRESERVED = []
+
 COMPILER = '''#!{python}
 import pathlib, sys, time
 
@@ -69,7 +73,6 @@ class EqualPriorityTests(unittest.TestCase):
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="queue-equal-priority-")
-        self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
         self.state = self.root / "state"
         self.state.mkdir(mode=0o2770)
@@ -91,15 +94,24 @@ class EqualPriorityTests(unittest.TestCase):
                 child.wait(timeout=60)
             except subprocess.TimeoutExpired:
                 child.kill()
+                child.wait()
         # A supervisor can outlive its client: after the result is published it
-        # still removes its tickets and claim while TemporaryDirectory cleanup is
-        # already deleting the tree, which fails with ENOTEMPTY. Wait until no
-        # process of this state root remains before cleanup proceeds.
+        # still removes its tickets and claim. Teardown waits a bounded interval
+        # for every process of this state root to leave, then removes the
+        # fixture directory. A straggler past the bound is an explicit failure
+        # (#1520) and the fixture directory is preserved where the straggler
+        # left it, instead of racing TemporaryDirectory cleanup against it.
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if not self.state_processes():
+                self.temporary.cleanup()
                 return
             time.sleep(0.05)
+        alive = self.state_processes()
+        PRESERVED.append(self.temporary)
+        raise AssertionError(
+            "supervisors still hold the fixture state after teardown: %s; "
+            "fixture directory preserved at %s" % (alive, self.root))
 
     def state_processes(self):
         """Every live process whose command line carries this state root."""
@@ -370,6 +382,20 @@ class EqualPriorityTests(unittest.TestCase):
         ticket.unlink()
         self.until("waits started once the higher ticket was removed", lambda: "waits" in self.started())
         self.finish(*self.holds)
+
+    def test_teardown_reports_and_preserves_when_a_supervisor_straggles(self):
+        # #1520: teardown either completes, or reports a bounded explicit
+        # failure and preserves the fixture directory. A live process whose
+        # command line carries the state root plays the straggler supervisor.
+        straggler = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", str(self.state)])
+        self.addCleanup(lambda: (straggler.kill(), straggler.wait()))
+        with self.assertRaises(AssertionError) as caught:
+            self.release_all()
+        self.assertIn("still hold the fixture state", str(caught.exception))
+        self.assertIn(str(self.root), str(caught.exception))
+        self.assertTrue(self.root.exists(),
+                        "the fixture directory is preserved where the straggler left it")
 
 
 if __name__ == "__main__":
