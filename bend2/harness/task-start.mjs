@@ -220,6 +220,18 @@ export function ensureNotifyFollower(executable, database, notify,
   return { status: 'started', pid: child.pid, log, cursor };
 }
 
+// When a seat whose native attempt runs takes new input: Claude Code reads owed
+// input after each tool call of the current turn (its PostToolUse hook); the other
+// harnesses read it when the current turn ends. null when no attempt runs or the
+// player list cannot be read.
+export function inputTaking(players, sessionId, harness) {
+  let rows;
+  try { rows = players(); } catch { return null; }
+  const row = Array.isArray(rows) ? rows.find((entry) => entry.id === sessionId) : null;
+  if (row?.execution?.phase !== 'running') return null;
+  return harness === 'claude-code' ? 'after-next-tool-call' : 'next-turn-boundary';
+}
+
 function canonicalFile(path) {
   const absolute = resolve(path);
   return existsSync(absolute) ? realpathSync(absolute) : absolute;
@@ -458,6 +470,7 @@ export function startTask(executable, database, argv) {
       }
     }
     if (profile) native('profile-bind', sessionId, route.harness, profile.label, profile.store);
+    const taken = inputTaking(() => call([database, 'players'], undefined, false), sessionId, route.harness);
     const admission = call([database, 'message-batch-file', sender, '-'],
       JSON.stringify([{ id, recipient: sessionId,
         kind, body }]) + '\n')[0];
@@ -468,6 +481,12 @@ export function startTask(executable, database, argv) {
     result.status = admission.status === 'pending' || admission.wake?.status === 'refused' ? 'pending' : 'admitted';
     result.next = result.status === 'pending' ? 'Inspect the retained wake cause and receiver, then resume the same session.' :
       'Inspect the recorded input and recipient receipt; admission does not establish task completion.';
+    if (taken) {
+      result.taken = taken;
+      result.next += taken === 'after-next-tool-call'
+        ? ' The seat is working; Claude Code takes this input after its next tool call in the current turn.'
+        : ' The seat is working; it takes this input at its next turn boundary.';
+    }
     if (sender === 'operator') {
       result.wait = waitCommand(executable, database, sender, result.task);
       result.next += ' Run the wait command to block until the next message for the operator arrives;'

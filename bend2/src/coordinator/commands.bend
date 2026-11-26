@@ -511,6 +511,12 @@ def operator_sender_sql() -> String:
 def operator_latest_sql(+session: String) -> String:
   "(SELECT json_object('id',latest.id,'seq',latest.seq,'kind',latest.kind,'committedAt'," ++ committed_at_sql("latest") ++ ") FROM messages latest WHERE latest.sender=" ++ session ++ " AND latest.recipient IN " ++ operator_sender_sql() ++ " ORDER BY latest.seq DESC LIMIT 1)"
 
+# The commit time of the oldest message of any sender the seat has not read: a
+# seat takes input only between turns or, for Claude Code, after a tool call, so
+# this is since when input waits for it.
+def input_waiting_sql(+session: String) -> String:
+  "(SELECT " ++ committed_at_sql("pending_input") ++ " FROM messages pending_input WHERE pending_input.recipient=" ++ session ++ " AND " ++ owed_sql("pending_input") ++ " ORDER BY pending_input.seq LIMIT 1)"
+
 def operator_waiting_sql(+session: String) -> String:
   "(SELECT " ++ committed_at_sql("waiting") ++ " FROM messages waiting WHERE waiting.recipient=" ++ session ++ " AND waiting.sender IN " ++ operator_sender_sql() ++ " AND " ++ owed_sql("waiting") ++ " ORDER BY waiting.seq LIMIT 1)"
 
@@ -521,7 +527,7 @@ def operator_waiting_sql(+session: String) -> String:
 # blocked (a recorded blocked cause, named in blockedCause), working (a running
 # native attempt) and waiting (none of these: the seat waits for input).
 def seat_activity_sql(+item: String) -> String:
-  "json_set(" ++ item ++ ",'$.operatorLatest',json(" ++ operator_latest_sql("json_extract(" ++ item ++ ",'$.id')") ++ "),'$.operatorWaitingSince'," ++ operator_waiting_sql("json_extract(" ++ item ++ ",'$.id')") ++ ",'$.state',CASE WHEN json_extract(" ++ item ++ ",'$.taskCompletion.ended') OR json_type(" ++ item ++ ",'$.stop') IS NOT NULL THEN 'ended' WHEN json_extract(" ++ item ++ ",'$.taskCompletion.requestId') IS NOT NULL AND json_extract(" ++ item ++ ",'$.taskCompletion.open') THEN 'asks-to-end' WHEN (SELECT newest.kind FROM messages newest WHERE newest.sender=json_extract(" ++ item ++ ",'$.id') ORDER BY newest.seq DESC LIMIT 1)='blocked' THEN 'blocked' WHEN coalesce(json_extract(" ++ item ++ ",'$.blockedCause'),'') NOT IN ('','assignment-ended') THEN 'blocked' WHEN (SELECT phase FROM executions WHERE session=json_extract(" ++ item ++ ",'$.id'))='running' THEN 'working' ELSE 'waiting' END)"
+  "json_set(" ++ item ++ ",'$.operatorLatest',json(" ++ operator_latest_sql("json_extract(" ++ item ++ ",'$.id')") ++ "),'$.operatorWaitingSince'," ++ operator_waiting_sql("json_extract(" ++ item ++ ",'$.id')") ++ ",'$.inputWaitingSince'," ++ input_waiting_sql("json_extract(" ++ item ++ ",'$.id')") ++ ",'$.state',CASE WHEN json_extract(" ++ item ++ ",'$.taskCompletion.ended') OR json_type(" ++ item ++ ",'$.stop') IS NOT NULL THEN 'ended' WHEN json_extract(" ++ item ++ ",'$.taskCompletion.requestId') IS NOT NULL AND json_extract(" ++ item ++ ",'$.taskCompletion.open') THEN 'asks-to-end' WHEN (SELECT newest.kind FROM messages newest WHERE newest.sender=json_extract(" ++ item ++ ",'$.id') ORDER BY newest.seq DESC LIMIT 1)='blocked' THEN 'blocked' WHEN coalesce(json_extract(" ++ item ++ ",'$.blockedCause'),'') NOT IN ('','assignment-ended') THEN 'blocked' WHEN (SELECT phase FROM executions WHERE session=json_extract(" ++ item ++ ",'$.id'))='running' THEN 'working' ELSE 'waiting' END)"
 
 # An input detail keeps the exact stored message and its delivered/read state
 # beside current recipient state. Historical wake outcomes and the ordinary

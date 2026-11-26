@@ -301,6 +301,19 @@ class TaskStart(unittest.TestCase):
         self.assertEqual((again['notify']['status'], again['notify']['pid']), ('running', pid))
         self.finish(self.accept('task-notify-2')[0], 'Second task done.')
 
+    def test_a_dispatch_to_a_working_seat_says_when_the_seat_takes_it(self):
+        session = 'task-working'
+        self.route(session)
+        flags = ('--session', session, '--harness', 'codex', '--model', 'gpt-6-astra', '--effort', 'low',
+                 '--command', self.fixture)
+        first = self.task_call(*flags, '--text', 'Work that keeps its turn open.')
+        self.assertNotIn('taken', first)
+        stream, native = self.accept(session)
+        guided = self.task_call('--to', session, '--text', 'Use the new plan.')
+        self.assertEqual(guided['taken'], 'next-turn-boundary')
+        self.assertIn('it takes this input at its next turn boundary', guided['next'])
+        self.finish(stream, 'First turn done.')
+
     def test_muse_file_and_claude_stdin_receive_complete_seeded_initial_input(self):
         for harness in ('muse', 'claude-code'):
             with self.subTest(harness=harness):

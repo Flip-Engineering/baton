@@ -89,6 +89,7 @@ class SeatActivity(unittest.TestCase):
         self.call('message', 'task-1', 'operator', 'quiet', 'task', 'Do the work.')
         row = self.row('quiet')
         self.assertEqual(row['operatorWaitingSince'], self.committed('task-1'))
+        self.assertEqual(row['inputWaitingSince'], self.committed('task-1'))
         self.assertEqual((row['state'], row['blockedCause']), ('blocked', 'harness-unsupported'))
         # Baton reports the endpointless seat to the operator; that report is the
         # seat's newest message to the operator.
@@ -101,6 +102,7 @@ class SeatActivity(unittest.TestCase):
         row = self.row('seat')
         self.assertIn('operatorLatest', row)
         self.assertIsNone(row['operatorWaitingSince'])
+        self.assertIsNone(row['inputWaitingSince'])
         self.assertEqual(row['state'], 'waiting')
         self.call('message', 'report-1', 'seat', 'operator', 'question', 'Which remote holds the commit?')
         row = self.row('seat')

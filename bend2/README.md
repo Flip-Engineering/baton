@@ -577,8 +577,11 @@ it, through the git common directory's `baton2/database` pointer. `--database
 PATH` adds one database and `--table` prints one line per seat: database, seat,
 state, blocked cause, newest message to the operator and since when operator
 input waits unread. Status rows carry `state` (ended, asks-to-end, blocked,
-working or waiting), `operatorLatest` and `operatorWaitingSince`; message rows
-carry `committedAt`.
+working or waiting), `operatorLatest`, `operatorWaitingSince` and
+`inputWaitingSince` (the oldest unread input of any sender); message rows carry
+`committedAt`. A dispatch to a seat whose native attempt runs returns `taken`:
+`after-next-tool-call` for Claude Code, which reads owed input after each tool
+call of its current turn, and `next-turn-boundary` for the other harnesses.
 
 The wait command takes several `--database` values or `--root SEAT_HOME` and
 then returns the seat events of all of them as one JSON notice:
