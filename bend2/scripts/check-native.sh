@@ -25,6 +25,7 @@ sh bend2/scripts/build-native.sh bend2/src/host/compile-queue.bend .scratch/bend
 BATON_ROOT_TEST_BINARY="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/root-inbox-delivery.py
 BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/harness-update.py
 BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/seat-activity.py
+BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/seats.py
 sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry
 sh bend2/scripts/build-native.sh bend2/test/prompt-status-entry.bend .scratch/bend2/prompt-status-entry
 "$PYTHON3" bend2/test/sqlite-read-reuse.py

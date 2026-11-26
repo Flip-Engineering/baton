@@ -570,6 +570,16 @@ task, prints the complete messages and the next position as one JSON notice and
 exits. A script runs it again with `--after THROUGH` for the following messages.
 The command needs Node 22 or later.
 
+`baton seats --root SEAT_HOME` prints, as one JSON array, the status rows of
+every seat database under SEAT_HOME, each with its `database`. A seat home is a
+directory of checkouts. Each checkout's database is found the way dispatch finds
+it, through the git common directory's `baton2/database` pointer. `--database
+PATH` adds one database and `--table` prints one line per seat: database, seat,
+state, blocked cause, newest message to the operator and since when operator
+input waits unread. Status rows carry `state` (ended, asks-to-end, blocked,
+working or waiting), `operatorLatest` and `operatorWaitingSince`; message rows
+carry `committedAt`.
+
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
 existing Codex, OMP, Muse or Claude Code session and preserves its saved native ID. It resolves
 executable and log paths and selects the recorded model, effort and workspace; the
