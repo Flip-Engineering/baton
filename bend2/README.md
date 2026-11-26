@@ -563,6 +563,13 @@ identities and current handling state are resolved by Baton. In an actor context
 Scratchpads contain deliberately authored working notes. Baton does not generate
 task-source files.
 
+A dispatch by the operator returns `wait`, an argv that runs
+`libexec/baton2/root-notice.mjs` with `--after-message` set to the dispatched
+task. The command blocks until a message for the operator is committed after that
+task, prints the complete messages and the next position as one JSON notice and
+exits. A script runs it again with `--after THROUGH` for the following messages.
+The command needs Node 22 or later.
+
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
 existing Codex, OMP, Muse or Claude Code session and preserves its saved native ID. It resolves
 executable and log paths and selects the recorded model, effort and workspace; the

@@ -28,6 +28,8 @@ class DispatchRuntimeGuard(unittest.TestCase):
         self.helper = self.prefix / 'libexec/baton2/task-start.mjs'
         self.helper.parent.mkdir(parents=True)
         self.helper.write_text('fixture dispatch operation\n')
+        self.waiter = self.prefix / 'libexec/baton2/root-notice.mjs'
+        self.waiter.write_text('fixture operator wait command\n')
 
     def runtime(self, relative):
         path = self.prefix / relative
@@ -39,6 +41,12 @@ class DispatchRuntimeGuard(unittest.TestCase):
     def test_missing_dispatch_operation_is_refused(self):
         self.helper.unlink()
         with self.assertRaisesRegex(RuntimeError, 'lacks the dispatch operation'):
+            CHECK.verify_dispatch_runtime(self.prefix)
+
+    def test_missing_operator_wait_command_is_refused(self):
+        self.runtime('bin/node')
+        self.waiter.unlink()
+        with self.assertRaisesRegex(RuntimeError, 'lacks the operator wait command'):
             CHECK.verify_dispatch_runtime(self.prefix)
 
     def test_missing_runtime_is_refused(self):

@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync,
   statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readSettingsFile, routeByName, resolveRouteProfile,
   settingsPathFor } from './project-settings.mjs';
 
@@ -35,6 +35,10 @@ for configuration. Explicit harness, model and effort override those values.
 An existing receiver remains selected until an explicit command changes it.
 New sessions resolve codex, omp, muse, dsh, antigravity or claude through the current PATH.
 Full input and setup results are stored in the database and returned with inspect commands.
+A dispatch by the operator returns wait: one command that blocks until the next
+message for the operator after this task is committed (a report, question,
+completion request or provider refusal), prints the complete messages as one
+JSON notice and exits.
 An existing open assignment receives continuation input automatically. Baton
 resolves the sending agent from its recorded launch context. Stops remain
 effective; resume ID --lift-stop is the explicit stop-lifting operation.
@@ -151,6 +155,21 @@ function executableAvailable(command) {
     } catch {}
   }
   return false;
+}
+
+// The packaged root-notice subscriber sits beside this file in libexec/baton2;
+// the source tree keeps it in bend2/scripts.
+export function rootNoticeScript(here = dirname(fileURLToPath(import.meta.url))) {
+  const candidates = [join(here, 'root-notice.mjs'), join(here, '../scripts/root-notice.mjs')];
+  return candidates.find((path) => existsSync(path)) ?? candidates[0];
+}
+
+// The wait command for the operator after a dispatch: it selects the operator's
+// messages committed after the dispatched task. The subscriber reads the database
+// with node:sqlite, so a dispatch running under Bun names node.
+export function waitCommand(executable, database, session, task, runtime = process.versions.bun ? 'node' : process.execPath) {
+  return [runtime, rootNoticeScript(), '--database', database, '--coordinator', executable,
+    '--session', session, '--after-message', task];
 }
 
 function canonicalFile(path) {
@@ -401,6 +420,11 @@ export function startTask(executable, database, argv) {
     result.status = admission.status === 'pending' || admission.wake?.status === 'refused' ? 'pending' : 'admitted';
     result.next = result.status === 'pending' ? 'Inspect the retained wake cause and receiver, then resume the same session.' :
       'Inspect the recorded input and recipient receipt; admission does not establish task completion.';
+    if (sender === 'operator') {
+      result.wait = waitCommand(executable, database, sender, result.task);
+      result.next += ' Run the wait command to block until the next message for the operator arrives;'
+        + ' it prints the complete messages and exits.';
+    }
   } catch (error) {
     result = { ...result, status: result.admission?.admission?.status === 'admitted' ? 'pending' : 'refused',
       error: { reason: error.reason ?? error.code ?? 'taskSetupFailed', detail: error.message,

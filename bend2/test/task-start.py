@@ -229,6 +229,37 @@ class TaskStart(unittest.TestCase):
                 self.assertTrue(self.output_log(session).is_file())
                 self.assertGreater(self.read_count(result['task']), 0)
 
+    def test_an_operator_dispatch_names_the_wait_command_for_the_next_operator_message(self):
+        # The packaged subscriber sits beside task-start.mjs in libexec/baton2.
+        waiter_script = self.prefix / 'libexec/baton2/root-notice.mjs'
+        shutil.copy2(controls.ROOT / 'bend2/scripts/root-notice.mjs', waiter_script)
+        session = 'task-wait'
+        self.route(session)
+        result = self.task_call('--session', session, '--harness', 'codex', '--model', 'gpt-6-astra',
+                                '--effort', 'low', '--command', self.fixture,
+                                '--text', 'Report the result when the work is done.')
+        self.assertEqual((result['status'], result['actor']['id']), ('admitted', 'operator'))
+        wait = result['wait']
+        self.assertEqual(wait[1:], [str(waiter_script), '--database', result['database'],
+                                    '--coordinator', result['inspect']['session'][0],
+                                    '--session', 'operator', '--after-message', result['task']])
+        self.assertIn('wait command', result['next'])
+        stream, native = self.accept(session)
+        self.failed_turn(session, stream, 'Provider refusal text for the operator.')
+        waited = subprocess.run(wait, env=self.environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(waited.returncode, 0, waited.stderr)
+        notice = json.loads(waited.stdout)
+        self.assertEqual(notice['recipient'], 'operator')
+        self.assertTrue(notice['messages'])
+        task_seq, = self.rows('SELECT seq FROM messages WHERE id=?', (result['task'],))
+        for message in notice['messages']:
+            stored, = self.rows('SELECT sender,recipient,kind,body FROM messages WHERE id=?', (message['id'],))
+            self.assertEqual((message['sender'], message['recipient'], message['kind'], message['body']),
+                             (stored['sender'], stored['recipient'], stored['kind'], stored['body']))
+            self.assertEqual(stored['recipient'], 'operator')
+            self.assertGreater(message['seq'], task_seq['seq'])
+            self.assertIn(stored['body'], notice['content'])
+
     def test_muse_file_and_claude_stdin_receive_complete_seeded_initial_input(self):
         for harness in ('muse', 'claude-code'):
             with self.subTest(harness=harness):

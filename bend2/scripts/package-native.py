@@ -216,7 +216,7 @@ def stage_adapters(payload, helper_binaries=None, system=None):
         for suffix in ('conductor', 'root'):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
-    for name in ('codex-root-relay.mjs', 'root-channel-config.mjs'):
+    for name in ('codex-root-relay.mjs', 'root-channel-config.mjs', 'root-notice.mjs'):
         shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/scripts/omp-completion.mjs', directory / 'omp-completion.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/no-agent-summary.js', directory / 'no-agent-summary.js')

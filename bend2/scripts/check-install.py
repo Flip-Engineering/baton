@@ -125,6 +125,9 @@ def verify_dispatch_runtime(prefix):
     helper = prefix / 'libexec/baton2/task-start.mjs'
     require(helper.is_file() and not helper.is_symlink() and os.access(helper, os.R_OK),
             'The installation lacks the dispatch operation libexec/baton2/task-start.mjs')
+    waiter = prefix / 'libexec/baton2/root-notice.mjs'
+    require(waiter.is_file() and not waiter.is_symlink() and os.access(waiter, os.R_OK),
+            'The installation lacks the operator wait command libexec/baton2/root-notice.mjs that dispatch names')
     runtimes = [prefix / 'bin/node', prefix / 'libexec/baton2/repl/bun']
     require(any(path.is_file() and not path.is_symlink() and os.access(path, os.X_OK)
                 for path in runtimes),

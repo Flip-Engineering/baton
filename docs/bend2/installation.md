@@ -365,7 +365,9 @@ partial failures. `task` remains a compatibility alias.
 The installed router runs the dispatch operation with an absolute `BATON2_NODE`
 when set, a sibling `bin/node`, the packaged `libexec/baton2/repl/bun`, or
 `node` from PATH, in that order. A complete package includes the bundled Bun
-runtime. `check-install.py` refuses a package with no dispatch runtime.
+runtime. `check-install.py` refuses a package with no dispatch runtime, and a
+package without `libexec/baton2/root-notice.mjs`, the operator wait command that
+the dispatch result names.
 
 An attached coordinator uses `baton2_dispatch` with text or an existing file to
 assign independent work through its recorded identity. Existing native controls

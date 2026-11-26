@@ -46,7 +46,7 @@ socket.on('error',error=>{console.error(error.message);process.exitCode=1;});
     const child = spawn(process.execPath, [ssh ? resolve('bend2/scripts/root-notice-ssh.mjs') : script,
       ...(ssh ? ['--ssh', 'fixture-host', '--as-user', 'batonci', '--node', process.execPath, '--script', script] : []),
       '--database', database, '--coordinator', coordinator,
-      '--session', 'operator', '--native', native, ...(fresh ? ['--new'] : []), ...(index ? ['--index'] : []), ...extra],
+      '--session', 'operator', ...(native === null ? [] : ['--native', native]), ...(fresh ? ['--new'] : []), ...(index ? ['--index'] : []), ...extra],
     { env: { ...process.env, PATH: dir + ':' + process.env.PATH } });
     let out = '', error = '';
     child.stdout.on('data', chunk => { out += chunk; });
@@ -147,6 +147,38 @@ test('--after selects every message past the position, read or unread, and repor
   assert.match(notice.rearm, /--after 4\b/);
   assert.equal(f.db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 1);
   assert.equal(JSON.parse(readFileSync(f.database + '.root.log', 'utf8').trim()).through, 4);
+});
+
+test('a scripted operator waits without a native conversation for the input after its dispatched task', async t => {
+  const f = await fixture(t);
+  const insert = f.db.prepare('INSERT INTO messages(seq,id,sender,recipient,kind,body) VALUES(?,?,?,?,?,?)');
+  insert.run(1, 'unread-earlier', 'seat-a', 'operator', 'report', 'Committed before the dispatch.');
+  insert.run(2, 'dispatch:fixture', 'operator', 'seat-b', 'task', 'Do the work.');
+  const run = f.start(null, false, false, false, ['--after-message', 'dispatch:fixture']);
+  const early = await Promise.race([f.ready(1).then(() => null), run.ended]);
+  assert.equal(early, null, 'the subscription ended before it started: ' + JSON.stringify(early));
+  const body = 'Completion request with its complete summary.\n' + 'evidence '.repeat(2000);
+  f.db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+    .run('request', 'seat-b', 'operator', 'completion-request', body);
+  f.commit();
+  const ended = await run.ended;
+  assert.equal(ended.code, 0, ended.error);
+  const notice = JSON.parse(ended.out);
+  assert.equal(notice.native, null);
+  assert.deepEqual(notice.messages.map(row => row.id), ['request']);
+  assert.equal(notice.messages[0].body, body);
+  assert.ok(notice.content.includes(body));
+  assert.equal(notice.through, 3);
+  assert.match(notice.rearm, /--after 3\b/);
+});
+
+test('--after-message names a recorded message', async t => {
+  const f = await fixture(t);
+  const run = f.start(null, false, false, false, ['--after-message', 'dispatch:absent']);
+  const ended = await run.ended;
+  assert.equal(ended.code, 1);
+  assert.match(ended.error, /dispatch:absent is not recorded/);
+  assert.equal(existsSync(join(f.dir, 'calls')), false);
 });
 
 test('--from limits a subscription to the named senders', async t => {
