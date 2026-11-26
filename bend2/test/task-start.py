@@ -314,6 +314,17 @@ class TaskStart(unittest.TestCase):
         self.assertIn('it takes this input at its next turn boundary', guided['next'])
         self.finish(stream, 'First turn done.')
 
+    def test_an_unknown_harness_name_is_refused_with_the_harness_names(self):
+        before = self.rows('SELECT * FROM messages ORDER BY seq')
+        result = self.task_call('--new', '--harness', 'claude', '--model', 'claude-opus-5-5', '--effort', 'high',
+                                '--text', 'A task for a misnamed harness.', ok=False)
+        self.assertEqual(result['error']['reason'], 'taskHarnessUnsupported')
+        detail = result['error']['detail']
+        self.assertIn('The harness "claude" is not a Baton harness name.', detail)
+        self.assertIn('Harness names: codex, omp, muse, claude-code, dsh, antigravity.', detail)
+        self.assertIn('Use --harness claude-code.', detail)
+        self.assertEqual(self.rows('SELECT * FROM messages ORDER BY seq'), before)
+
     def test_muse_file_and_claude_stdin_receive_complete_seeded_initial_input(self):
         for harness in ('muse', 'claude-code'):
             with self.subTest(harness=harness):

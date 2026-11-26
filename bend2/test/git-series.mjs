@@ -233,6 +233,25 @@ test('exact models and all six series select fixed public metadata and friendly 
   assert.throws(() => model.selected_identity(null_mapping, 'null', 'glm'), model.Refusal);
 });
 
+test('an unregistered model is refused with the registry, the key to add, the registered models and the nearest names', () => {
+  const refusal = (key) => {
+    try { model.selected_identity(registry, key); } catch (error) {
+      assert.ok(error instanceof model.Refusal, String(error));
+      return error.message;
+    }
+    assert.fail('the model ' + key + ' was not refused');
+  };
+  const near = refusal('gpt-6-astr');
+  assert.ok(near.includes('The series registry ' + registry + ' maps no model "gpt-6-astr".'), near);
+  assert.ok(near.includes('Add "gpt-6-astr": "SERIES" to its "models" object, where SERIES is one of '
+    + model.SERIES.join(', ')), near);
+  assert.ok(near.includes('Registered models by series: gpt: fixture/gpt-next-exact, gpt-6-astra; '), near);
+  assert.ok(near.endsWith('Nearest registered names: gpt-6-astra.'), near);
+  // A short name that a registered key contains lists that key as nearest.
+  assert.ok(refusal('k3').endsWith('Nearest registered names: kimi-code/k3.'), refusal('k3'));
+  assert.ok(!refusal('unrelated-model-name').includes('Nearest registered names'));
+});
+
 test('each push resolves the installation of its repository owner without a repository allowlist', async () => {
   const github = identities.gpt;
   const fixture = installation_api(github, [{ owner: 'Flip-Engineering', id: 5100 },
@@ -1073,7 +1092,7 @@ test('check resolves a configured exact model and refuses an unmapped one withou
     /exact model key and no series option/);
   assert.equal(await model.check({ registry, model_key: 'gpt-6-astra' }), undefined);
   await assert.rejects(model.check({ registry, model_key: 'zai/glm-5.3-flash' }),
-    /Select an explicitly configured model mapping or registered series/);
+    /maps no model "zai\/glm-5\.3-flash"\. Add "zai\/glm-5\.3-flash": "SERIES" to its "models" object/);
   const no_series = join(directory, 'no-series.json');
   save(no_series, { models: { ...models, 'fixture/no-series-model': null }, series });
   await assert.rejects(model.check({ registry: no_series, model_key: 'fixture/no-series-model' }),
@@ -1083,8 +1102,8 @@ test('check resolves a configured exact model and refuses an unmapped one withou
   assert.equal(resolved.stdout + resolved.stderr, '');
   const unmapped = await child([SOURCE, 'check', '--registry', registry, '--model-key', 'zai/glm-5.3-flash']);
   assert.equal(unmapped.code, 1); assert.equal(unmapped.stdout, '');
-  assert.equal(unmapped.stderr,
-    'Series Git operation refused: Select an explicitly configured model mapping or registered series.\n');
+  assert.match(unmapped.stderr,
+    /^Series Git operation refused: The series registry .* maps no model "zai\/glm-5\.3-flash"\. .*Registered models by series: gpt: .*\n$/);
   const wrong = await child([SOURCE, 'check', '--registry', registry, '--model-key', 'gpt-6-astra', '--series-key', 'gpt']);
   assert.equal(wrong.code, 1); assert.equal(wrong.stdout, '');
   assert.equal(wrong.stderr, 'Series Git operation refused: The check takes an exact model key and no series option.\n');
@@ -1115,7 +1134,7 @@ test('workflow-write requires an explicit repository and preserves exact model s
   }
   assert.throws(() => model.parse(['launch', '--registry', fixture.registry, '--profile', 'all']), /permission profile/);
   assert.throws(() => model.selected_identity(fixture.registry, 'unmapped-model', null,
-    'workflow-write', 'Flip-Engineering/riff'), /Select an explicitly configured model/);
+    'workflow-write', 'Flip-Engineering/riff'), /maps no model "unmapped-model"/);
   assert.throws(() => model.selected_identity(fixture.registry, 'gpt-6.1-sol', 'glm',
     'workflow-write', 'Flip-Engineering/riff'), /explicit series differs/);
   assert.throws(() => model.selected_identity(registry, 'gpt-6-astra', null,

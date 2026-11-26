@@ -101,6 +101,50 @@ export function public_json(filename) {
   return JSON.parse(readFileSync(filename, 'utf8'));
 }
 
+function edit_distance(left, right) {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= right.length; j++) {
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1,
+        previous[j - 1] + (left[i - 1] === right[j - 1] ? 0 : 1));
+    }
+    previous = current;
+  }
+  return previous[right.length];
+}
+
+// The registered model keys closest to an unregistered one: keys that contain it
+// or that it contains first, then keys within a small edit distance.
+export function nearest_models(models, model_key, limit = 3) {
+  const wanted = model_key.toLowerCase();
+  const bound = Math.max(2, Math.floor(wanted.length / 3));
+  return Object.keys(models)
+    .map((key) => {
+      const name = key.toLowerCase();
+      return [name.includes(wanted) || wanted.includes(name) ? 0 : edit_distance(wanted, name), key];
+    })
+    .filter(([score]) => score <= bound)
+    .sort((left, right) => left[0] - right[0] || left[1].localeCompare(right[1]))
+    .slice(0, limit)
+    .map(([, key]) => key);
+}
+
+// The refusal for a model key the registry does not map names the file, the key
+// to add and the registered models of each series, with the nearest names.
+export function unregistered_model(registry_path, models, model_key) {
+  const listed = SERIES
+    .map((series) => [series, Object.keys(models).filter((key) => models[key] === series).sort()])
+    .filter(([, keys]) => keys.length)
+    .map(([series, keys]) => series + ': ' + keys.join(', '));
+  const nearest = nearest_models(models, model_key);
+  return 'The series registry ' + registry_path + ' maps no model ' + JSON.stringify(model_key) + '. '
+    + 'Add ' + JSON.stringify(model_key) + ': "SERIES" to its "models" object, where SERIES is one of '
+    + SERIES.join(', ') + ' (claude for Claude Code models), or select a registered model. '
+    + 'Registered models by series: ' + (listed.length ? listed.join('; ') : 'none') + '.'
+    + (nearest.length ? ' Nearest registered names: ' + nearest.join(', ') + '.' : '');
+}
+
 export function selected_identity(registry_path, model_key = null, series_key = null,
   profile = 'git', repository = null) {
   const permissions = profile_permissions(profile, repository);
@@ -115,6 +159,9 @@ export function selected_identity(registry_path, model_key = null, series_key = 
     'The model ' + model_key + ' is registered without a GitHub identity series.');
   if (configured) require(SERIES.includes(mapped),
     'The exact-model mapping names an invalid series.');
+  if (model_key !== null && !configured && series_key === null) {
+    require(false, unregistered_model(registry_path, registry.models, model_key));
+  }
   series_key ??= mapped;
   require(SERIES.includes(series_key), 'Select an explicitly configured model mapping or registered series.');
   require(mapped === null || mapped === series_key,

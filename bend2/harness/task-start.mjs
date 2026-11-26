@@ -131,6 +131,10 @@ function projectResolution(path) {
     stderr: run.stderr ?? '', error: run.error?.message ?? null };
 }
 
+export const HARNESSES = ['codex', 'omp', 'muse', 'claude-code', 'dsh', 'antigravity'];
+// Executable and product names that operators type for a harness.
+const HARNESS_NAMES = { claude: 'claude-code', 'claude code': 'claude-code', agy: 'antigravity' };
+
 function executableInPath(harness) {
   const name = { codex: 'codex', omp: 'omp', muse: 'muse', dsh: 'dsh', antigravity: 'agy', 'claude-code': 'claude' }[harness];
   for (const directory of (process.env.PATH ?? '/usr/bin:/bin').split(':')) {
@@ -404,8 +408,16 @@ export function startTask(executable, database, argv) {
     result.route = { ...route, settingsPath: named ? settingsPath : null, name: options.route ?? null,
       sources: Object.fromEntries(['harness', 'model', 'effort'].map((field) => [field,
         options[field] !== undefined ? 'explicit' : named ? 'named-project-route' : 'recorded-session'])) };
-    if (!['codex', 'omp', 'muse', 'claude-code', 'dsh', 'antigravity'].includes(route.harness) || !route.model || !route.effort) {
-      fail('taskRouteIncomplete', 'A supported harness, model and effort must be configured.',
+    if (route.harness && !HARNESSES.includes(route.harness)) {
+      fail('taskHarnessUnsupported', `The harness ${JSON.stringify(route.harness)} is not a Baton harness name.`
+        + ` Harness names: ${HARNESSES.join(', ')}.`
+        + (HARNESS_NAMES[route.harness] ? ` Use --harness ${HARNESS_NAMES[route.harness]}.` : ''),
+        'Pass --harness with one of the listed names, or --route NAME for a saved project route.');
+    }
+    if (!route.harness || !route.model || !route.effort) {
+      fail('taskRouteIncomplete', 'A supported harness, model and effort must be configured.'
+        + ` Missing: ${['harness', 'model', 'effort'].filter((field) => !route[field]).join(', ')}.`
+        + ` Harness names: ${HARNESSES.join(', ')}.`,
         'Pass --route NAME for a saved project route, or supply --harness, --model and --effort.');
     }
     if (selected && !selected.workspace) fail('taskWorkspaceMissing',
