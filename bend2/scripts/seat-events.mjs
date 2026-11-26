@@ -197,9 +197,16 @@ export async function seatEvents(options, output = process.stdout) {
     createInterface({ input: child.stdout }).on('line', () => check());
   }
   const interval = setInterval(check, Math.max(1, Math.min(60, Math.floor(Math.min(periods.silent, periods.untaken, periods.unconfirmed) / 4))) * 1000);
+  // A stopped watcher ends its subscriptions too; a signal would otherwise
+  // leave each ui-subscribe child running without a reader.
+  const stop = () => { finished = true; resolveDone(); };
+  process.once('SIGTERM', stop);
+  process.once('SIGINT', stop);
   try { await done; }
   finally {
     clearInterval(interval);
+    process.removeListener('SIGTERM', stop);
+    process.removeListener('SIGINT', stop);
     for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
   }
 }

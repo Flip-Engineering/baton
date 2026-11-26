@@ -600,6 +600,13 @@ yet delivered. `--notify JSON_ARGV` runs that command once per event with the
 event as JSON on stdin; an event leaves the cursor only when the command exits
 0, so each event is delivered at least once.
 
+Project settings may name the notify command:
+`"notify": {"argv": ["/path/to/notifier"], "untakenSeconds": 900}`, with the
+optional `silentSeconds`, `untakenSeconds` and `unconfirmedSeconds`. A dispatch
+by the operator then starts one follower for the project database when none
+runs and returns it as `notify` (`status` started or running, `pid`, `log` and
+`cursor`, which sit beside the database).
+
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
 existing Codex, OMP, Muse or Claude Code session and preserves its saved native ID. It resolves
 executable and log paths and selects the recorded model, effort and workspace; the

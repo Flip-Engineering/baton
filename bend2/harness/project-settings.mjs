@@ -164,6 +164,28 @@ function checkSubscription(entry, index, seen) {
 // One strict decoder for every consumer. It never throws: every malformed
 // input, including malformed escapes and unterminated keys, becomes a
 // structured projectSettingsMalformed refusal.
+// notify names the operator notify command and the periods of its timed events:
+// argv receives each seat event as JSON on stdin (seat-events.mjs); the periods
+// are positive seconds and default there to 900.
+const NOTIFY_PERIODS = ['silentSeconds', 'untakenSeconds', 'unconfirmedSeconds'];
+
+function checkNotify(notify) {
+  if (!isPlainObject(notify) || !Object.hasOwn(notify, 'argv')
+      || Object.keys(notify).some((key) => key !== 'argv' && !NOTIFY_PERIODS.includes(key))) {
+    return `notify must hold argv and optionally ${NOTIFY_PERIODS.join(', ')}`;
+  }
+  if (!Array.isArray(notify.argv) || !notify.argv.length
+      || notify.argv.some((part) => typeof part !== 'string' || !part.length)) {
+    return 'notify.argv must be a nonempty array of nonempty strings';
+  }
+  for (const key of NOTIFY_PERIODS) {
+    if (Object.hasOwn(notify, key) && !(Number.isInteger(notify[key]) && notify[key] > 0)) {
+      return `notify.${key} must be a positive whole number of seconds`;
+    }
+  }
+  return null;
+}
+
 export function decodeSettings(text) {
   try {
     if (hasDuplicateObjectKeys(text)) {
@@ -175,8 +197,13 @@ export function decodeSettings(text) {
     } catch (error) {
       return refused('projectSettingsMalformed', error.message);
     }
-    if (!exactKeys(value, ['schema', 'routes', 'context', 'subscriptions'])) {
-      return refused('projectSettingsMalformed', 'top-level keys must be schema, routes, context and subscriptions');
+    const keys = ['schema', 'routes', 'context', 'subscriptions'];
+    if (!exactKeys(value, isPlainObject(value) && Object.hasOwn(value, 'notify') ? [...keys, 'notify'] : keys)) {
+      return refused('projectSettingsMalformed', 'top-level keys must be schema, routes, context and subscriptions, and optionally notify');
+    }
+    if (Object.hasOwn(value, 'notify')) {
+      const fault = checkNotify(value.notify);
+      if (fault !== null) return refused('projectSettingsMalformed', fault);
     }
     if (value.schema !== SETTINGS_SCHEMA) {
       return refused('projectSettingsMalformed', 'schema must be baton2-project-settings-v1');

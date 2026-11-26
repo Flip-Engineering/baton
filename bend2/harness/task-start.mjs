@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Ordinary task input and setup for issue #716. Native commands own session
 // admission, configuration, receiver registration and message authorization.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync,
-  statSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, realpathSync,
+  statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readSettingsFile, routeByName, resolveRouteProfile,
@@ -170,6 +170,54 @@ export function rootNoticeScript(here = dirname(fileURLToPath(import.meta.url)))
 export function waitCommand(executable, database, session, task, runtime = process.versions.bun ? 'node' : process.execPath) {
   return [runtime, rootNoticeScript(), '--database', database, '--coordinator', executable,
     '--session', session, '--after-message', task];
+}
+
+// The project's notify settings, or null when the settings file is absent, does
+// not decode or names no notify command.
+export function notifySettings(path) {
+  if (!existsSync(path)) return null;
+  try {
+    const read = readSettingsFile(path);
+    return read.status === 'decoded' && read.value.notify ? read.value.notify : null;
+  } catch { return null; }
+}
+
+function followerAlive(pid, database) {
+  try { process.kill(pid, 0); } catch { return false; }
+  try {
+    const command = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+    return command.includes('--follow') && command.includes(database);
+  } catch { return true; }
+}
+
+// One follower per database runs the operator notify command for every seat
+// event (seat-events.mjs --follow). A dispatch by the operator starts it when
+// none runs, so no operator command has to start a waiter again after an event.
+// Its cursor and log sit beside the database. Two dispatches that start at the
+// same moment can start two followers; each event is still delivered at least
+// once.
+export function ensureNotifyFollower(executable, database, notify,
+  runtime = process.versions.bun ? 'node' : process.execPath) {
+  const pidPath = database + '.notify.pid';
+  const log = database + '.notify.log';
+  const cursor = database + '.notify-cursor.json';
+  if (existsSync(pidPath)) {
+    const pid = Number(readFileSync(pidPath, 'utf8').trim());
+    if (Number.isInteger(pid) && pid > 0 && followerAlive(pid, database)) return { status: 'running', pid, log, cursor };
+  }
+  const periods = [['silentSeconds', '--silent-seconds'], ['untakenSeconds', '--untaken-seconds'],
+    ['unconfirmedSeconds', '--unconfirmed-seconds']]
+    .flatMap(([key, flag]) => notify[key] === undefined ? [] : [flag, String(notify[key])]);
+  const argv = [rootNoticeScript(), '--follow', '--database', database, '--coordinator', executable,
+    '--session', 'operator', '--cursor', cursor, '--notify', JSON.stringify(notify.argv), ...periods];
+  const output = openSync(log, 'a');
+  const env = { ...process.env };
+  for (const name of ['BATON_SESSION', 'BATON_DATABASE', 'BATON_ATTEMPT_DIRECTORY', 'CODEX_THREAD_ID']) delete env[name];
+  const child = spawn(runtime, argv, { detached: true, stdio: ['ignore', output, output], env });
+  child.unref();
+  closeSync(output);
+  writeFileSync(pidPath, String(child.pid) + '\n');
+  return { status: 'started', pid: child.pid, log, cursor };
 }
 
 function canonicalFile(path) {
@@ -424,6 +472,8 @@ export function startTask(executable, database, argv) {
       result.wait = waitCommand(executable, database, sender, result.task);
       result.next += ' Run the wait command to block until the next message for the operator arrives;'
         + ' it prints the complete messages and exits.';
+      const notify = notifySettings(settingsPath);
+      if (notify) result.notify = ensureNotifyFollower(executable, database, notify);
     }
   } catch (error) {
     result = { ...result, status: result.admission?.admission?.status === 'admitted' ? 'pending' : 'refused',

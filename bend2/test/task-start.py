@@ -260,6 +260,47 @@ class TaskStart(unittest.TestCase):
             self.assertGreater(message['seq'], task_seq['seq'])
             self.assertIn(stored['body'], notice['content'])
 
+    def test_an_operator_dispatch_starts_the_notify_follower_that_runs_the_configured_command(self):
+        import os, signal
+        for name in ('root-notice.mjs', 'seat-events.mjs', 'seats.mjs'):
+            shutil.copy2(controls.ROOT / 'bend2/scripts' / name, self.prefix / 'libexec/baton2' / name)
+        received = self.directory / 'notified.jsonl'
+        hook = self.directory / 'notify-hook.py'
+        hook.write_text(f'import sys\nopen({str(received)!r}, "a").write(sys.stdin.read())\n')
+        self.settings_path.write_text(json.dumps({
+            'schema': 'baton2-project-settings-v1', 'routes': [],
+            'context': {'disabled': [], 'preferred': []}, 'subscriptions': [],
+            'notify': {'argv': [sys.executable, str(hook)]}}))
+        session = 'task-notify'
+        self.route(session)
+        flags = ('--session', session, '--harness', 'codex', '--model', 'gpt-6-astra', '--effort', 'low',
+                 '--command', self.fixture)
+        result = self.task_call(*flags, '--text', 'Report the result when the work is done.')
+        self.assertEqual(result['notify']['status'], 'started', result.get('notify'))
+        pid = result['notify']['pid']
+        self.addCleanup(lambda: os.kill(pid, signal.SIGTERM) if pathlib.Path(f'/proc/{pid}').exists() else None)
+        self.assertEqual(result['notify']['cursor'], result['database'] + '.notify-cursor.json')
+        stream, native = self.accept(session)
+        text = 'Provider refusal text for the notify command.'
+        self.failed_turn(session, stream, text)
+        import time
+        deadline = time.monotonic() + 60
+        while not (received.exists() and text in received.read_text()):
+            if time.monotonic() > deadline:
+                log = pathlib.Path(result['notify']['log'])
+                self.fail('the notify command did not receive the report within 60 s; follower log: '
+                          + (log.read_text()[-2000:] if log.exists() else 'absent'))
+            time.sleep(.1)
+        events = [json.loads(line) for line in received.read_text().splitlines()]
+        reported = [event for event in events if event['event'] == 'message' and text in event['body']]
+        self.assertEqual([(event['seat'], event['database']) for event in reported][:1],
+                         [(session, result['database'])])
+        # A later dispatch by the operator finds the follower running.
+        self.route('task-notify-2')
+        again = self.task_call('--session', 'task-notify-2', *flags[2:], '--text', 'Second task.')
+        self.assertEqual((again['notify']['status'], again['notify']['pid']), ('running', pid))
+        self.finish(self.accept('task-notify-2')[0], 'Second task done.')
+
     def test_muse_file_and_claude_stdin_receive_complete_seeded_initial_input(self):
         for harness in ('muse', 'claude-code'):
             with self.subTest(harness=harness):
