@@ -770,7 +770,7 @@ print(json.dumps(decisions), flush=True)
         self.assertNotIn('acknowledge', decision['reason'])
         self.assertIn('New detail.', self.tool_hook()['hookSpecificOutput']['additionalContext'])
 
-    def combined_lifecycle(self, body, label):
+    def combined_lifecycle(self, body, label, hook_seconds=None):
         ident = 'lifecycle-guidance'
         directory = self.home / 'lifecycle-attempt'
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
@@ -790,7 +790,8 @@ def event(name, **fields):
     return json.dumps(dict(hook_event_name=name, session_id='native-1', prompt_id='prompt-1',
                            transcript_path=str(transcript_path), **fields), ensure_ascii=False)
 def invoke(name, args, data=None):
-    result = subprocess.run(args, input=data, env=env, capture_output=True, text=True)
+    result = subprocess.run(args, input=data, env=env, capture_output=True, text=True,
+                            timeout=config.get('hookSeconds'))
     if config['evidence']:
         path = pathlib.Path(config['evidence']) / config['label']
         path.mkdir(parents=True, exist_ok=True)
@@ -828,6 +829,17 @@ if config['label'] == 'stream':
            {'type':'tool_use','id':'read-2','name':'Read','input':{'file_path':
                str(pathlib.Path(config['directory']) / 'saved-input.txt')}}]}})
 frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'role':'user','content':'Start the task.'}})
+if config['label'] == 'long':
+    # A headless seat keeps one prompt for its whole session, so the current
+    # prompt holds every tool call before the input arrives.
+    with transcript_path.open('a', encoding='utf-8') as stream:
+        for index in range(2000):
+            call = 'tool-%d' % index
+            stream.write(json.dumps({'type':'assistant','sessionId':'native-1','message':{'content':[
+                {'type':'tool_use','id':call,'name':'Bash','input':{'command':'echo %d' % index}}]}}) + '\n')
+            stream.write(json.dumps({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'content':[
+                {'type':'tool_result','tool_use_id':call,'content':'tool output λ🙂 %d\n' % index * 100}]}},
+                ensure_ascii=False) + '\n')
 hook = invoke('injected-input', [config['binary'],'--stop-hook'], event('PostToolUse', tool_name='Bash'))
 context = json.loads(hook.stdout)['hookSpecificOutput']['additionalContext']
 assert config['tail'] in context
@@ -835,7 +847,7 @@ assert 'baton read ' + config['id'] not in context
 assert reads() == []
 rendered = ('Message (guidance) from coordinator [id: ' + config['id'] + ']:\n' +
             pathlib.Path(config['bodyPath']).read_text(encoding='utf-8'))
-if config['label'] == 'short':
+if config['label'] in ('short', 'long'):
     frame({'type':'api-request-blob','sessionId':'native-1',
            'message':{'role':'system','content':[{'type':'text','text':'PostToolUse:Bash hook additional context: ' + context}]}})
     before = invoke('stop-after-inline-request', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
@@ -946,7 +958,8 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         self.assertTrue(body.endswith(tail))
         config = {'database': self.path, 'directory': str(directory), 'binary': self.binary,
                   'id': ident, 'bodyPath': str(body_path), 'sha256': hashlib.sha256(body.encode()).hexdigest(),
-                  'tail': tail, 'label': label, 'evidence': os.environ.get('BATON2_HOOK_EVIDENCE', '')}
+                  'tail': tail, 'label': label, 'evidence': os.environ.get('BATON2_HOOK_EVIDENCE', ''),
+                  'hookSeconds': hook_seconds}
         env = dict(self.env, BATON_STOP_HOOK=self.binary)
         try:
             result = subprocess.run([self.binary, 'lifecycle', self.path, str(directory), str(self.home),
@@ -979,6 +992,11 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
 
     def test_injected_read_completion_stop_and_ended_attempt(self):
         self.combined_lifecycle('Complete short body.\nTAIL-READ-PROOF-short', 'short')
+
+    def test_a_long_current_prompt_records_the_injected_read_within_the_hook_timeout(self):
+        # Claude Code cancels a hook after 600 s. A seat with a 5.2 MB current
+        # prompt had its PostToolUse hooks cancelled, so no read was recorded.
+        self.combined_lifecycle('Complete short body.\nTAIL-READ-PROOF-long', 'long', hook_seconds=120)
 
     def test_large_body_injected_read_completion_stop_and_ended_attempt(self):
         self.combined_lifecycle('Large complete body λ🙂.\n' * 25000 + 'TAIL-READ-PROOF-large', 'large')
