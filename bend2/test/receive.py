@@ -4216,6 +4216,25 @@ class Receive(unittest.TestCase):
         self.assertNotEqual(failed_report['id'], success_report['id'])
         self.assertNotEqual(startup_report['id'], success_report['id'])
 
+    def test_a_provider_refusal_reaches_the_coordinator_and_the_seat_state_names_it(self):
+        # Codex ends a refused turn with turn.failed and the provider's text. The
+        # coordinator receives that text, and the seat's state names the refusal
+        # and its cause. Baton moves the seat to no other account or provider.
+        cause = 'This content was flagged for possible cybersecurity risk.'
+        self.player()
+        self.prepare_input('refused-brief', 'parent', 'The refused brief.', kind='task')
+        refused = self.spawn(*self.receive_args('parent'))
+        control, _ = self.accept('parent')
+        self.action(control, fail=True, ack=False, fail_message=cause)
+        self.finish(refused, ok=False)
+        report = next(m for m in self.coord('inbox', 'root') if cause in m['body'])
+        state = self.coord('session', 'parent')
+        self.assertEqual(state['blockedCause'], 'provider-failure')
+        self.assertEqual(state['refusal'], {'attempt': report['id'], 'cause': cause})
+        listed = next(row for row in self.coord('players') if row['id'] == 'parent')
+        self.assertEqual(listed['refusal'], state['refusal'])
+        self.assertEqual((state['harness'], state['model']), ('codex', 'parent'))
+
     def test_receive_startup_failure_notifies_parent_and_retains_input(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
         self.player()
