@@ -22,6 +22,7 @@ import ../host/sqlite.bend as DB
 import ../host/text.bend as T
 import ../host/process.bend as P
 import ../host/files.bend as F
+import ../host/jsonl-last.bend as JsonlLast
 import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
 import ../harness/claude-player.bend as Claude
@@ -1153,6 +1154,38 @@ def next_wake(+spool: String, +read: U32, sub: U32, active: Bool, spanned: Bool)
     case False{}: wake_line(read,sub,active)
     case True{}: span_wake_line(spool,read,sub,active)
 
+# A Codex native that writes {"type":"error","message":...} and exits without
+# turn.completed or turn.failed left no turn, so its coordinator was told only
+# that the process ended without a native result, the seat state named no cause
+# and the provider's text was not in the retained output. At end of input with
+# no Codex result, the last error frame of the attempt's stdout spool becomes the
+# failed result: the turn and its report carry the provider's text, and the frame
+# is appended to the retained output log.
+def codex_error_predicate() -> String:
+  "SELECT CASE WHEN json_valid(?1) AND json_extract(?1,'$.type')='error' AND json_type(?1,'$.message')='text' THEN 1 ELSE 0 END"
+
+def codex_error_event_sql(+frame: String) -> String:
+  "SELECT json_object('type','result','is_error',1,'nativeEvent',json(" ++ C.q(frame) ++ "),'result',json_extract(" ++ C.q(frame) ++ ",'$.message'));"
+
+def codex_error_recorded(+db: String, +player: String, +id: String, +log: String, +frame: String, sealed: Bool) -> IO(String):
+  do IO<String>:
+    +event : String <- IO.try(String,DB.Sql.query(db,codex_error_event_sql(frame)))
+    appended : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,frame ++ "\n")
+    saved : Unit <- codex_report(db,player,id,Tx.trim_nl(event),False{},sealed)
+    IO.pure(String,Tx.trim_nl(event))
+
+def codex_error_found(+db: String, +player: String, +id: String, +log: String, sealed: Bool, found: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match found:
+    case Fail{error}: IO.pure(String,"")
+    case Done{+frame}: Bool.pick(IO(String),String.is_empty(Tx.trim_nl(frame)),IO.pure(String,""),codex_error_recorded(db,player,id,log,Tx.trim_nl(frame),sealed))
+
+def codex_error_fallback(+db: String, +player: String, +id: String, +log: String, +spool: String, +event: String, codex: Bool, sealed: Bool) -> IO(String):
+  Bool.pick(IO(String),Bool.and(codex,Bool.and(String.is_empty(event),Bool.not(String.is_empty(spool)))),
+    do IO<String>:
+      found : Result<&1,&1,U32 & String,String> <- JsonlLast.Jsonl.read_last(spool,"error",codex_error_predicate())
+      codex_error_found(db,player,id,log,sealed,found),
+    IO.pure(String,event))
+
 @unsafe
 def consume_exhausted(+db: String, +player: String, +id: String, +log: String, +spool: String, held: String, +log_failed: Bool, +handle: U32, +harness: String, codex_log: String, terminal: String, filter: String, requested: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, wake_sub: U32, wake_on: Bool) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
@@ -1163,7 +1196,8 @@ def consume_exhausted(+db: String, +player: String, +id: String, +log: String, +
     +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,output_lines,Observer.output(checkpoint_state),Bool.or(log_failed,Observer.output_done(checkpoint_state)),Bool.not(String.is_empty(attempt)),True{}))
     +flushed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
     +write_failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,flushed)))
-    +event : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"),write_failed)
+    +finished : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"),write_failed)
+    +event : String <- codex_error_fallback(db,player,id,log,spool,finished,String.eq(harness,"codex\n"),write_failed)
     +checkpoint_done : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,checkpoint(Bool.and(String.is_empty(attempt),Bool.not(write_failed)),log,""))
     +closed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,NativeRequests.closed(db,attempt,Bool.not(String.is_empty(attempt))))
     +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(write_failed),Bool.and(Bool.not(Observer.output_done(checkpoint_state)),Bool.not(observation_store_failed(unshared_result(String,closed))))))))

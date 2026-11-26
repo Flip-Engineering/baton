@@ -982,6 +982,30 @@ class NativeObservation(RECEIVE.Receive):
         self.finish(observer)
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
+    def test_a_codex_error_frame_without_a_terminal_names_the_refusal(self):
+        # Codex can write a provider error frame and exit without turn.failed. The
+        # coordinator receives the provider's text, the seat state names the
+        # refusal, and the frame is in the retained output.
+        cause = "The 'gpt-x' model is not supported when using Codex with a ChatGPT account."
+        frame = json.dumps({'type': 'error', 'message': cause})
+        self.player()
+        self.coord('message', 'refused-task', 'root', 'parent', 'task', 'Do the work.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.action(stream, native_line=frame)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': frame})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer, ok=False)
+        report = next((m for m in self.coord('inbox', 'root') if cause in m['body']), None)
+        self.assertIsNotNone(report, 'the coordinator received no report with the provider text')
+        state = self.coord('session', 'parent')
+        self.assertEqual(state['refusal'], {'attempt': report['id'], 'cause': cause})
+        self.assertEqual(state['blockedCause'], 'provider-failure')
+        logs = [path.read_text() for path in self.directory.glob('parent.jsonl*') if path.is_file()]
+        self.assertTrue(any(frame in text for text in logs), 'the error frame is not in the retained output')
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
 def load_tests(loader, tests, pattern):
     declared = sorted(name for name in vars(NativeObservation) if name.startswith('test_'))
     return loader.loadTestsFromNames(declared, NativeObservation)
