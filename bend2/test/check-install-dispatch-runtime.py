@@ -30,6 +30,8 @@ class DispatchRuntimeGuard(unittest.TestCase):
         self.helper.write_text('fixture dispatch operation\n')
         self.waiter = self.prefix / 'libexec/baton2/root-notice.mjs'
         self.waiter.write_text('fixture operator wait command\n')
+        for name in ('seat-events.mjs', 'seats.mjs'):
+            (self.prefix / 'libexec/baton2' / name).write_text('fixture operator wait helper\n')
 
     def runtime(self, relative):
         path = self.prefix / relative

@@ -580,6 +580,26 @@ input waits unread. Status rows carry `state` (ended, asks-to-end, blocked,
 working or waiting), `operatorLatest` and `operatorWaitingSince`; message rows
 carry `committedAt`.
 
+The wait command takes several `--database` values or `--root SEAT_HOME` and
+then returns the seat events of all of them as one JSON notice:
+
+| Event | When |
+|---|---|
+| `message` | a message for the operator, of any kind and length |
+| `blocked` | a seat's blocked cause becomes nonempty or changes |
+| `native-ended` | a seat's native attempt stops running |
+| `operator-input-untaken` | operator input stays unread for `--untaken-seconds` |
+| `completion-unconfirmed` | a completion request stays unconfirmed for `--unconfirmed-seconds` |
+| `silent` | a working seat's native writes no output for `--silent-seconds` |
+
+The three periods default to 900 seconds, the silence period of Baton's own
+silent-native report, so both report a stalled seat at the same age.
+`--follow` keeps the command running and writes one JSON line per event.
+`--cursor FILE` keeps the position, the seat facts last seen and the events not
+yet delivered. `--notify JSON_ARGV` runs that command once per event with the
+event as JSON on stdin; an event leaves the cursor only when the command exits
+0, so each event is delivered at least once.
+
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
 existing Codex, OMP, Muse or Claude Code session and preserves its saved native ID. It resolves
 executable and log paths and selects the recorded model, effort and workspace; the

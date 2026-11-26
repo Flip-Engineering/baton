@@ -17,11 +17,19 @@
 // --from SENDER, repeatable, limits any selection to the named senders.
 // --native names the root's native conversation in each notice. A root that
 // works from scripts has no native conversation and omits it.
+//
+// Several --database values, --root SEAT_HOME (every seat database under that
+// home), --follow, --cursor, --notify or a period option select the seat events
+// of seat-events.mjs: messages for the recipient plus blocked seats, ended
+// natives, untaken operator input, unconfirmed completion requests and silent
+// natives, over every selected database.
 import { spawn } from 'node:child_process';
 import { appendFileSync, realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
+import { seatEvents } from './seat-events.mjs';
+import { seatDatabases } from './seats.mjs';
 
 export async function rootNotice({ database, coordinator, session, native = null, fresh = false, index = false, after = null, afterMessage = null, from = [] }, output = process.stdout) {
   if ([fresh, after !== null, afterMessage !== null].filter(Boolean).length > 1) throw new Error('--new, --after and --after-message select different starting points; pass one of them.');
@@ -89,16 +97,37 @@ export async function rootNotice({ database, coordinator, session, native = null
   }
 }
 
+const PERIODS = { '--silent-seconds': 'silentSeconds', '--untaken-seconds': 'untakenSeconds',
+  '--unconfirmed-seconds': 'unconfirmedSeconds' };
+
 function parse(argv) {
-  const options = { from: [] };
+  const options = { from: [], databases: [], roots: [] };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--new') options.fresh = true;
     else if (flag === '--index') options.index = true;
+    else if (flag === '--follow') options.follow = true;
+    else if (['--root', '--cursor', '--notify', ...Object.keys(PERIODS)].includes(flag)) {
+      const value = argv[++i];
+      if (!value) throw new Error(flag + ' requires a value.');
+      if (flag === '--root') options.roots.push(value);
+      else if (flag === '--cursor') options.cursor = value;
+      else if (flag === '--notify') {
+        const command = JSON.parse(value);
+        if (!Array.isArray(command) || !command.length || command.some((part) => typeof part !== 'string')) {
+          throw new Error('--notify requires a JSON array of strings: the command and its arguments.');
+        }
+        options.notify = command;
+      } else {
+        if (!/^[1-9][0-9]*$/.test(value)) throw new Error(flag + ' requires a positive number of seconds.');
+        options[PERIODS[flag]] = Number(value);
+      }
+    }
     else if (['--database', '--coordinator', '--session', '--native', '--after', '--after-message', '--from'].includes(flag)) {
       const value = argv[++i];
       if (!value) throw new Error(flag + ' requires a value.');
       if (flag === '--from') options.from.push(value);
+      else if (flag === '--database') { options.databases.push(value); options.database ??= value; }
       else if (flag === '--after') {
         if (!/^(0|[1-9][0-9]*)$/.test(value)) throw new Error('--after requires a message sequence number.');
         options.after = Number(value);
@@ -106,13 +135,26 @@ function parse(argv) {
       else options[flag.slice(2)] = value;
     } else throw new Error('Unknown option: ' + flag);
   }
-  for (const name of ['database', 'coordinator', 'session']) {
+  options.events = options.databases.length > 1 || options.roots.length > 0 || options.follow
+    || options.cursor !== undefined || options.notify !== undefined
+    || Object.values(PERIODS).some((name) => options[name] !== undefined);
+  if (options.events && !options.roots.length && !options.databases.length) {
+    throw new Error('--database or --root is required.');
+  }
+  for (const name of options.events ? ['coordinator', 'session'] : ['database', 'coordinator', 'session']) {
     if (!options[name]) throw new Error('--' + name + ' is required.');
   }
   return options;
 }
 
+async function main(options) {
+  if (!options.events) return rootNotice(options);
+  const databases = seatDatabases(options.roots, options.databases);
+  if (!databases.length) throw new Error('No seat database was found under the selected roots and databases.');
+  return seatEvents({ ...options, databases });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
-  try { await rootNotice(parse(process.argv.slice(2))); }
+  try { await main(parse(process.argv.slice(2))); }
   catch (error) { process.stderr.write('root-notice: ' + error.message + '\n'); process.exitCode = 1; }
 }
