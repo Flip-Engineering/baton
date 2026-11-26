@@ -16,11 +16,17 @@ def owed_sql() -> String:
 def owed_lines_sql() -> String:
   "(SELECT group_concat(line,char(10)) FROM (SELECT " ++ Status.complete_message_sql("json_extract(j.value,'$.id')","json_extract(j.value,'$.kind')","json_extract(j.value,'$.sender')","json_extract(j.value,'$.body')") ++ " || char(10) || 'Use inbox or read to record a complete read.' AS line FROM json_each((SELECT value FROM owed)) j ORDER BY CAST(j.key AS INTEGER)))"
 
+# A seat that sent a blocked report after its current assignment has said why it
+# cannot go on; its turn ends without a completion request, and the assignment
+# stays open for its coordinator's answer.
+def blocked_reported_sql(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM messages blocked_report WHERE blocked_report.sender=" ++ C.q(session) ++ " AND blocked_report.kind='blocked' AND blocked_report.seq>coalesce(" ++ C.task_assignment_sql(C.q(session)) ++ ",0))"
+
 # The hook's answer: a JSON block decision, or empty to let the turn end.
 def decision_sql(+session: String) -> String:
   "WITH owed(value) AS (" ++ InputHook.selection_sql(session) ++ ") "
   ++ "SELECT CASE WHEN " ++ owed_sql() ++ ">0 THEN json_object('decision','block','reason','Baton holds ' || " ++ owed_sql() ++ " || ' unread inputs for ' || " ++ C.q(session) ++ " || '. Read the complete bodies and continue the work. When the assignment is ready, run completion-request --text SUMMARY:' || char(10) || " ++ owed_lines_sql() ++ ")"
-  ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " AND " ++ C.task_request_sql(C.q(session)) ++ " IS NULL THEN json_object('decision','block','reason','Assignment ' || (SELECT id FROM messages WHERE seq=" ++ C.task_assignment_sql(C.q(session)) ++ ") || ' is still open and you have sent no completion request. When the work is ready, run completion-request --text SUMMARY; otherwise continue the work.')"
+  ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " AND " ++ C.task_request_sql(C.q(session)) ++ " IS NULL AND NOT " ++ blocked_reported_sql(session) ++ " THEN json_object('decision','block','reason','Assignment ' || (SELECT id FROM messages WHERE seq=" ++ C.task_assignment_sql(C.q(session)) ++ ") || ' is still open and you have sent no completion request. When the work is ready, run completion-request --text SUMMARY; when it cannot go on, run blocked --text WHAT_IT_NEEDS; otherwise continue the work.')"
   ++ " ELSE '' END;"
 
 def input_text(result: Result<&1,&1,U32 & String,String>) -> String:

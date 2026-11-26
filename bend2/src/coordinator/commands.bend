@@ -43,6 +43,7 @@ type Command is Data:
   Report{id: String, sender: String, body: String}
   ReportFile{id: String, sender: String, path: String}
   Ask{id: String, player: String, body: String}
+  Blocked{id: String, player: String, body: String}
   AskFile{id: String, player: String, path: String}
   NativeReply{parent: String, id: String, response: String}
   NativeReplyFile{parent: String, id: String, path: String}
@@ -514,12 +515,13 @@ def operator_waiting_sql(+session: String) -> String:
   "(SELECT " ++ committed_at_sql("waiting") ++ " FROM messages waiting WHERE waiting.recipient=" ++ session ++ " AND waiting.sender IN " ++ operator_sender_sql() ++ " AND " ++ owed_sql("waiting") ++ " ORDER BY waiting.seq LIMIT 1)"
 
 # One state word per status row, read from the row's own fields. json_set keeps
-# a null operator field present. The words: ended (a confirmed
+# a null operator field present. A seat whose newest message is a blocked report
+# (the blocked verb) reads blocked. The words: ended (a confirmed
 # assignment or an explicit stop), asks-to-end (an open completion request),
 # blocked (a recorded blocked cause, named in blockedCause), working (a running
 # native attempt) and waiting (none of these: the seat waits for input).
 def seat_activity_sql(+item: String) -> String:
-  "json_set(" ++ item ++ ",'$.operatorLatest',json(" ++ operator_latest_sql("json_extract(" ++ item ++ ",'$.id')") ++ "),'$.operatorWaitingSince'," ++ operator_waiting_sql("json_extract(" ++ item ++ ",'$.id')") ++ ",'$.state',CASE WHEN json_extract(" ++ item ++ ",'$.taskCompletion.ended') OR json_type(" ++ item ++ ",'$.stop') IS NOT NULL THEN 'ended' WHEN json_extract(" ++ item ++ ",'$.taskCompletion.requestId') IS NOT NULL AND json_extract(" ++ item ++ ",'$.taskCompletion.open') THEN 'asks-to-end' WHEN coalesce(json_extract(" ++ item ++ ",'$.blockedCause'),'') NOT IN ('','assignment-ended') THEN 'blocked' WHEN (SELECT phase FROM executions WHERE session=json_extract(" ++ item ++ ",'$.id'))='running' THEN 'working' ELSE 'waiting' END)"
+  "json_set(" ++ item ++ ",'$.operatorLatest',json(" ++ operator_latest_sql("json_extract(" ++ item ++ ",'$.id')") ++ "),'$.operatorWaitingSince'," ++ operator_waiting_sql("json_extract(" ++ item ++ ",'$.id')") ++ ",'$.state',CASE WHEN json_extract(" ++ item ++ ",'$.taskCompletion.ended') OR json_type(" ++ item ++ ",'$.stop') IS NOT NULL THEN 'ended' WHEN json_extract(" ++ item ++ ",'$.taskCompletion.requestId') IS NOT NULL AND json_extract(" ++ item ++ ",'$.taskCompletion.open') THEN 'asks-to-end' WHEN (SELECT newest.kind FROM messages newest WHERE newest.sender=json_extract(" ++ item ++ ",'$.id') ORDER BY newest.seq DESC LIMIT 1)='blocked' THEN 'blocked' WHEN coalesce(json_extract(" ++ item ++ ",'$.blockedCause'),'') NOT IN ('','assignment-ended') THEN 'blocked' WHEN (SELECT phase FROM executions WHERE session=json_extract(" ++ item ++ ",'$.id'))='running' THEN 'working' ELSE 'waiting' END)"
 
 # An input detail keeps the exact stored message and its delivered/read state
 # beside current recipient state. Historical wake outcomes and the ordinary
@@ -887,6 +889,7 @@ def sql(command: Command) -> String:
       confirm_next_sql(id,sender,recipient,request,task_id,task)
     case Report{+id, +sender, +body}:
       parent_message_sql(id,sender,"report",body)
+    case Blocked{+id, +player, +body}: parent_message_sql(id,player,"blocked",body)
     case Ask{+id, +player, +body}:
       parent_message_sql(id,player,"question",body)
     case Session{id}: session_result(id)
@@ -1147,6 +1150,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
     case "land": Land{id,one,two}
     case "push": Push{id,one,two}
     case "ask": Ask{id,one,two}
+    case "blocked": Blocked{id,one,two}
     case "ask-file": AskFile{id,one,two}
     case "remote-tip": RemoteTip{id,one,two}
     case "view": View{id,one,two}

@@ -40,7 +40,7 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop clear-stop recover-observer continue-task succeed turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide blocked status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop clear-stop recover-observer continue-task succeed turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
 
 def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
@@ -85,6 +85,7 @@ def names(verb: String) -> List<String>:
     Names{"bind","--session --native --harness --model --effort"},
     Names{"report","--id --text --file"},
     Names{"ask","--id --text --file"},
+    Names{"blocked","--id --text --file"},
     Names{"native-reply","--request --to --text --file"},
     Names{"dispatch","--id --to --kind --text --file"},
     Names{"recruit","--session --parent --harness --model --effort --repo --branch --path --base"},
@@ -185,7 +186,7 @@ def option_cause(+verb: String, +options: List<&2,Option>) -> String:
     "A checked landing requires both --check and --files.","")
   +read = Bool.pick(String,Bool.and(String.eq(verb,"knowledge-read"),
     Bool.and(present(options,"--id"),present(options,"--index"))),"Choose --id or --index.","")
-  +body = first(pair_cause(options,"--text","--file",member(verb,["report","ask","native-reply","dispatch","completion-request","guide"])),
+  +body = first(pair_cause(options,"--text","--file",member(verb,["report","ask","blocked","native-reply","dispatch","completion-request","guide"])),
     pair_cause(options,"--next","--next-file",False{}))
   +inspection = Bool.pick(String,Bool.and(member(verb,["session","player","assignment"]),
     Bool.and(present(options,"--session"),present(options,"--id"))),"Choose --session or --id.","")
@@ -299,6 +300,7 @@ def help(action: String) -> String:
     case "bind": "bind --harness NAME --model MODEL --effort EFFORT [--session SESSION] [--native ID]\nRecord the native route through the existing binding operation. Omitted native ID preserves the selected session's identity.\n"
     case "report": "report TEXT\nreport [--id ID] (--text TEXT | --file PATH)\nSend a complete report to your recorded coordinator. Baton generates the operation identity.\n"
     case "ask": "ask TEXT\nask [--id ID] (--text TEXT | --file PATH)\nSend a complete question to your recorded coordinator.\n"
+    case "blocked": "blocked TEXT\nblocked [--id ID] (--text TEXT | --file PATH)\nTell your recorded coordinator that the assignment is blocked and not done, and what it needs. The message kind is blocked; the turn can end without a completion request and the assignment stays open.\n"
     case "native-reply": "native-reply (--text JSON | --file PATH) [--to WORKER] [--request ID]\nAnswer the unique pending native request addressed to the current coordinator. --to selects a worker when several requests exist. Baton refuses absent or ambiguous requests.\n"
     case "dispatch": "dispatch [--id ID] --to SESSION (--text TEXT | --file PATH) [--kind KIND]\nAdmit the complete input as the current actor and wake its recorded recipient. Omitted kind is task.\n"
     case "recruit": "recruit --session PLAYER --harness NAME --model MODEL --effort EFFORT --repo PATH --branch BRANCH --path PATH --base COMMIT [--parent SESSION]\nCreate the recorded Player worktree. Omitted parent selects the current actor.\n"
