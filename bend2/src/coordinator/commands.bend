@@ -494,8 +494,32 @@ def message_upsert() -> String:
 def message_conflict_sql(+id: String, +sender: String, +recipient: String, +kind: String, +body: String, +guards: String) -> String:
   "SELECT json_object('error','message-id-conflict','id'," ++ id ++ ",'stored',json_object('sender',sender,'recipient',recipient,'kind',kind),'condition','The message ID is already stored with different content.','next','Read delivery ID for the stored message and retain it; retry the new input under a different ID.') FROM messages WHERE id=" ++ id ++ " AND " ++ guards ++ " AND NOT (sender=" ++ sender ++ " AND recipient=" ++ recipient ++ " AND kind=" ++ kind ++ " AND body=" ++ body ++ ");"
 
+# The instant a message row was committed: the change record its insert trigger
+# wrote in the same transaction (native_changes.recorded_at, UTC, milliseconds).
+def committed_at_sql(+row: String) -> String:
+  "(SELECT committed.recorded_at FROM native_changes committed WHERE committed.entity='message' AND committed.entity_id=" ++ row ++ ".id AND committed.operation='insert' ORDER BY committed.change_id LIMIT 1)"
+
 def delivery_row() -> String:
-  "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
+  "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'committedAt'," ++ committed_at_sql("m") ++ ",'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
+
+# The operator traffic of a status row: the seat's newest message to an operator,
+# and the commit time of the oldest operator message the seat has not read.
+def operator_sender_sql() -> String:
+  "(SELECT session FROM session_roles WHERE role='operator')"
+
+def operator_latest_sql(+session: String) -> String:
+  "(SELECT json_object('id',latest.id,'seq',latest.seq,'kind',latest.kind,'committedAt'," ++ committed_at_sql("latest") ++ ") FROM messages latest WHERE latest.sender=" ++ session ++ " AND latest.recipient IN " ++ operator_sender_sql() ++ " ORDER BY latest.seq DESC LIMIT 1)"
+
+def operator_waiting_sql(+session: String) -> String:
+  "(SELECT " ++ committed_at_sql("waiting") ++ " FROM messages waiting WHERE waiting.recipient=" ++ session ++ " AND waiting.sender IN " ++ operator_sender_sql() ++ " AND " ++ owed_sql("waiting") ++ " ORDER BY waiting.seq LIMIT 1)"
+
+# One state word per status row, read from the row's own fields. json_set keeps
+# a null operator field present. The words: ended (a confirmed
+# assignment or an explicit stop), asks-to-end (an open completion request),
+# blocked (a recorded blocked cause, named in blockedCause), working (a running
+# native attempt) and waiting (none of these: the seat waits for input).
+def seat_activity_sql(+item: String) -> String:
+  "json_set(" ++ item ++ ",'$.operatorLatest',json(" ++ operator_latest_sql("json_extract(" ++ item ++ ",'$.id')") ++ "),'$.operatorWaitingSince'," ++ operator_waiting_sql("json_extract(" ++ item ++ ",'$.id')") ++ ",'$.state',CASE WHEN json_extract(" ++ item ++ ",'$.taskCompletion.ended') OR json_type(" ++ item ++ ",'$.stop') IS NOT NULL THEN 'ended' WHEN json_extract(" ++ item ++ ",'$.taskCompletion.requestId') IS NOT NULL AND json_extract(" ++ item ++ ",'$.taskCompletion.open') THEN 'asks-to-end' WHEN coalesce(json_extract(" ++ item ++ ",'$.blockedCause'),'') NOT IN ('','assignment-ended') THEN 'blocked' WHEN (SELECT phase FROM executions WHERE session=json_extract(" ++ item ++ ",'$.id'))='running' THEN 'working' ELSE 'waiting' END)"
 
 # An input detail keeps the exact stored message and its delivered/read state
 # beside current recipient state. Historical wake outcomes and the ordinary
@@ -874,14 +898,14 @@ def sql(command: Command) -> String:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ delivery_row() ++ " AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE " ++ owed_sql("m") ++ " ORDER BY m.seq);"
     case PendingIndex{}: message_index_sql("messages m JOIN sessions s ON s.id=m.recipient","1",owed_sql("m"))
     case Inbox{id}:
-      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body)," ++ input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND " ++ owed_sql("messages") ++ " ORDER BY seq);"
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'committedAt'," ++ committed_at_sql("messages") ++ ")," ++ input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND " ++ owed_sql("messages") ++ " ORDER BY seq);"
     case InboxIndex{id}: message_index_sql("messages m","m.recipient=" ++ q(id),owed_sql("m"))
     case Outbox{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(" ++ delivery_row() ++ ",json_object('detailRead',json_array('delivery',m.id))) AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.sender=" ++ q(id) ++ " ORDER BY m.seq);"
     case MessageIndex{inbox,condition,state}:
       message_index_sql(Bool.pick(String,inbox,"messages m","messages m JOIN sessions s ON s.id=m.recipient"),condition,state)
     case Status{}:
-      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("sessions.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ")," ++ session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);"
+      "SELECT coalesce(json_group_array(json(" ++ seat_activity_sql("item") ++ ")),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("sessions.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ")," ++ session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);"
     case Players{}: "SELECT " ++ players_json(assigned_role("s.id") ++ "<>'operator'") ++ ";"
     case LegacySubordinates{}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',s.id,'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT CASE WHEN json_valid(t.event) THEN coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) END FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ") AS item FROM sessions s WHERE s.parent IS NOT NULL ORDER BY s.id);"

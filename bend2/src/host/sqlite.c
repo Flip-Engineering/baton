@@ -20,6 +20,7 @@
 static const char *const baton_change_schema[] = {
   "CREATE TABLE IF NOT EXISTS native_changes (change_id INTEGER PRIMARY KEY AUTOINCREMENT,recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),entity TEXT NOT NULL,entity_id TEXT NOT NULL,session_id TEXT NOT NULL DEFAULT '',operation TEXT NOT NULL CHECK(operation IN ('insert','update','delete')),kind TEXT NOT NULL DEFAULT '',summary TEXT NOT NULL DEFAULT '');",
   "DROP TRIGGER IF EXISTS native_changes_retention;",
+  "CREATE INDEX IF NOT EXISTS native_changes_entity ON native_changes(entity,entity_id,change_id);",
   "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,claim TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'finding');",
   "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL,finding TEXT NOT NULL,author TEXT NOT NULL,source TEXT NOT NULL,destination TEXT NOT NULL,promoted_by TEXT NOT NULL,source_kind TEXT NOT NULL DEFAULT 'session',destination_kind TEXT NOT NULL DEFAULT 'session');",
   "CREATE TABLE IF NOT EXISTS knowledge_relations (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,source TEXT NOT NULL,relation TEXT NOT NULL,target TEXT NOT NULL);",
