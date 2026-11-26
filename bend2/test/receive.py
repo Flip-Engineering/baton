@@ -4259,7 +4259,13 @@ class Receive(unittest.TestCase):
         control, started = self.accept('root')
         self.assertIn('Use baton inbox to read complete input', started['prompt'])
         self.assertIn('You are session root in a Baton Orchestra.', started['prompt'])
-        self.assertNotIn(str(self.db.resolve()), started['prompt'])
+        # The prompt names the coordinator executable and this database as one argv
+        # line (receive.bend instructions), as omp-root.py and codex-root.py check.
+        prefix = 'Coordinator executable/database argv: '
+        coordinator = json.loads(next(line[len(prefix):] for line in started['prompt'].splitlines()
+                                      if line.startswith(prefix)))
+        self.assertEqual([pathlib.Path(path).resolve() for path in coordinator],
+                         [EXE.resolve(), self.db.resolve()])
         self.assertNotIn('Use acknowledge', started['prompt'])
         self.action(control)
         self.finish(first)
