@@ -4280,7 +4280,8 @@ class Receive(unittest.TestCase):
         self.action(control, fail=True, ack=False, read=[])
         stdout, _ = self.finish(second, ok=False)
         self.assertIn('fixture provider failed', stdout)
-        self.assertEqual([m['id'] for m in self.coord('inbox', 'root')], ['second'])
+        # inbox root would record root's reads; the successful turn took 'first'.
+        self.assertEqual((read_recorded(self.db, 'first'), read_recorded(self.db, 'second')), (True, False))
         turns = self.coord('turns', 'root')
         self.assertEqual([(turn['player'], turn['eventType']) for turn in turns],
                          [('root', 'result'), ('root', 'result')])
@@ -4290,15 +4291,25 @@ class Receive(unittest.TestCase):
             'type': 'result', 'is_error': 1,
             'nativeEvent': {'type': 'turn.failed', 'error': {'message': 'fixture provider failed'}},
             'result': 'fixture provider failed'})
-        reports = self.coord('inbox', 'operator')
+        # outbox lists the root's messages without recording a read; inbox
+        # operator would record the operator's reads. The operator also receives
+        # the usage-read announcement of the root's provider account (#1025);
+        # every other report is a turn report.
+        listed = [message for message in self.coord('outbox', 'root')
+                  if (message['recipient'], message['kind']) == ('operator', 'report')]
+        reports = [report for report in listed if not report['id'].startswith('usage-read:')]
+        self.assertTrue(all(report['body'].startswith('usage read ') for report in listed if report not in reports))
         self.assertEqual([report['id'] for report in reports], [turn['id'] for turn in turns])
         self.assertEqual([report['body'] for report in reports], [turn['reportBody'] for turn in turns])
+        for report in listed:
+            if report not in reports:
+                self.coord('as', 'operator', 'read', report['id'])
         for report in reports:
+            # delivery prints the complete body and records that read (e317ba2b3).
+            self.assertFalse(read_recorded(self.db, report['id']))
             delivered = self.coord('delivery', report['id'])
             self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind']),
                              ('root', 'operator', 'report'))
-            self.assertFalse(read_recorded(self.db, delivered['id']))
-            self.coord('as', 'operator', 'read', report['id'])
             self.assertTrue(read_recorded(self.db, report['id']))
         self.assertEqual(self.coord('inbox', 'operator'), [])
         self.assertTrue(all(read_recorded(self.db, turn['id']) for turn in self.coord('turns', 'root')))
