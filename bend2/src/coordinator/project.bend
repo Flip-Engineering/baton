@@ -4,6 +4,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
+import ./player-rows.bend as PlayerRows
 import ./delivery.bend as Delivery
 import ./stop.bend as Stop
 import ./turn.bend as Turn
@@ -203,8 +204,10 @@ def project_object(input: String, canonical: String, +key: String, ok: Bool, cau
 def project_sql(input: String, canonical: String, key: String, ok: Bool, cause: String, rule: String, database: String) -> String:
   "SELECT " ++ project_object(input, canonical, key, ok, cause, rule,database) ++ ";"
 
-def project_sessions_sql(input: String, canonical: String, key: String, ok: Bool, cause: String, rule: String, database: String, condition: String) -> String:
-  "SELECT json_object('project'," ++ project_object(input, canonical, key, ok, cause, rule,database) ++ ",'sessions'," ++ C.players_json(condition) ++ ");"
+# The sessions are the player rows read one session at a time (PlayerRows,
+# #1485); this statement embeds their JSON array.
+def project_sessions_sql(input: String, canonical: String, key: String, ok: Bool, cause: String, rule: String, database: String, +rows: String) -> String:
+  "SELECT json_object('project'," ++ project_object(input, canonical, key, ok, cause, rule,database) ++ ",'sessions',json(" ++ C.q(rows) ++ "));"
 
 # --- resume: continue the selected session through its registered receiver --
 
@@ -369,7 +372,8 @@ def sessions(+db: String, +path: String) -> IO(Unit):
     database : String <- IO.try(String,Host.Control.output(db))
     +listed : String <- IO.try(String, DB.Sql.read(db, workspaces_sql()))
     members : List<String> <- collect_members(Tx.split_lines(listed), key, canonical, keyed)
-    saved : String <- IO.try(String,DB.Sql.read(db,project_sessions_sql(path,canonical,key,keyed,common_cause(resolved),rule_of(keyed),database,membership_condition(members))))
+    +rows : String <- PlayerRows.json(db,membership_condition(members))
+    saved : String <- IO.try(String,DB.Sql.read(db,project_sessions_sql(path,canonical,key,keyed,common_cause(resolved),rule_of(keyed),database,rows)))
     IO.write(saved)
 
 # Continue through the recorded receiver and return the delivery with retained reports.

@@ -10,6 +10,7 @@ import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./message-batch.bend as Batch
 import ./project.bend as Project
+import ./player-rows.bend as PlayerRows
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../context/raw.bend as Raw
@@ -431,8 +432,8 @@ def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
       saved : String <- IO.try(String,Store.read(db,C.PlayerRead{id}))
       inspection_result(saved)
     case A.Players{}: do IO<Unit>:
-      saved : String <- IO.try(String,Store.read(db,C.Players{}))
-      IO.write(saved)
+      saved : String <- PlayerRows.players(db)
+      IO.write(saved ++ "\n")
     case A.Assignment{+id}: do IO<Unit>:
       target : String = Bool.pick(String,String.is_empty(id),session,id)
       saved : String <- IO.try(String,Store.read(db,C.Session{target}))
