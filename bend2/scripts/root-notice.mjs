@@ -28,8 +28,6 @@ import { appendFileSync, realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { seatEvents } from './seat-events.mjs';
-import { seatDatabases } from './seats.mjs';
 
 export async function rootNotice({ database, coordinator, session, native = null, fresh = false, index = false, after = null, afterMessage = null, from = [] }, output = process.stdout) {
   if ([fresh, after !== null, afterMessage !== null].filter(Boolean).length > 1) throw new Error('--new, --after and --after-message select different starting points; pass one of them.');
@@ -147,8 +145,12 @@ function parse(argv) {
   return options;
 }
 
+// The event wait loads its modules only when selected, so the one-database wait
+// runs from root-notice.mjs alone.
 async function main(options) {
   if (!options.events) return rootNotice(options);
+  const { seatEvents } = await import('./seat-events.mjs');
+  const { seatDatabases } = await import('./seats.mjs');
   const databases = seatDatabases(options.roots, options.databases);
   if (!databases.length) throw new Error('No seat database was found under the selected roots and databases.');
   return seatEvents({ ...options, databases });
