@@ -283,6 +283,26 @@ def admission_case(+db: String, +helper: String, +path: String) -> IO(Unit):
     held : Unit <- expect("admission-reads-open-account",String.eq(gate_class(held_gate),"held"))
     expect_read(db,"SELECT count(*) FROM usage_reads WHERE account='acct-zai';","3\n","each-admission-reads-account")
 
+# A seat bound to a project-settings subscription has a profile record and no
+# accounts row. Its usage read names the credentials of the bound store: the
+# Claude Code credentials file under CLAUDE_CONFIG_DIR and the Codex home under
+# CODEX_HOME. A seat without a record keeps the default reference.
+def profile_record(+db: String, +seat: String, +line: String) -> IO(Unit):
+  do IO<Unit>:
+    +path : String <- read(db,"SELECT " ++ C.q(db ++ ".profile-") ++ " || lower(hex(" ++ C.q(seat) ++ "));")
+    answer(Tx.trim_nl(path),line ++ "\n")
+
+def profile_store_case(+db: String, +helper: String) -> IO(Unit):
+  do IO<Unit>:
+    claude : Unit <- profile_record(db,"opus"," claude-code b /stores/claude b")
+    codex : Unit <- profile_record(db,"k"," codex c /stores/codex-c")
+    read_claude : Unit <- UW.read_with(db,"opus","claude","b",helper,"admission")
+    one : Unit <- expect_read(db,"SELECT reason FROM usage_reads WHERE session='opus' ORDER BY id DESC LIMIT 1;","reference claude-oauth:/stores/claude b/.credentials.json\n","claude-profile-store-credentials-read")
+    read_codex : Unit <- UW.read_with(db,"k","codex","c",helper,"admission")
+    two : Unit <- expect_read(db,"SELECT reason FROM usage_reads WHERE session='k' ORDER BY id DESC LIMIT 1;","reference codex-home:/stores/codex-c\n","codex-profile-store-home-read")
+    read_default : Unit <- UW.read_with(db,"sonnet","claude","",helper,"admission")
+    expect_read(db,"SELECT reason FROM usage_reads WHERE session='sonnet' ORDER BY id DESC LIMIT 1;","reference claude-oauth:\n","unbound-claude-seat-default-credentials-read")
+
 def delay_case(+db: String) -> IO(Unit):
   do IO<Unit>:
     absent : Unit <- expect_read(db,UW.schedule_delay_sql(""),"\n","absent-reset-has-no-delay")
@@ -347,6 +367,7 @@ def regression(+name: String, +db: String, +helper: String, +path: String) -> IO
     case "account-switch": account_switch_case(db)
     case "admission": admission_case(db,helper,path)
     case "delay": delay_case(db)
+    case "profile-store": profile_store_case(db,helper)
     case _: IO.die(Unit,2,"unknown usage-read regression")
 # The Codex read passes the codex command recorded in a Codex seat's receiver endpoint;
 # another seat records none.

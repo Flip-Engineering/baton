@@ -3,6 +3,8 @@
 # HELPER PROVIDER CREDENTIAL_REF. The fixture gives each account the reference
 # file:PATH and writes the next read document to PATH; this prints that document.
 # serial:DIR records overlapping requests while returning DIR/answer.
+# A claude-oauth: or codex-home: reference prints an unreadable read whose reason
+# is the received reference, so a fixture can check which store was selected.
 case "$2" in
   serial:*)
     directory=${2#serial:}
@@ -16,5 +18,8 @@ case "$2" in
     fi
     ;;
   file:*) cat "${2#file:}" ;;
+  claude-oauth:*|codex-home:*)
+    printf '{"schema":"baton2-usage-read-v1","provider":"%s","source":"fixture","observedAt":1,"state":"unreadable","reason":"reference %s"}' "$1" "$2"
+    ;;
   *) echo "unexpected reference" >&2; exit 2 ;;
 esac
