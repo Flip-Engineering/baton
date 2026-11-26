@@ -208,6 +208,26 @@ def close_open(+db: String, +spool: String, +handle: U32, monitor: Bool) -> IO(U
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
       Bool.pick(IO(Unit),U32.is_eq(closed,0),close_confirmed(db,spool,handle),IO.pure(Unit,Unit{}))
 
+# A confirmation that closes the player's assignment ends a settled Claude Code
+# native in order: the confirmation is forwarded first, then stdin closes, and the
+# native ends its own process. A listed background task does not hold stdin open
+# once no party owes it further input. Owed operator input keeps the assignment
+# open (C.task_closed_sql), so stdin stays open for it.
+def assignment_closed_sql(+player: String) -> String:
+  "SELECT CASE WHEN " ++ C.task_closed_sql(C.q(player)) ++ " THEN 1 ELSE 0 END;"
+
+def close_when_closed(+db: String, +player: String, +handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    closed : String <- IO.try(String,DB.Sql.query(db,assignment_closed_sql(player)))
+    Bool.pick(IO(Unit),String.eq(closed,"1\n"),IO.try(Unit,P.ProcessChild.close_stdin(handle)),IO.pure(Unit,Unit{}))
+
+def close_ended(+db: String, +player: String, +handle: U32, enabled: Bool) -> IO(Unit):
+  match enabled:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      open : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
+      Bool.pick(IO(Unit),U32.is_eq(open,0),close_when_closed(db,player,handle),IO.pure(Unit,Unit{}))
+
 def continued_plain(db: String, player: String, +handle: U32, +attempt: String, cursor: String, ended: Bool, monitor: Bool) -> IO(String):
   match ended:
     case True{}: match monitor:
@@ -219,9 +239,12 @@ def continued_plain(db: String, player: String, +handle: U32, +attempt: String, 
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
       pending_live(db,player,handle,attempt,cursor,closed)
 
-def continued(+db: String, player: String, +handle: U32, +attempt: String, +cursor: String, +spool: String, ended: Bool, mode: String, monitor: Bool) -> IO(String):
+def continued(+db: String, +player: String, +handle: U32, +attempt: String, +cursor: String, +spool: String, ended: Bool, mode: String, +monitor: Bool) -> IO(String):
   match mode:
-    case "hold": forward_all(db,player,handle,attempt,cursor)
+    case "hold": do IO<String>:
+      +held : String <- forward_all(db,player,handle,attempt,cursor)
+      shut : Unit <- close_ended(db,player,handle,Bool.not(monitor))
+      IO.pure(String,held)
     case "drain": do IO<String>:
       +drained : String <- forward_all(db,player,handle,attempt,cursor)
       shut : Unit <- close_open(db,spool,handle,monitor)

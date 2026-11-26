@@ -1181,6 +1181,11 @@ def consume_exhausted(+db: String, +player: String, +id: String, +log: String, +
 def awake_woke(+harness: String, +notice: String, +terminal: String) -> Bool:
   Bool.and(Bool.not(String.is_empty(notice)),Bool.or(Bool.and(String.eq(harness,"omp\n"),String.is_empty(terminal)),Bool.and(String.eq(harness,"claude-code\n"),Bool.not(String.is_empty(terminal)))))
 
+# After its first result a Claude Code native receives end of input on a commit
+# notice that closes its assignment (Guidance.close_ended).
+def claude_awake_close(+harness: String, +notice: String, +terminal: String, monitor: Bool) -> Bool:
+  Bool.and(Bool.not(monitor),Bool.and(String.eq(harness,"claude-code\n"),awake_woke(harness,notice,terminal)))
+
 # A commit notice wakes the observer while the native is silent, so the silence
 # check runs then: a claimed wake with owed input and no output for the silence
 # period reports to the coordinator (#1298). The host wait has no timeout, so a
@@ -1214,6 +1219,7 @@ def question_frame_failed(result: Result<&1,&1,U32 & String,String>) -> Bool:
 def consume_frame(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +spool: String, +spanned: Bool, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, +wake_sub: U32, +alive: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, +line: String, +notice: String) -> IO(WakeRead):
   do IO<WakeRead>:
     +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,awake_woke(harness,notice,terminal))
+    awake_closed : Unit <- Guidance.close_ended(db,player,handle,claude_awake_close(harness,notice,terminal,monitor))
     +decoded : Frame.FrameDecoded <- IO.pure(Frame.FrameDecoded,Frame.decode(line,spool,spanned))
     +invalid : Bool <- IO.pure(Bool,Frame.is_invalid(decoded))
     +decode_error : String <- IO.pure(String,Bool.pick(String,invalid,Frame.invalid_error(),""))
@@ -1306,6 +1312,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
     case Done{Again{policy,held,log_failed,cursor,last_message,primary,current,terminal,filter,codex_log,first_error,checkpoint_state,incomplete,alive,deliveries,next}}: consume(db,player,id,log,policy,held,log_failed,handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete,monitor,wake_sub,alive,deliveries,next)
     case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,awake_woke(harness,notice,terminal))
+      awake_closed : Unit <- Guidance.close_ended(db,player,handle,claude_awake_close(harness,notice,terminal,monitor))
       silent : Unit <- silence_on_notice(db,player,notice)
       continuation : (List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) <- IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),Bool.pick(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
         pending => consume_exhausted(db,player,id,log,spool,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,monitor,pending,wake_sub,alive),
