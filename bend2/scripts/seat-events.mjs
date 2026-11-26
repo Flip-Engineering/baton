@@ -20,11 +20,16 @@
 // exits 0, so every event is delivered at least once and a failed delivery is
 // retried at the next evaluation. --follow keeps running, so nothing needs to be
 // started again after an event.
+//
+// With --root, each interval evaluation reads the seat home again. A database
+// found after the start is subscribed and read from its first message, so a
+// seat made after the watcher started is reported like the others.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
+import { seatDatabases } from './seats.mjs';
 
 export const DEFAULT_PERIOD_SECONDS = 900;
 
@@ -155,15 +160,33 @@ export async function seatEvents(options, output = process.stdout) {
     untaken: options.untakenSeconds ?? DEFAULT_PERIOD_SECONDS,
     unconfirmed: options.unconfirmedSeconds ?? DEFAULT_PERIOD_SECONDS };
   const cursor = readCursor(options.cursor);
+  const databases = [...options.databases];
   const children = [];
   let finished = false;
   let resolveDone;
   const done = new Promise((resolve) => { resolveDone = resolve; });
-  const check = () => {
+  const env = { ...process.env };
+  for (const name of ['BATON_SESSION', 'BATON_DATABASE', 'BATON_ATTEMPT_DIRECTORY', 'BATON_MCP_INPUT']) delete env[name];
+  // Databases under the roots that the watcher does not follow yet. Each starts
+  // at its first message: it had no seat database when the watcher started.
+  const discover = () => {
+    if (!options.roots?.length) return;
+    let found;
+    try { found = seatDatabases(options.roots); }
+    catch (error) { process.stderr.write(`seat-events: the seat home was not read: ${error.message}\n`); return; }
+    for (const database of found) {
+      if (databases.includes(database)) continue;
+      databases.push(database);
+      cursor.databases[database] ??= { through: 0 };
+      subscribe(database);
+    }
+  };
+  const check = (selected = databases, scan = false) => {
     if (finished) return;
+    if (scan) discover();
     const now = Math.floor(Date.now() / 1000);
     const found = [];
-    for (const database of options.databases) {
+    for (const database of scan ? databases : selected) {
       const entry = cursor.databases[database] ?? (cursor.databases[database] = {});
       try {
         found.push(...evaluate({ database, coordinator: options.coordinator, session: options.session, entry, now, periods }));
@@ -184,19 +207,20 @@ export async function seatEvents(options, output = process.stdout) {
     deliver(cursor, options, output);
     writeCursor(options.cursor, cursor);
   };
+  // A commit notice from one database evaluates that database; the interval
+  // evaluates every database for the timed events.
+  function subscribe(database) {
+    if (finished) return;
+    const child = spawn(options.coordinator, [database, 'ui-subscribe', '0', '0'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
+    children.push(child);
+    createInterface({ input: child.stdout }).on('line', () => check([database]));
+  }
   // The first evaluation fixes each database's starting position and seat facts
   // before any subscription opens, so every commit after a subscription is
   // ready is compared with that baseline.
   check();
-  const env = { ...process.env };
-  for (const name of ['BATON_SESSION', 'BATON_DATABASE', 'BATON_ATTEMPT_DIRECTORY', 'BATON_MCP_INPUT']) delete env[name];
-  for (const database of options.databases) {
-    if (finished) break;
-    const child = spawn(options.coordinator, [database, 'ui-subscribe', '0', '0'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
-    children.push(child);
-    createInterface({ input: child.stdout }).on('line', () => check());
-  }
-  const interval = setInterval(check, Math.max(1, Math.min(60, Math.floor(Math.min(periods.silent, periods.untaken, periods.unconfirmed) / 4))) * 1000);
+  for (const database of databases) subscribe(database);
+  const interval = setInterval(() => check(databases, true), Math.max(1, Math.min(60, Math.floor(Math.min(periods.silent, periods.untaken, periods.unconfirmed) / 4))) * 1000);
   // A stopped watcher ends its subscriptions too; a signal would otherwise
   // leave each ui-subscribe child running without a reader.
   const stop = () => { finished = true; resolveDone(); };

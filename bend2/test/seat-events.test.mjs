@@ -1,37 +1,39 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 const script = resolve('bend2/scripts/root-notice.mjs');
 
+// A seat database with the tables the watcher reads.
+function seatDatabase(t, name, path) {
+  const db = new DatabaseSync(path);
+  db.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE sessions(id TEXT PRIMARY KEY,parent TEXT,harness TEXT,native TEXT,endpoint TEXT);
+    CREATE TABLE session_stops(session TEXT PRIMARY KEY);
+    CREATE TABLE messages(seq INTEGER PRIMARY KEY,id TEXT,sender TEXT,recipient TEXT,kind TEXT,body TEXT);
+    CREATE TABLE message_reads(message TEXT,recipient TEXT,native TEXT);
+    CREATE TABLE executions(session TEXT PRIMARY KEY,id TEXT,mode TEXT,directory TEXT,phase TEXT,status TEXT);
+    CREATE TABLE native_changes(change_id INTEGER PRIMARY KEY,recorded_at TEXT,entity TEXT,entity_id TEXT,operation TEXT);
+    CREATE TRIGGER stamp AFTER INSERT ON messages BEGIN INSERT INTO native_changes(recorded_at,entity,entity_id,operation)
+      VALUES(strftime('%Y-%m-%dT%H:%M:%fZ','now'),'message',NEW.id,'insert'); END;
+    CREATE TABLE fake_status(id INTEGER PRIMARY KEY,value TEXT);
+    INSERT INTO sessions VALUES('operator',NULL,'operator','','');`);
+  t.after(() => db.close());
+  return { name, path, db };
+}
+
 // Two seat databases, a fake coordinator whose status answer each test writes,
 // and a commit notice the test sends to every subscription.
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'seat-events-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const databases = ['alpha', 'beta'].map((name) => {
-    const path = join(dir, name + '.db');
-    const db = new DatabaseSync(path);
-    db.exec(`PRAGMA journal_mode=WAL;
-      CREATE TABLE sessions(id TEXT PRIMARY KEY,parent TEXT,harness TEXT,native TEXT,endpoint TEXT);
-      CREATE TABLE session_stops(session TEXT PRIMARY KEY);
-      CREATE TABLE messages(seq INTEGER PRIMARY KEY,id TEXT,sender TEXT,recipient TEXT,kind TEXT,body TEXT);
-      CREATE TABLE message_reads(message TEXT,recipient TEXT,native TEXT);
-      CREATE TABLE executions(session TEXT PRIMARY KEY,id TEXT,mode TEXT,directory TEXT,phase TEXT,status TEXT);
-      CREATE TABLE native_changes(change_id INTEGER PRIMARY KEY,recorded_at TEXT,entity TEXT,entity_id TEXT,operation TEXT);
-      CREATE TRIGGER stamp AFTER INSERT ON messages BEGIN INSERT INTO native_changes(recorded_at,entity,entity_id,operation)
-        VALUES(strftime('%Y-%m-%dT%H:%M:%fZ','now'),'message',NEW.id,'insert'); END;
-      CREATE TABLE fake_status(id INTEGER PRIMARY KEY,value TEXT);
-      INSERT INTO sessions VALUES('operator',NULL,'operator','','');`);
-    t.after(() => db.close());
-    return { name, path, db };
-  });
+  const databases = ['alpha', 'beta'].map((name) => seatDatabase(t, name, join(dir, name + '.db')));
   const clients = [];
   const server = createServer((socket) => {
     socket.on('error', () => {});
@@ -176,4 +178,28 @@ test('follow runs the notify command per event, retries a failed delivery and ke
   again.child.kill();
   await again.ended;
   assert.equal(readFileSync(received, 'utf8').trim().split('\n').length, 1);
+});
+
+test('a follower with --root reports a seat database made after it started', { timeout: 20000 }, async (t) => {
+  const f = await fixture(t);
+  const root = join(f.dir, 'worktrees');
+  mkdirSync(root);
+  // A one-second interval: the interval reads the seat home again.
+  const run = f.start(['--follow', '--root', root, '--untaken-seconds', '4']);
+  await f.ready(2);
+  const checkout = join(root, 'gamma');
+  assert.equal(spawnSync('git', ['init', '-q', checkout]).status, 0);
+  mkdirSync(join(checkout, '.git/baton2'));
+  const gamma = seatDatabase(t, 'gamma', join(checkout, '.git/baton2/orchestra.db'));
+  // This message is committed before the follower finds the database.
+  gamma.db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+    .run('first-report', 'seat-g', 'operator', 'report', 'Made after the follower started.');
+  await f.ready(3);
+  const events = () => run.output().split('\n').filter(Boolean).map(JSON.parse);
+  while (!events().some((event) => event.id === 'first-report')) await new Promise((resolve) => setTimeout(resolve, 100));
+  run.child.kill();
+  await run.ended;
+  const found = events().filter((event) => event.event === 'message');
+  assert.deepEqual(found.map((event) => [event.database, event.id, event.body]),
+    [[realpathSync(gamma.path), 'first-report', 'Made after the follower started.']]);
 });
