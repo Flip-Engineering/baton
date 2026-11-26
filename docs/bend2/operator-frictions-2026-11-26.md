@@ -58,11 +58,13 @@ the coordinator executable and `HOME=EMPTY` an empty home directory.
    condition that never holds hangs its test.
    Command: `grep -n "def eventually" -A6 bend2/test/control.py`.
 
-4. The Claude Code PostToolUse hook adds owed input to the conversation without
-   recording a read, so status and the `operator-input-untaken` event count the
-   input as untaken until the seat runs `baton inbox`.
-   Command: send guidance to a working Claude Code seat, let it make tool
-   calls, then `baton DB status`: `pending` and `inputWaitingSince` stay set.
+4. d5c4bd01f fixes the cause of the untaken count: the Claude input evidence
+   query took more than 900 s on a 5.2 MB current prompt, Claude Code cancelled
+   the hook at 600 s, and no read was recorded. The hook still converts the
+   whole current prompt to one JSON array on each call: 5.1 s and 1.4 GB of
+   memory for the 11.9 MB transcript of the seat that met the fault.
+   Command: in `bend2/test/stop-hook-entry.py`, `combined_lifecycle` with the
+   `long` label and a larger frame count, timing each `--stop-hook` call.
 
 5. The series identity check drops the helper's refusal from its own line:
    "The configured series identity check failed for recorded model M: helper
@@ -83,3 +85,29 @@ the coordinator executable and `HOME=EMPTY` an empty home directory.
    alike. Those runs were concurrent with other suites, so the failures may
    depend on that load; single cases pass alone.
    Command: `HOME=EMPTY python3 bend2/test/native-observation.py`.
+
+8. A seat started by a release in a side-by-side prefix runs the `baton` that
+   its `PATH` names, which is the release that `~/.local/bin` links to. Actions
+   that only the new release has fail in the seat: `baton blocked "needs X"`
+   printed the general usage and exited 2 under 2.0.25-main-2684a288fe.
+   Command: dispatch from
+   `2.0.25-operator-frictions-ae6338e79e-20261126/bin/baton` while
+   `~/.local/bin/baton` names 2.0.25-main-2684a288fe, with the task "run baton
+   blocked TEXT", then read the seat transcript.
+
+9. After a `blocked` report, the end of the seat's turn still queues a task
+   continuation ("sent no completion request. Baton queued continuation"),
+   which wakes the seat and asks it to request completion; the seat then sent
+   a completion request that says it is blocked. The status state is `blocked`
+   only while the seat's newest message is the blocked report, so the turn-end
+   report that follows it gives `working` or `waiting`.
+   `bend2/test/blocked-report.py` sends no turn-end report and does not show
+   either case.
+   Command: dispatch a Claude Code seat whose task is `baton blocked "needs X"`,
+   then `baton DB status` and the seat's messages after its turn ends.
+
+10. `status` of the four largest seat databases under the seat home took 5.6,
+    2.4, 1.5 and 0.5 s (0.6 to 1.9 GB); all 53 databases took 13.8 s. A seat
+    event follower evaluates every database on its interval.
+    Command: time `baton DB status` for each database that `baton seats --root
+    ~/worktrees` reads.
