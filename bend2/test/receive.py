@@ -654,7 +654,8 @@ while True:
         result=subprocess.run([config['exe'],config['db'],'promote',*action['promote']],capture_output=True,text=True)
         reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
-    reference_inputs=re.findall(r'^Message \(report\) from [^\n]* \[id: ([^\]]+)\] retained [0-9]+ bytes; read the complete body with baton read \1\.$',prompt,re.M)
+    # A native reads the stored body of every input its prompt names by pointer.
+    reference_inputs=re.findall(r'^Message \([a-z-]+\) from [^\n]* \[id: ([^\]]+)\] retained [0-9]+ bytes; read the complete body with baton read \1\.$',prompt,re.M)
     read_inputs=action.get('read',reference_inputs)
     for ident in dict.fromkeys(read_inputs):
         read=coordinator('read',ident)
@@ -4194,7 +4195,8 @@ class Receive(unittest.TestCase):
         self.prepare_input('input', 'parent')
         missing = self.coord(*self.receive_args('parent', self.directory / 'missing executable'), ok=False)
         self.assertNotEqual(missing.returncode, 0)
-        self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
+        # inbox parent would record a read for parent; the input must stay owed.
+        self.assertFalse(read_recorded(self.db, 'input'))
         startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
         self.assertIn('Output: '+str(self.output_log('parent')), startup_report['body'])
         startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_bytes()
@@ -4202,7 +4204,8 @@ class Receive(unittest.TestCase):
         self.assertEqual(startup_stderr, reference)
         failed = self.spawn(*self.receive_args('parent'))
         control, _ = self.accept_child(failed, 'parent', 'the receive after the startup failure did not start the native')
-        self.action(control, fail=True, ack=False)
+        # The failed turn reads no input, so the input stays owed for the retry.
+        self.action(control, fail=True, ack=False, read=[])
         self.finish(failed, ok=False)
         failed_report = next(m for m in self.coord('inbox', 'root') if 'fixture provider failed' in m['body'])
         retry = self.spawn(*self.receive_args('parent'))
@@ -4273,7 +4276,8 @@ class Receive(unittest.TestCase):
         second = self.spawn(*self.receive_args('root'))
         control, started = self.accept('root')
         self.assertEqual(started['resume'], 'native-root')
-        self.action(control, fail=True, ack=False)
+        # The failed turn reads no input, so 'second' stays owed.
+        self.action(control, fail=True, ack=False, read=[])
         stdout, _ = self.finish(second, ok=False)
         self.assertIn('fixture provider failed', stdout)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'root')], ['second'])
