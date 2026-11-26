@@ -27,6 +27,7 @@ BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/harness-update.py
 BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/seat-activity.py
 BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/seats.py
 BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/blocked-report.py
+BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/start-setup-remote.py
 sh bend2/scripts/build-native.sh bend2/test/sqlite-stack-entry.bend .scratch/bend2/sqlite-stack-entry
 BATON2_EXE="$root/.scratch/bend2/baton2" BATON2_SQLITE_STACK_FIXTURE="$root/.scratch/bend2/sqlite-stack-entry" "$PYTHON3" bend2/test/sqlite-old-parser.py
 sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry
