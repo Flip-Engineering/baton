@@ -605,7 +605,10 @@ silent-native report, so both report a stalled seat at the same age.
 `--cursor FILE` keeps the position, the seat facts last seen and the events not
 yet delivered. `--notify JSON_ARGV` runs that command once per event with the
 event as JSON on stdin; an event leaves the cursor only when the command exits
-0, so each event is delivered at least once. With `--root`, each interval
+0, so each event is delivered at least once. With `--notify`, the `--follow`
+line of a delivered event carries only `type` (`baton-seat-event-delivered`),
+`at`, `database`, `event` and `key`, so the follower's log holds no second
+copy of what the command stored. With `--root`, each interval
 evaluation (at most 60 seconds apart) reads the seat home again; a seat
 database found then is followed from its first message, and its first
 evaluation reports each `blocked` cause and `native-ended` attempt that the

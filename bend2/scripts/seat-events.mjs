@@ -2,7 +2,8 @@
 // Seat events for the operator across several seat databases.
 //
 // The watcher reads each database read-only and the coordinator's own status
-// rows. It returns, or with --follow writes one JSON line, for each event:
+// rows. It returns, or with --follow writes one JSON line, for each event
+// (with --notify, that line names the delivered event only):
 //   message                a message for the watched recipient (any kind or length)
 //   blocked                a seat whose blocked cause became nonempty or changed
 //   native-ended           a seat whose native attempt stopped running
@@ -142,8 +143,16 @@ function runNotify(argv, event) {
   return run.status === 0;
 }
 
-// Delivers the pending events of every database: writes each to output and runs
-// the notify argv. An event leaves the cursor only after its delivery succeeds.
+// One output line for an event that the notify command took: the command keeps
+// the complete event, so the follower's log names the event only.
+function deliveredLine(event) {
+  return { type: 'baton-seat-event-delivered', at: event.at, database: event.database, event: event.event,
+    key: event.key };
+}
+
+// Delivers the pending events of every database: runs the notify argv and writes
+// each delivered event to output, the complete event without --notify and one
+// short line with it. An event leaves the cursor only after its delivery succeeds.
 function deliver(cursor, options, output) {
   let delivered = 0;
   for (const entry of Object.values(cursor.databases)) {
@@ -151,7 +160,7 @@ function deliver(cursor, options, output) {
     for (const event of entry.pending ?? []) {
       const sent = options.notify ? runNotify(options.notify, event) : true;
       if (sent) {
-        if (options.follow) output.write(JSON.stringify(event) + '\n');
+        if (options.follow) output.write(JSON.stringify(options.notify ? deliveredLine(event) : event) + '\n');
         delivered += 1;
       } else kept.push(event);
     }

@@ -169,6 +169,11 @@ test('follow runs the notify command per event, retries a failed delivery and ke
   assert.deepEqual(delivered.map((event) => event.id), ['blocked-question']);
   run.child.kill();
   await run.ended;
+  // The notify command keeps the complete event; the follower writes one short
+  // line that names it.
+  assert.deepEqual(run.output().split('\n').filter(Boolean).map(JSON.parse),
+    [{ type: 'baton-seat-event-delivered', at: delivered[0].at, database: alpha.path, event: 'message',
+      key: 'message:blocked-question' }]);
   const saved = JSON.parse(readFileSync(cursor, 'utf8'));
   assert.equal(saved.databases[alpha.path].through, 1);
   assert.deepEqual(saved.databases[alpha.path].pending, []);
