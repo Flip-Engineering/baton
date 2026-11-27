@@ -95,16 +95,19 @@ the coordinator executable and `HOME=EMPTY` an empty home directory.
    `~/.local/bin/baton` names 2.0.25-main-2684a288fe, with the task "run baton
    blocked TEXT", then read the seat transcript.
 
-9. After a `blocked` report, the end of the seat's turn still queues a task
+9. After a `blocked` report, the end of the seat's turn queued a task
    continuation ("sent no completion request. Baton queued continuation"),
-   which wakes the seat and asks it to request completion; the seat then sent
-   a completion request that says it is blocked. The status state is `blocked`
-   only while the seat's newest message is the blocked report, so the turn-end
-   report that follows it gives `working` or `waiting`.
-   `bend2/test/blocked-report.py` sends no turn-end report and does not show
-   either case.
-   Command: dispatch a Claude Code seat whose task is `baton blocked "needs X"`,
-   then `baton DB status` and the seat's messages after its turn ends.
+   which woke the seat and asked it to request completion; the seat then sent
+   a completion request that said it was blocked. The status state was
+   `blocked` only while the seat's newest message was the blocked report, so
+   the turn-end report that followed it gave `working` or `waiting`. With a
+   fixture native that blocks on every run, the 2.0.25 coordinator of
+   `ac3f428ee` ran 205 turns and queued 203 continuations in 300 s. Fixed on
+   this branch: while the seat's newest blocked report after its assignment has
+   no later coordinator input, explicit continuation or completion request, a
+   turn end queues no continuation, and status gives state `blocked`,
+   `blockedCause` `blocked-report` and the report in `blockedReport`.
+   Command: `BATON2_EXE=BATON python3 bend2/test/blocked-report.py`.
 
 10. `status` of the four largest seat databases under the seat home took 5.6,
     2.4, 1.5 and 0.5 s (0.6 to 1.9 GB); all 53 databases took 13.8 s. A seat

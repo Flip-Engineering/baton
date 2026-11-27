@@ -579,9 +579,13 @@ state, blocked cause, newest message to the operator and since when operator
 input waits unread. Status rows carry `state` (ended, asks-to-end, blocked,
 working or waiting), `operatorLatest`, `operatorWaitingSince` and
 `inputWaitingSince` (the oldest unread input of any sender); message rows carry
-`committedAt`. A dispatch to a seat whose native attempt runs returns `taken`:
-`after-next-tool-call` for Claude Code, which reads owed input after each tool
-call of its current turn, and `next-turn-boundary` for the other harnesses.
+`committedAt`. After a seat runs `blocked --text WHAT_IT_NEEDS`, its row has
+state `blocked`, `blockedCause` `blocked-report` and the message in
+`blockedReport`, and the end of its turn queues no continuation, until its
+coordinator sends it new input or it sends a completion request. A dispatch to
+a seat whose native attempt runs returns `taken`: `after-next-tool-call` for
+Claude Code, which reads owed input after each tool call of its current turn,
+and `next-turn-boundary` for the other harnesses.
 
 The wait command takes several `--database` values or `--root SEAT_HOME` and
 then returns the seat events of all of them as one JSON notice:
