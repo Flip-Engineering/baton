@@ -946,6 +946,66 @@ class NativeObservation(RECEIVE.Receive):
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
 
+    def test_a_confirmed_claude_native_with_a_background_task_receives_end_of_input(self):
+        # A Claude Code native that lists a background task keeps stdin open after its
+        # result (#1298). When its coordinator confirms its completion request, the
+        # observer forwards the confirmation and then closes stdin, so the native ends
+        # its own process in order instead of waiting for input that no party sends.
+        tasks = json.dumps({'type': 'system', 'subtype': 'background_tasks_changed',
+                            'tasks': [{'task_id': 'b1', 'task_type': 'local_bash', 'description': 'sleep 100'}]})
+        self.player(harness='claude-code')
+        self.coord('message', 'confirm-task', 'root', 'parent', 'task', 'Work that runs a background task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.review_input(stream, 'confirm-task')
+        self.action(stream, native_line=tasks)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': tasks})
+        self.action(stream, hold_exit=True, complete_task=False)
+        self.assertEqual(json.loads(stream.readline()), {'terminal_written': True})
+        self.action(stream, stdin_eof=3)
+        self.assertEqual(json.loads(stream.readline()), {'stdin_closed': False},
+                         'stdin closed while the latest list named a task')
+        request = self.coord('as', 'parent', 'completion-request', '--text', 'The work is complete.')
+        self.assertEqual(request[0]['status'], 'admitted', request)
+        confirmed = self.coord('as', 'root', 'completion-confirmed', '--to', 'parent')
+        self.assertEqual(confirmed[0]['status'], 'admitted', confirmed)
+        # The first read may carry the forwarded confirmation frame; end of input follows it.
+        closed = False
+        for _ in range(2):
+            self.action(stream, stdin_eof=30)
+            if json.loads(stream.readline()) == {'stdin_closed': True}:
+                closed = True
+                break
+        self.assertTrue(closed, 'stdin stayed open after the assignment was confirmed')
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+    def test_a_codex_error_frame_without_a_terminal_names_the_refusal(self):
+        # Codex can write a provider error frame and exit without turn.failed. The
+        # coordinator receives the provider's text, the seat state names the
+        # refusal, and the frame is in the retained output.
+        cause = "The 'gpt-x' model is not supported when using Codex with a ChatGPT account."
+        frame = json.dumps({'type': 'error', 'message': cause})
+        self.player()
+        self.coord('message', 'refused-task', 'root', 'parent', 'task', 'Do the work.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.action(stream, native_line=frame)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': frame})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer, ok=False)
+        report = next((m for m in self.coord('inbox', 'root') if cause in m['body']), None)
+        self.assertIsNotNone(report, 'the coordinator received no report with the provider text')
+        state = self.coord('session', 'parent')
+        self.assertEqual(state['refusal'], {'attempt': report['id'], 'cause': cause})
+        self.assertEqual(state['blockedCause'], 'provider-failure')
+        logs = [path.read_text() for path in self.directory.glob('parent.jsonl*') if path.is_file()]
+        self.assertTrue(any(frame in text for text in logs), 'the error frame is not in the retained output')
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
 def load_tests(loader, tests, pattern):
     declared = sorted(name for name in vars(NativeObservation) if name.startswith('test_'))
     return loader.loadTestsFromNames(declared, NativeObservation)

@@ -80,13 +80,13 @@ def endpoint_reads_present_the_stored_argv_array(column):
   {==}
 
 law delivery_rows_present_the_recipient_endpoint_argv:
-  {C.delivery_row() == "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ C.endpoint_argv("s.endpoint") ++ ")," ++ C.input_state_sql("m") ++ ")" : String}
+  {C.delivery_row() == "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'committedAt'," ++ C.committed_at_sql("m") ++ ",'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ C.endpoint_argv("s.endpoint") ++ ")," ++ C.input_state_sql("m") ++ ")" : String}
 
 def delivery_rows_present_the_recipient_endpoint_argv():
   {==}
 
 law status_rows_present_the_stored_endpoint_argv:
-  {C.sql(C.Status{}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND NOT (" ++ C.stopped_session_sql("sessions.id") ++ " AND " ++ C.execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ C.task_state_sql("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);" : String}
+  {C.sql(C.Status{}) == "SELECT coalesce(json_group_array(json(" ++ C.seat_activity_sql("item") ++ ")),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND NOT (" ++ C.stopped_session_sql("sessions.id") ++ " AND " ++ C.execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ C.task_state_sql("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);" : String}
 
 def status_rows_present_the_stored_endpoint_argv():
   {==}

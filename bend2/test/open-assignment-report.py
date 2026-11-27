@@ -21,6 +21,8 @@ CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT, harness TEXT N
 CREATE TABLE session_roles (session TEXT NOT NULL, role TEXT NOT NULL);
 CREATE TABLE session_stops (session TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');
 CREATE TABLE message_reads(attempt TEXT NOT NULL,message TEXT NOT NULL,recipient TEXT NOT NULL,native TEXT NOT NULL,identity TEXT NOT NULL,handled TEXT,PRIMARY KEY(attempt,identity,message));
+CREATE TABLE refusal_recoveries (id TEXT PRIMARY KEY, source TEXT NOT NULL, status TEXT);
+CREATE TABLE refusal_attempts (id TEXT PRIMARY KEY, recovery TEXT NOT NULL, session TEXT NOT NULL);
 CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);
 INSERT INTO sessions(id,parent) VALUES('coordinator',NULL),('worker','coordinator');
 INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('dispatch:assignment','coordinator','worker','task','Do the work.',NULL);
@@ -88,6 +90,16 @@ class OpenAssignmentReport(unittest.TestCase):
     def test_completion_request_after_the_assignment_writes_no_report(self):
         self.message('message:worker:request', 'worker', 'coordinator', 'completion-request', 'Done.')
         self.assertEqual(self.turn_ends(), [])
+
+    def test_blocked_report_after_the_assignment_queues_no_continuation(self):
+        self.message('blocked:worker:1', 'worker', 'coordinator', 'blocked', 'The remote has no commit X.')
+        self.assertEqual(self.turn_ends(), [])
+        self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE kind='task-continuation'").fetchone()[0], 0)
+
+    def test_coordinator_input_after_a_blocked_report_resumes_the_continuation(self):
+        self.message('blocked:worker:1', 'worker', 'coordinator', 'blocked', 'The remote has no commit X.')
+        self.message('message:coordinator:note', 'coordinator', 'worker', 'report', 'Commit X is pushed.')
+        self.assertEqual(len(self.turn_ends()), 1)
 
     def test_owed_input_writes_no_report(self):
         self.message('message:coordinator:guidance', 'coordinator', 'worker', 'guidance', 'More.', read=False)

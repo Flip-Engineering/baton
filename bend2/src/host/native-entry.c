@@ -161,6 +161,43 @@ static int dispatch_entry(int argc,char **argv) {
   free(args);free(helper);free(executable);free(runtime);return 1;
 }
 
+/* `baton seats` reads the status rows of every seat database under the named
+   seat homes in one call. The helper runs this executable's status command for
+   each database; exec keeps its stdout and exit status. */
+static int seats_entry(int argc,char **argv) {
+  if(argc<2 || strcmp(argv[1],"seats")) return -1;
+  char *executable=application_executable();
+  char *directory=executable?strdup(executable):NULL;
+  char *slash=directory?strrchr(directory,'/'):NULL;
+  if(!slash) {free(directory);free(executable);perror("baton seats executable");return 1;}
+  *slash=0;
+  const char *suffixes[]={"/../libexec/baton2/seats.mjs","/../../bend2/scripts/seats.mjs"};
+  char *helper=NULL;
+  for(size_t i=0;i<sizeof(suffixes)/sizeof(suffixes[0]);i++) {
+    size_t size=strlen(directory)+strlen(suffixes[i])+1;
+    char *candidate=malloc(size);
+    if(!candidate) break;
+    snprintf(candidate,size,"%s%s",directory,suffixes[i]);
+    helper=realpath(candidate,NULL);free(candidate);
+    if(helper) break;
+  }
+  free(directory);
+  if(!helper) {
+    fputs("baton seats: seats.mjs is missing from this installation. Install the complete Baton package.\n",stderr);
+    free(executable);return 2;
+  }
+  char **args=calloc((size_t)argc+4,sizeof(*args));
+  if(!args) {free(helper);free(executable);perror("baton seats arguments");return 1;}
+  char *runtime=dispatch_runtime();
+  if(!runtime) {free(args);free(helper);free(executable);perror("baton seats runtime");return 1;}
+  int count=0;
+  args[count++]=runtime;args[count++]=helper;args[count++]="--coordinator";args[count++]=executable;
+  for(int i=2;i<argc;i++) args[count++]=argv[i];
+  execvp(args[0],args);
+  perror("baton seats: the runtime could not execute the installed seats operation");
+  free(args);free(helper);free(executable);free(runtime);return 1;
+}
+
 /* `baton doctor` runs the Claude Code agent_summary preload check (#1338). The
    helper prints one JSON report; exec keeps its stdout and uses its exit status
    as the command's status. */
@@ -413,6 +450,8 @@ int main(int argc, char **argv) {
 #endif
   int doctor=doctor_entry(argc,argv);
   if(doctor>=0) return doctor;
+  int seats=seats_entry(argc,argv);
+  if(seats>=0) return seats;
   int dispatch=dispatch_entry(argc,argv);
   if(dispatch>=0) return dispatch;
 #ifdef BATON2_NATIVE_RECEIVER_ROUTER

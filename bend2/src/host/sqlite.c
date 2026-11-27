@@ -20,6 +20,7 @@
 static const char *const baton_change_schema[] = {
   "CREATE TABLE IF NOT EXISTS native_changes (change_id INTEGER PRIMARY KEY AUTOINCREMENT,recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),entity TEXT NOT NULL,entity_id TEXT NOT NULL,session_id TEXT NOT NULL DEFAULT '',operation TEXT NOT NULL CHECK(operation IN ('insert','update','delete')),kind TEXT NOT NULL DEFAULT '',summary TEXT NOT NULL DEFAULT '');",
   "DROP TRIGGER IF EXISTS native_changes_retention;",
+  "CREATE INDEX IF NOT EXISTS native_changes_entity ON native_changes(entity,entity_id,change_id);",
   "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,claim TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'finding');",
   "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL,finding TEXT NOT NULL,author TEXT NOT NULL,source TEXT NOT NULL,destination TEXT NOT NULL,promoted_by TEXT NOT NULL,source_kind TEXT NOT NULL DEFAULT 'session',destination_kind TEXT NOT NULL DEFAULT 'session');",
   "CREATE TABLE IF NOT EXISTS knowledge_relations (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,source TEXT NOT NULL,relation TEXT NOT NULL,target TEXT NOT NULL);",
@@ -289,7 +290,22 @@ static long long baton_sql_now_ms(void) {
 static char *baton_sql_failure_text(sqlite3 *db, const char *message, long long started) {
   int extended = sqlite3_extended_errcode(db);
   int primary = extended & 0xff;
-  if (primary != SQLITE_BUSY && primary != SQLITE_LOCKED) return strdup(message);
+  if (primary != SQLITE_BUSY && primary != SQLITE_LOCKED) {
+    /* SQLite before 3.46.0 parses with a fixed-depth stack and refuses a deeply
+       nested statement with this text (#1485). Name the loaded library and the
+       version Baton's statements need. */
+    if (strstr(message, "parser stack overflow") && sqlite3_libversion_number() < 3046000) {
+      const char *format = "%s (SQLite %s is loaded; Baton's statements need SQLite 3.46.0 or later, "
+        "whose parser stack grows as a statement needs. Install SQLite 3.46.0 or later and make the "
+        "dynamic loader select it, for example with LD_LIBRARY_PATH.)";
+      size_t size = strlen(message) + strlen(sqlite3_libversion()) + strlen(format) + 1;
+      char *text = malloc(size);
+      if (!text) return strdup(message);
+      snprintf(text, size, format, message, sqlite3_libversion());
+      return text;
+    }
+    return strdup(message);
+  }
   const char *name = extended == SQLITE_BUSY_SNAPSHOT ? "SQLITE_BUSY_SNAPSHOT"
     : extended == SQLITE_BUSY_RECOVERY ? "SQLITE_BUSY_RECOVERY"
     : extended == SQLITE_BUSY_TIMEOUT ? "SQLITE_BUSY_TIMEOUT"

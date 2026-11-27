@@ -563,6 +563,68 @@ identities and current handling state are resolved by Baton. In an actor context
 Scratchpads contain deliberately authored working notes. Baton does not generate
 task-source files.
 
+A dispatch by the operator returns `wait`, an argv that runs
+`libexec/baton2/root-notice.mjs` with `--after-message` set to the dispatched
+task. The command blocks until a message for the operator is committed after that
+task, prints the complete messages and the next position as one JSON notice and
+exits. A script runs it again with `--after THROUGH` for the following messages.
+The command needs Node 22 or later.
+
+`baton seats --root SEAT_HOME` prints, as one JSON array, the status rows of
+every seat database under SEAT_HOME, each with its `database`. A seat home is a
+directory of checkouts. Each checkout's database is found the way dispatch finds
+it, through the git common directory's `baton2/database` pointer. `--database
+PATH` adds one database and `--table` prints one line per seat: database, seat,
+state, blocked cause, newest message to the operator and since when operator
+input waits unread. Status rows carry `state` (ended, asks-to-end, blocked,
+working or waiting), `operatorLatest`, `operatorWaitingSince` and
+`inputWaitingSince` (the oldest unread input of any sender); message rows carry
+`committedAt`. After a seat runs `blocked --text WHAT_IT_NEEDS`, its row has
+state `blocked`, `blockedCause` `blocked-report` and the message in
+`blockedReport`, and the end of its turn queues no continuation, until its
+coordinator sends it new input or it sends a completion request. A dispatch to
+a seat whose native attempt runs returns `taken`: `after-next-tool-call` for
+Claude Code, which reads owed input after each tool call of its current turn,
+and `next-turn-boundary` for the other harnesses.
+
+The wait command takes several `--database` values or `--root SEAT_HOME` and
+then returns the seat events of all of them as one JSON notice:
+
+| Event | When |
+|---|---|
+| `message` | a message for the operator, of any kind and length |
+| `blocked` | a seat's blocked cause becomes nonempty or changes |
+| `native-ended` | a seat's native attempt stops running |
+| `operator-input-untaken` | operator input stays unread for `--untaken-seconds` |
+| `completion-unconfirmed` | a completion request stays unconfirmed for `--unconfirmed-seconds` |
+| `silent` | a working seat's native writes no output for `--silent-seconds` |
+
+The three periods default to 900 seconds, the silence period of Baton's own
+silent-native report, so both report a stalled seat at the same age.
+`--follow` keeps the command running and writes one JSON line per event.
+`--cursor FILE` keeps the position, the seat facts last seen and the events not
+yet delivered. `--notify JSON_ARGV` runs that command once per event with the
+event as JSON on stdin; an event leaves the cursor only when the command exits
+0, so each event is delivered at least once. With `--notify`, the `--follow`
+line of a delivered event carries only `type` (`baton-seat-event-delivered`),
+`at`, `database`, `event` and `key`, so the follower's log holds no second
+copy of what the command stored. With `--root`, each interval
+evaluation (at most 60 seconds apart) reads the seat home again; a seat
+database found then is followed from its first message, and its first
+evaluation reports each `blocked` cause and `native-ended` attempt that the
+database already has. A commit notice from a database evaluates that database.
+An interval evaluation runs `status` only on a database whose file or WAL file
+changed since its last evaluation, or whose untaken, unconfirmed or silent
+event is due; a working seat with no output yet or with a reported silence is
+evaluated at every interval.
+
+Project settings may name the notify command:
+`"notify": {"argv": ["/path/to/notifier"], "untakenSeconds": 900}`, with the
+optional `silentSeconds`, `untakenSeconds` and `unconfirmedSeconds`. A dispatch
+by the operator then starts one follower for the project database when none
+runs and returns it as `notify` (`status` started or running, `pid`, `log` and
+`cursor`, which sit beside the database).
+
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
 existing Codex, OMP, Muse or Claude Code session and preserves its saved native ID. It resolves
 executable and log paths and selects the recorded model, effort and workspace; the

@@ -65,12 +65,33 @@ def repository_remote(result: T.GitOut) -> String:
       Bool.pick(String, U32.is_eq(code, 0), without_git_suffix(repository_url(Tx.trim_nl(out))), "")
     case T.GBroken{detail}: ""
 
+# git remote lists the remote names and writes nothing to stderr. The URL is
+# read only for a listed origin, so a repository without one gets no Git error
+# text in the setup output.
+def origin_named(names: List<String>) -> Bool:
+  match names:
+    case Nil{}: False{}
+    case +name <> rest: Bool.or(String.eq(Tx.trim_nl(name),"origin"),origin_named(rest))
+
+def origin_listed(result: T.GitOut) -> Bool:
+  match result:
+    case T.GRun{code, out}: Bool.and(U32.is_eq(code, 0), origin_named(Tx.split_lines(out)))
+    case T.GBroken{detail}: False{}
+
+def origin_repository(+workspace: String, listed: Bool) -> IO(String):
+  match listed:
+    case False{}: IO.pure(String,"")
+    case True{}: do IO<String>:
+      result : T.GitOut <- Process.runGit(workspace, ["remote","get-url","origin"])
+      IO.pure(String, repository_remote(result))
+
 def workspace_repository(workspace: String) -> IO(String):
   match workspace:
     case SNil{}: IO.pure(String,"")
     case SCon{head, tail}: do IO<String>:
-      result : T.GitOut <- Process.runGit(SCon{head, tail}, ["remote","get-url","origin"])
-      IO.pure(String, repository_remote(result))
+      +selected : String = SCon{head, tail}
+      names : T.GitOut <- Process.runGit(selected, ["remote"])
+      origin_repository(selected, origin_listed(names))
 
 def receiver_args(executable: String, db: String, session: String, cmd: String, log: String) -> List<String>:
   [executable,db,"receive",session,cmd,"","","",log]

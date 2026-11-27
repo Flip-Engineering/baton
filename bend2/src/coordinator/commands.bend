@@ -43,6 +43,7 @@ type Command is Data:
   Report{id: String, sender: String, body: String}
   ReportFile{id: String, sender: String, path: String}
   Ask{id: String, player: String, body: String}
+  Blocked{id: String, player: String, body: String}
   AskFile{id: String, player: String, path: String}
   NativeReply{parent: String, id: String, response: String}
   NativeReplyFile{parent: String, id: String, path: String}
@@ -298,6 +299,13 @@ def task_addressee_sql(+row: String, +session: String) -> String:
 def task_request_sql(+session: String) -> String:
   "(" ++ coordinator_closure_cte(session) ++ "SELECT r.id FROM messages r WHERE r.sender=" ++ session ++ " AND " ++ task_addressee_in_sql("r") ++ " AND r.kind='completion-request' AND NOT EXISTS(SELECT 1 FROM messages a JOIN sessions assigned_worker ON assigned_worker.id=a.recipient WHERE a.seq>r.seq AND " ++ task_assigned_sql("a","assigned_worker",session) ++ ") ORDER BY r.seq DESC LIMIT 1)"
 
+# A blocked report holds from the seat's newest blocked message after its
+# current assignment until a coordinator sends the seat new input, an explicit
+# continue-task queues a continuation, or the seat sends a completion request.
+# The selected column of that blocked message, or NULL.
+def task_blocked_sql(+session: String, +column: String) -> String:
+  "(" ++ coordinator_closure_cte(session) ++ "SELECT " ++ column ++ " FROM messages blocked_report WHERE blocked_report.sender=" ++ session ++ " AND blocked_report.kind='blocked' AND blocked_report.seq>coalesce(" ++ task_assignment_sql(session) ++ ",0) AND NOT EXISTS(SELECT 1 FROM messages blocked_release WHERE blocked_release.seq>blocked_report.seq AND (blocked_release.sender=" ++ session ++ " AND blocked_release.kind='completion-request' OR blocked_release.recipient=" ++ session ++ " AND (blocked_release.sender IN (SELECT id FROM coordinator_authors) OR blocked_release.sender=blocked_release.recipient AND blocked_release.kind='task-continuation'))) ORDER BY blocked_report.seq DESC LIMIT 1)"
+
 # The current request is the worker's latest request to a coordinator with no
 # assignment after it; a confirmation of it by a coordinator or the operator
 # confirms the assignment.
@@ -364,16 +372,31 @@ def task_open_sql(+session: String) -> String:
 def task_state_sql(+session: String) -> String:
   "json_object('assignmentId',(SELECT id FROM messages WHERE seq=" ++ task_assignment_sql(session) ++ "),'coordinator'," ++ current_coordinator_sql(session) ++ ",'requestId'," ++ task_request_sql(session) ++ ",'confirmed',json(CASE WHEN " ++ task_confirmed_sql(session) ++ " THEN 'true' ELSE 'false' END),'open',json(CASE WHEN " ++ task_open_sql(session) ++ " THEN 'true' ELSE 'false' END),'ended',json(CASE WHEN " ++ task_ended_sql(session) ++ " THEN 'true' ELSE 'false' END))"
 
+def continuation_insert_sql(+session: String, +id: String, +condition: String) -> String:
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Before ending this turn, use completion-request --text SUMMARY to request the conductor completion decision. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM refusal_recoveries active_recovery WHERE active_recovery.source=worker.id AND active_recovery.status='active') AND NOT EXISTS(SELECT 1 FROM refusal_attempts owned_attempt JOIN refusal_recoveries owned_recovery ON owned_recovery.id=owned_attempt.recovery WHERE owned_attempt.session=worker.id AND owned_recovery.status='active') AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ")" ++ condition ++ ";"
+
 # A current completion request delivers the finished work to its coordinator.
 # Further input wakes the worker; a newer assignment can generate continuation.
 # A normal terminal with no other input uses this continuation to keep an open
 # assignment active and remind the worker to request completion.
 def task_continuation_sql(+session: String, +id: String) -> String:
-  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Before ending this turn, use completion-request --text SUMMARY to request the conductor completion decision. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM refusal_recoveries active_recovery WHERE active_recovery.source=worker.id AND active_recovery.status='active') AND NOT EXISTS(SELECT 1 FROM refusal_attempts owned_attempt JOIN refusal_recoveries owned_recovery ON owned_recovery.id=owned_attempt.recovery WHERE owned_attempt.session=worker.id AND owned_recovery.status='active') AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
+  continuation_insert_sql(session,id,"")
 
+# A turn end queues no continuation while the seat's blocked report holds; the
+# coordinator's answer or an explicit continue-task resumes the assignment.
+def turn_continuation_sql(+session: String, +id: String) -> String:
+  continuation_insert_sql(session,id," AND " ++ task_blocked_sql("worker.id","blocked_report.seq") ++ " IS NULL")
+
+# A provider refusal is the seat's latest turn when that turn ended with a provider
+# error: its attempt and the provider's own text. A later turn replaces it.
+def refusal_sql(+session: String) -> String:
+  "(SELECT CASE WHEN json_valid(t.event) AND coalesce(json_extract(t.event,'$.is_error'),0)=1 THEN json_object('attempt',t.id,'cause',coalesce(json_extract(t.event,'$.result'),json_extract(t.event,'$.nativeEvent.error.message'),'')) END FROM turns t WHERE t.worker=" ++ session ++ " ORDER BY t.rowid DESC LIMIT 1)"
+
+# The blocked cause is the route or exit cause, else blocked-report while the
+# seat's blocked report holds.
 def session_state_sql(+session: String) -> String:
   "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
-  ++ ",json_object('blockedCause',CASE WHEN NOT " ++ stopped_session_sql(session) ++ " AND " ++ task_closed_sql(session) ++ " THEN 'assignment-ended' ELSE " ++ blocked_cause_sql(session) ++ " END,'blockedOwner'," ++ blocked_owner_sql(session) ++ ",'wake'," ++ wake_state_sql(session) ++ "))"
+  ++ ",json_object('blockedCause',CASE WHEN NOT " ++ stopped_session_sql(session) ++ " AND " ++ task_closed_sql(session) ++ " THEN 'assignment-ended' ELSE coalesce(nullif(" ++ blocked_cause_sql(session) ++ ",''),CASE WHEN " ++ task_blocked_sql(session,"blocked_report.seq") ++ " IS NOT NULL THEN 'blocked-report' ELSE '' END) END,'blockedOwner'," ++ blocked_owner_sql(session) ++ ",'blockedReport'," ++ task_blocked_sql(session,"json_object('id',blocked_report.id,'body',blocked_report.body)") ++ ",'refusal'," ++ refusal_sql(session) ++ ",'wake'," ++ wake_state_sql(session) ++ "))"
 
 def public_role(+session: String) -> String:
   "CASE " ++ assigned_role(session) ++ " WHEN 'conductor' THEN CASE WHEN (SELECT parent FROM sessions hierarchy WHERE hierarchy.id=" ++ session ++ ") IS NULL THEN 'principal-conductor' ELSE 'associate-conductor' END ELSE " ++ assigned_role(session) ++ " END"
@@ -489,8 +512,39 @@ def message_upsert() -> String:
 def message_conflict_sql(+id: String, +sender: String, +recipient: String, +kind: String, +body: String, +guards: String) -> String:
   "SELECT json_object('error','message-id-conflict','id'," ++ id ++ ",'stored',json_object('sender',sender,'recipient',recipient,'kind',kind),'condition','The message ID is already stored with different content.','next','Read delivery ID for the stored message and retain it; retry the new input under a different ID.') FROM messages WHERE id=" ++ id ++ " AND " ++ guards ++ " AND NOT (sender=" ++ sender ++ " AND recipient=" ++ recipient ++ " AND kind=" ++ kind ++ " AND body=" ++ body ++ ");"
 
+# The instant a message row was committed: the change record its insert trigger
+# wrote in the same transaction (native_changes.recorded_at, UTC, milliseconds).
+def committed_at_sql(+row: String) -> String:
+  "(SELECT committed.recorded_at FROM native_changes committed WHERE committed.entity='message' AND committed.entity_id=" ++ row ++ ".id AND committed.operation='insert' ORDER BY committed.change_id LIMIT 1)"
+
 def delivery_row() -> String:
-  "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
+  "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'committedAt'," ++ committed_at_sql("m") ++ ",'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
+
+# The operator traffic of a status row: the seat's newest message to an operator,
+# and the commit time of the oldest operator message the seat has not read.
+def operator_sender_sql() -> String:
+  "(SELECT session FROM session_roles WHERE role='operator')"
+
+def operator_latest_sql(+session: String) -> String:
+  "(SELECT json_object('id',latest.id,'seq',latest.seq,'kind',latest.kind,'committedAt'," ++ committed_at_sql("latest") ++ ") FROM messages latest WHERE latest.sender=" ++ session ++ " AND latest.recipient IN " ++ operator_sender_sql() ++ " ORDER BY latest.seq DESC LIMIT 1)"
+
+# The commit time of the oldest message of any sender the seat has not read: a
+# seat takes input only between turns or, for Claude Code, after a tool call, so
+# this is since when input waits for it.
+def input_waiting_sql(+session: String) -> String:
+  "(SELECT " ++ committed_at_sql("pending_input") ++ " FROM messages pending_input WHERE pending_input.recipient=" ++ session ++ " AND " ++ owed_sql("pending_input") ++ " ORDER BY pending_input.seq LIMIT 1)"
+
+def operator_waiting_sql(+session: String) -> String:
+  "(SELECT " ++ committed_at_sql("waiting") ++ " FROM messages waiting WHERE waiting.recipient=" ++ session ++ " AND waiting.sender IN " ++ operator_sender_sql() ++ " AND " ++ owed_sql("waiting") ++ " ORDER BY waiting.seq LIMIT 1)"
+
+# One state word per status row, read from the row's own fields. json_set keeps
+# a null operator field present. The words: ended (a confirmed
+# assignment or an explicit stop), asks-to-end (an open completion request),
+# blocked (a recorded blocked cause, named in blockedCause; blocked-report
+# while the seat's blocked report holds), working (a running
+# native attempt) and waiting (none of these: the seat waits for input).
+def seat_activity_sql(+item: String) -> String:
+  "json_set(" ++ item ++ ",'$.operatorLatest',json(" ++ operator_latest_sql("json_extract(" ++ item ++ ",'$.id')") ++ "),'$.operatorWaitingSince'," ++ operator_waiting_sql("json_extract(" ++ item ++ ",'$.id')") ++ ",'$.inputWaitingSince'," ++ input_waiting_sql("json_extract(" ++ item ++ ",'$.id')") ++ ",'$.state',CASE WHEN json_extract(" ++ item ++ ",'$.taskCompletion.ended') OR json_type(" ++ item ++ ",'$.stop') IS NOT NULL THEN 'ended' WHEN json_extract(" ++ item ++ ",'$.taskCompletion.requestId') IS NOT NULL AND json_extract(" ++ item ++ ",'$.taskCompletion.open') THEN 'asks-to-end' WHEN coalesce(json_extract(" ++ item ++ ",'$.blockedCause'),'') NOT IN ('','assignment-ended') THEN 'blocked' WHEN (SELECT phase FROM executions WHERE session=json_extract(" ++ item ++ ",'$.id'))='running' THEN 'working' ELSE 'waiting' END)"
 
 # An input detail keeps the exact stored message and its delivered/read state
 # beside current recipient state. Historical wake outcomes and the ordinary
@@ -537,7 +591,7 @@ def open_assignment_report_sql(+id: String, +session: String) -> String:
 
 # A settled turn records its continuation and the coordinator report together.
 def task_settlement_sql(+session: String, +id: String) -> String:
-  "BEGIN IMMEDIATE;" ++ task_continuation_sql(session,id) ++ open_assignment_report_sql(id,session) ++ "COMMIT;"
+  "BEGIN IMMEDIATE;" ++ turn_continuation_sql(session,id) ++ open_assignment_report_sql(id,session) ++ "COMMIT;"
 
 def last_assistant_sql(+event: String) -> String:
   "(SELECT " ++ last_assistant_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
@@ -808,8 +862,14 @@ def section_member_sql(+ensemble: String, +id: String, +owner: String, +player: 
   ++ section_refusal(ensemble,id,owner,section_member_admitted(ensemble,id,owner,player,action))
   ++ "SELECT json_object('ensemble'," ++ q(ensemble) ++ ",'section'," ++ q(id) ++ ",'player'," ++ q(player) ++ ",'membership'," ++ q(action) ++ ") WHERE " ++ section_member_admitted(ensemble,id,owner,player,action) ++ ";"
 
+# The player row of sessions s with the given task state and session state SQL
+# expressions. players_json computes them in place; player-rows.bend reads them
+# in statements of their own (#1485).
+def player_item_sql(+task: String, +state: String) -> String:
+  "json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT CASE WHEN json_valid(t.event) THEN coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) END FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task ++ ")," ++ state ++ ")"
+
 def players_json(condition: String) -> String:
-  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT CASE WHEN json_valid(t.event) THEN coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) END FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ") AS item FROM sessions s WHERE " ++ condition ++ " ORDER BY s.id))"
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ player_item_sql(task_state_sql("s.id"),session_state_sql("s.id")) ++ " AS item FROM sessions s WHERE " ++ condition ++ " ORDER BY s.id))"
 
 # The per-session orchestra surface, computed once per row. The item JSON is
 # the players surface item over sessions s; role carries the raw assigned
@@ -858,6 +918,7 @@ def sql(command: Command) -> String:
       confirm_next_sql(id,sender,recipient,request,task_id,task)
     case Report{+id, +sender, +body}:
       parent_message_sql(id,sender,"report",body)
+    case Blocked{+id, +player, +body}: parent_message_sql(id,player,"blocked",body)
     case Ask{+id, +player, +body}:
       parent_message_sql(id,player,"question",body)
     case Session{id}: session_result(id)
@@ -869,14 +930,14 @@ def sql(command: Command) -> String:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ delivery_row() ++ " AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE " ++ owed_sql("m") ++ " ORDER BY m.seq);"
     case PendingIndex{}: message_index_sql("messages m JOIN sessions s ON s.id=m.recipient","1",owed_sql("m"))
     case Inbox{id}:
-      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body)," ++ input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND " ++ owed_sql("messages") ++ " ORDER BY seq);"
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'committedAt'," ++ committed_at_sql("messages") ++ ")," ++ input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND " ++ owed_sql("messages") ++ " ORDER BY seq);"
     case InboxIndex{id}: message_index_sql("messages m","m.recipient=" ++ q(id),owed_sql("m"))
     case Outbox{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(" ++ delivery_row() ++ ",json_object('detailRead',json_array('delivery',m.id))) AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.sender=" ++ q(id) ++ " ORDER BY m.seq);"
     case MessageIndex{inbox,condition,state}:
       message_index_sql(Bool.pick(String,inbox,"messages m","messages m JOIN sessions s ON s.id=m.recipient"),condition,state)
     case Status{}:
-      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("sessions.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ")," ++ session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);"
+      "SELECT coalesce(json_group_array(json(" ++ seat_activity_sql("item") ++ ")),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("sessions.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ")," ++ session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);"
     case Players{}: "SELECT " ++ players_json(assigned_role("s.id") ++ "<>'operator'") ++ ";"
     case LegacySubordinates{}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',s.id,'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT CASE WHEN json_valid(t.event) THEN coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) END FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ") AS item FROM sessions s WHERE s.parent IS NOT NULL ORDER BY s.id);"
@@ -1118,6 +1179,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
     case "land": Land{id,one,two}
     case "push": Push{id,one,two}
     case "ask": Ask{id,one,two}
+    case "blocked": Blocked{id,one,two}
     case "ask-file": AskFile{id,one,two}
     case "remote-tip": RemoteTip{id,one,two}
     case "view": View{id,one,two}

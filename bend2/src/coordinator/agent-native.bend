@@ -120,7 +120,7 @@ def load_options(+verb: String, options: List<&2,D.Option>) -> IO(Result<&1,&1,U
   match options:
     case Nil{}: IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{Nil{}})
     case D.Field{+name,+value} <> rest: do IO<Result<&1,&1,U32 & String,List<&2,D.Option>>>:
-      +body_name : String = Bool.pick(String,Bool.and(String.eq(name,"--file"),D.member(verb,["report","ask","native-reply","dispatch","completion-request","guide"])),"--text",file_name(name))
+      +body_name : String = Bool.pick(String,Bool.and(String.eq(name,"--file"),D.member(verb,["report","ask","blocked","native-reply","dispatch","completion-request","guide"])),"--text",file_name(name))
       result : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),
         String.is_empty(body_name),IO.pure(Result<&1,&1,U32 & String,String>,Done{value}),text_value(value))
       tail : Result<&1,&1,U32 & String,List<&2,D.Option>> <- load_options(verb,rest)
@@ -196,7 +196,7 @@ def prepare_identity(+db: String, +session: String, +verb: String, +options: Lis
       select_identity(db,query_identity_sql(session),"--id",options,"This actor has no retained context query."),
       Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.and(Bool.not(D.present(options,"--id")),Bool.not(D.present(options,"--clear")))),
         select_identity(db,stop_identity_sql(D.value(options,"--session",session),String.eq(verb,"force-stop")),"--id",options,"The selected session has no existing stop to force."),
-        Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask dispatch knowledge-record knowledge-relate knowledge-promote context-query context-eval")),Bool.not(D.present(options,"--id"))),
+        Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask blocked dispatch knowledge-record knowledge-relate knowledge-promote context-query context-eval")),Bool.not(D.present(options,"--id"))),
           select_identity(db,new_identity_sql(verb),"--id",options,"The native operation identity could not be generated."),
           IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{options})))))
 
@@ -343,6 +343,7 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "bind": ["bind",target,actual(options,saved,"--native"),D.value(options,"--harness",""),D.value(options,"--model",""),D.value(options,"--effort","")]
     case "report": ["report",D.value(options,"--id",""),session,D.value(options,"--text","")]
     case "ask": ["ask",D.value(options,"--id",""),session,D.value(options,"--text","")]
+    case "blocked": ["blocked",D.value(options,"--id",""),session,D.value(options,"--text","")]
     case "native-reply": ["native-reply",session,D.value(options,"--request",""),D.value(options,"--text","")]
     case "dispatch": ["message",D.value(options,"--id",""),session,D.value(options,"--to",""),D.value(options,"--kind","task"),D.value(options,"--text","")]
     case "recruit": ["recruit",target,D.value(options,"--parent",session),D.value(options,"--harness",""),D.value(options,"--model",""),D.value(options,"--effort",""),D.value(options,"--repo",""),D.value(options,"--branch",""),D.value(options,"--path",""),D.value(options,"--base","")]

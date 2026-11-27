@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Ordinary task input and setup for issue #716. Native commands own session
 // admission, configuration, receiver registration and message authorization.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync,
-  statSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, realpathSync,
+  statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readSettingsFile, routeByName, resolveRouteProfile,
   settingsPathFor } from './project-settings.mjs';
 
@@ -35,6 +35,10 @@ for configuration. Explicit harness, model and effort override those values.
 An existing receiver remains selected until an explicit command changes it.
 New sessions resolve codex, omp, muse, dsh, antigravity or claude through the current PATH.
 Full input and setup results are stored in the database and returned with inspect commands.
+A dispatch by the operator returns wait: one command that blocks until the next
+message for the operator after this task is committed (a report, question,
+completion request or provider refusal), prints the complete messages as one
+JSON notice and exits.
 An existing open assignment receives continuation input automatically. Baton
 resolves the sending agent from its recorded launch context. Stops remain
 effective; resume ID --lift-stop is the explicit stop-lifting operation.
@@ -127,6 +131,10 @@ function projectResolution(path) {
     stderr: run.stderr ?? '', error: run.error?.message ?? null };
 }
 
+export const HARNESSES = ['codex', 'omp', 'muse', 'claude-code', 'dsh', 'antigravity'];
+// Executable and product names that operators type for a harness.
+const HARNESS_NAMES = { claude: 'claude-code', 'claude code': 'claude-code', agy: 'antigravity' };
+
 function executableInPath(harness) {
   const name = { codex: 'codex', omp: 'omp', muse: 'muse', dsh: 'dsh', antigravity: 'agy', 'claude-code': 'claude' }[harness];
   for (const directory of (process.env.PATH ?? '/usr/bin:/bin').split(':')) {
@@ -151,6 +159,81 @@ function executableAvailable(command) {
     } catch {}
   }
   return false;
+}
+
+// The packaged root-notice subscriber sits beside this file in libexec/baton2;
+// the source tree keeps it in bend2/scripts.
+export function rootNoticeScript(here = dirname(fileURLToPath(import.meta.url))) {
+  const candidates = [join(here, 'root-notice.mjs'), join(here, '../scripts/root-notice.mjs')];
+  return candidates.find((path) => existsSync(path)) ?? candidates[0];
+}
+
+// The wait command for the operator after a dispatch: it selects the operator's
+// messages committed after the dispatched task. The subscriber reads the database
+// with node:sqlite, so a dispatch running under Bun names node.
+export function waitCommand(executable, database, session, task, runtime = process.versions.bun ? 'node' : process.execPath) {
+  return [runtime, rootNoticeScript(), '--database', database, '--coordinator', executable,
+    '--session', session, '--after-message', task];
+}
+
+// The project's notify settings, or null when the settings file is absent, does
+// not decode or names no notify command.
+export function notifySettings(path) {
+  if (!existsSync(path)) return null;
+  try {
+    const read = readSettingsFile(path);
+    return read.status === 'decoded' && read.value.notify ? read.value.notify : null;
+  } catch { return null; }
+}
+
+function followerAlive(pid, database) {
+  try { process.kill(pid, 0); } catch { return false; }
+  try {
+    const command = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+    return command.includes('--follow') && command.includes(database);
+  } catch { return true; }
+}
+
+// One follower per database runs the operator notify command for every seat
+// event (seat-events.mjs --follow). A dispatch by the operator starts it when
+// none runs, so no operator command has to start a waiter again after an event.
+// Its cursor and log sit beside the database. Two dispatches that start at the
+// same moment can start two followers; each event is still delivered at least
+// once.
+export function ensureNotifyFollower(executable, database, notify,
+  runtime = process.versions.bun ? 'node' : process.execPath) {
+  const pidPath = database + '.notify.pid';
+  const log = database + '.notify.log';
+  const cursor = database + '.notify-cursor.json';
+  if (existsSync(pidPath)) {
+    const pid = Number(readFileSync(pidPath, 'utf8').trim());
+    if (Number.isInteger(pid) && pid > 0 && followerAlive(pid, database)) return { status: 'running', pid, log, cursor };
+  }
+  const periods = [['silentSeconds', '--silent-seconds'], ['untakenSeconds', '--untaken-seconds'],
+    ['unconfirmedSeconds', '--unconfirmed-seconds']]
+    .flatMap(([key, flag]) => notify[key] === undefined ? [] : [flag, String(notify[key])]);
+  const argv = [rootNoticeScript(), '--follow', '--database', database, '--coordinator', executable,
+    '--session', 'operator', '--cursor', cursor, '--notify', JSON.stringify(notify.argv), ...periods];
+  const output = openSync(log, 'a');
+  const env = { ...process.env };
+  for (const name of ['BATON_SESSION', 'BATON_DATABASE', 'BATON_ATTEMPT_DIRECTORY', 'CODEX_THREAD_ID']) delete env[name];
+  const child = spawn(runtime, argv, { detached: true, stdio: ['ignore', output, output], env });
+  child.unref();
+  closeSync(output);
+  writeFileSync(pidPath, String(child.pid) + '\n');
+  return { status: 'started', pid: child.pid, log, cursor };
+}
+
+// When a seat whose native attempt runs takes new input: Claude Code reads owed
+// input after each tool call of the current turn (its PostToolUse hook); the other
+// harnesses read it when the current turn ends. null when no attempt runs or the
+// player list cannot be read.
+export function inputTaking(players, sessionId, harness) {
+  let rows;
+  try { rows = players(); } catch { return null; }
+  const row = Array.isArray(rows) ? rows.find((entry) => entry.id === sessionId) : null;
+  if (row?.execution?.phase !== 'running') return null;
+  return harness === 'claude-code' ? 'after-next-tool-call' : 'next-turn-boundary';
 }
 
 function canonicalFile(path) {
@@ -325,8 +408,16 @@ export function startTask(executable, database, argv) {
     result.route = { ...route, settingsPath: named ? settingsPath : null, name: options.route ?? null,
       sources: Object.fromEntries(['harness', 'model', 'effort'].map((field) => [field,
         options[field] !== undefined ? 'explicit' : named ? 'named-project-route' : 'recorded-session'])) };
-    if (!['codex', 'omp', 'muse', 'claude-code', 'dsh', 'antigravity'].includes(route.harness) || !route.model || !route.effort) {
-      fail('taskRouteIncomplete', 'A supported harness, model and effort must be configured.',
+    if (route.harness && !HARNESSES.includes(route.harness)) {
+      fail('taskHarnessUnsupported', `The harness ${JSON.stringify(route.harness)} is not a Baton harness name.`
+        + ` Harness names: ${HARNESSES.join(', ')}.`
+        + (HARNESS_NAMES[route.harness] ? ` Use --harness ${HARNESS_NAMES[route.harness]}.` : ''),
+        'Pass --harness with one of the listed names, or --route NAME for a saved project route.');
+    }
+    if (!route.harness || !route.model || !route.effort) {
+      fail('taskRouteIncomplete', 'A supported harness, model and effort must be configured.'
+        + ` Missing: ${['harness', 'model', 'effort'].filter((field) => !route[field]).join(', ')}.`
+        + ` Harness names: ${HARNESSES.join(', ')}.`,
         'Pass --route NAME for a saved project route, or supply --harness, --model and --effort.');
     }
     if (selected && !selected.workspace) fail('taskWorkspaceMissing',
@@ -391,6 +482,7 @@ export function startTask(executable, database, argv) {
       }
     }
     if (profile) native('profile-bind', sessionId, route.harness, profile.label, profile.store);
+    const taken = inputTaking(() => call([database, 'players'], undefined, false), sessionId, route.harness);
     const admission = call([database, 'message-batch-file', sender, '-'],
       JSON.stringify([{ id, recipient: sessionId,
         kind, body }]) + '\n')[0];
@@ -401,6 +493,19 @@ export function startTask(executable, database, argv) {
     result.status = admission.status === 'pending' || admission.wake?.status === 'refused' ? 'pending' : 'admitted';
     result.next = result.status === 'pending' ? 'Inspect the retained wake cause and receiver, then resume the same session.' :
       'Inspect the recorded input and recipient receipt; admission does not establish task completion.';
+    if (taken) {
+      result.taken = taken;
+      result.next += taken === 'after-next-tool-call'
+        ? ' The seat is working; Claude Code takes this input after its next tool call in the current turn.'
+        : ' The seat is working; it takes this input at its next turn boundary.';
+    }
+    if (sender === 'operator') {
+      result.wait = waitCommand(executable, database, sender, result.task);
+      result.next += ' Run the wait command to block until the next message for the operator arrives;'
+        + ' it prints the complete messages and exits.';
+      const notify = notifySettings(settingsPath);
+      if (notify) result.notify = ensureNotifyFollower(executable, database, notify);
+    }
   } catch (error) {
     result = { ...result, status: result.admission?.admission?.status === 'admitted' ? 'pending' : 'refused',
       error: { reason: error.reason ?? error.code ?? 'taskSetupFailed', detail: error.message,

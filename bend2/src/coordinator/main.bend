@@ -31,6 +31,7 @@ import ./accounts.bend as Accounts
 import ./agent-command.bend as AgentCommand
 import ./agent-route.bend as AgentRoute
 import ./agent-input.bend as AgentInput
+import ./player-rows.bend as PlayerRows
 import ./agent-native.bend as AgentNative
 import ./repl.bend as Repl
 import ./task-input.bend as TaskInput
@@ -170,7 +171,9 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.Outbox{id}: read_command(db,C.Outbox{id})
     case C.MessageIndex{inbox,condition,state}: read_command(db,C.MessageIndex{inbox,condition,state})
     case C.Status{}: read_checked(db,C.Status{})
-    case C.Players{}: read_command(db,C.Players{})
+    case C.Players{}: do IO<Unit>:
+      +rows : String <- PlayerRows.players(db)
+      AgentInput.command_output(db,C.Players{},rows ++ "\n")
     case C.LegacySubordinates{}: read_command(db,C.LegacySubordinates{})
     case C.PlayerRead{id}: read_command(db,C.PlayerRead{id})
     case C.SectionRead{ensemble,id}: read_command(db,C.SectionRead{ensemble,id})

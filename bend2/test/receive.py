@@ -654,7 +654,8 @@ while True:
         result=subprocess.run([config['exe'],config['db'],'promote',*action['promote']],capture_output=True,text=True)
         reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
-    reference_inputs=re.findall(r'^Message \(report\) from [^\n]* \[id: ([^\]]+)\] retained [0-9]+ bytes; read the complete body with baton read \1\.$',prompt,re.M)
+    # A native reads the stored body of every input its prompt names by pointer.
+    reference_inputs=re.findall(r'^Message \([a-z-]+\) from [^\n]* \[id: ([^\]]+)\] retained [0-9]+ bytes; read the complete body with baton read \1\.$',prompt,re.M)
     read_inputs=action.get('read',reference_inputs)
     for ident in dict.fromkeys(read_inputs):
         read=coordinator('read',ident)
@@ -4194,19 +4195,21 @@ class Receive(unittest.TestCase):
         self.prepare_input('input', 'parent')
         missing = self.coord(*self.receive_args('parent', self.directory / 'missing executable'), ok=False)
         self.assertNotEqual(missing.returncode, 0)
-        self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
+        # inbox parent would record a read for parent; the input must stay owed.
+        self.assertFalse(read_recorded(self.db, 'input'))
         startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
         self.assertIn('Output: '+str(self.output_log('parent')), startup_report['body'])
         startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_bytes()
         reference = self.reference_startup_stderr(self.directory / 'missing executable', 'parent')
         self.assertEqual(startup_stderr, reference)
         failed = self.spawn(*self.receive_args('parent'))
-        control, _ = self.accept('parent')
-        self.action(control, fail=True, ack=False)
+        control, _ = self.accept_child(failed, 'parent', 'the receive after the startup failure did not start the native')
+        # The failed turn reads no input, so the input stays owed for the retry.
+        self.action(control, fail=True, ack=False, read=[])
         self.finish(failed, ok=False)
         failed_report = next(m for m in self.coord('inbox', 'root') if 'fixture provider failed' in m['body'])
         retry = self.spawn(*self.receive_args('parent'))
-        control, _ = self.accept('parent')
+        control, _ = self.accept_child(retry, 'parent', 'the receive after the provider failure did not start the native')
         self.action(control)
         self.finish(retry)
         self.assertEqual(self.coord('inbox', 'parent'), [])
@@ -4215,6 +4218,25 @@ class Receive(unittest.TestCase):
         self.assertNotEqual(startup_report['id'], failed_report['id'])
         self.assertNotEqual(failed_report['id'], success_report['id'])
         self.assertNotEqual(startup_report['id'], success_report['id'])
+
+    def test_a_provider_refusal_reaches_the_coordinator_and_the_seat_state_names_it(self):
+        # Codex ends a refused turn with turn.failed and the provider's text. The
+        # coordinator receives that text, and the seat's state names the refusal
+        # and its cause. Baton moves the seat to no other account or provider.
+        cause = 'This content was flagged for possible cybersecurity risk.'
+        self.player()
+        self.prepare_input('refused-brief', 'parent', 'The refused brief.', kind='task')
+        refused = self.spawn(*self.receive_args('parent'))
+        control, _ = self.accept('parent')
+        self.action(control, fail=True, ack=False, fail_message=cause)
+        self.finish(refused, ok=False)
+        report = next(m for m in self.coord('inbox', 'root') if cause in m['body'])
+        state = self.coord('session', 'parent')
+        self.assertEqual(state['blockedCause'], 'provider-failure')
+        self.assertEqual(state['refusal'], {'attempt': report['id'], 'cause': cause})
+        listed = next(row for row in self.coord('players') if row['id'] == 'parent')
+        self.assertEqual(listed['refusal'], state['refusal'])
+        self.assertEqual((state['harness'], state['model']), ('codex', 'parent'))
 
     def test_receive_startup_failure_notifies_parent_and_retains_input(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
@@ -4240,7 +4262,13 @@ class Receive(unittest.TestCase):
         control, started = self.accept('root')
         self.assertIn('Use baton inbox to read complete input', started['prompt'])
         self.assertIn('You are session root in a Baton Orchestra.', started['prompt'])
-        self.assertNotIn(str(self.db.resolve()), started['prompt'])
+        # The prompt names the coordinator executable and this database as one argv
+        # line (receive.bend instructions), as omp-root.py and codex-root.py check.
+        prefix = 'Coordinator executable/database argv: '
+        coordinator = json.loads(next(line[len(prefix):] for line in started['prompt'].splitlines()
+                                      if line.startswith(prefix)))
+        self.assertEqual([pathlib.Path(path).resolve() for path in coordinator],
+                         [EXE.resolve(), self.db.resolve()])
         self.assertNotIn('Use acknowledge', started['prompt'])
         self.action(control)
         self.finish(first)
@@ -4248,10 +4276,12 @@ class Receive(unittest.TestCase):
         second = self.spawn(*self.receive_args('root'))
         control, started = self.accept('root')
         self.assertEqual(started['resume'], 'native-root')
-        self.action(control, fail=True, ack=False)
+        # The failed turn reads no input, so 'second' stays owed.
+        self.action(control, fail=True, ack=False, read=[])
         stdout, _ = self.finish(second, ok=False)
         self.assertIn('fixture provider failed', stdout)
-        self.assertEqual([m['id'] for m in self.coord('inbox', 'root')], ['second'])
+        # inbox root would record root's reads; the successful turn took 'first'.
+        self.assertEqual((read_recorded(self.db, 'first'), read_recorded(self.db, 'second')), (True, False))
         turns = self.coord('turns', 'root')
         self.assertEqual([(turn['player'], turn['eventType']) for turn in turns],
                          [('root', 'result'), ('root', 'result')])
@@ -4261,15 +4291,25 @@ class Receive(unittest.TestCase):
             'type': 'result', 'is_error': 1,
             'nativeEvent': {'type': 'turn.failed', 'error': {'message': 'fixture provider failed'}},
             'result': 'fixture provider failed'})
-        reports = self.coord('inbox', 'operator')
+        # outbox lists the root's messages without recording a read; inbox
+        # operator would record the operator's reads. The operator also receives
+        # the usage-read announcement of the root's provider account (#1025);
+        # every other report is a turn report.
+        listed = [message for message in self.coord('outbox', 'root')
+                  if (message['recipient'], message['kind']) == ('operator', 'report')]
+        reports = [report for report in listed if not report['id'].startswith('usage-read:')]
+        self.assertTrue(all(report['body'].startswith('usage read ') for report in listed if report not in reports))
         self.assertEqual([report['id'] for report in reports], [turn['id'] for turn in turns])
         self.assertEqual([report['body'] for report in reports], [turn['reportBody'] for turn in turns])
+        for report in listed:
+            if report not in reports:
+                self.coord('as', 'operator', 'read', report['id'])
         for report in reports:
+            # delivery prints the complete body and records that read (e317ba2b3).
+            self.assertFalse(read_recorded(self.db, report['id']))
             delivered = self.coord('delivery', report['id'])
             self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind']),
                              ('root', 'operator', 'report'))
-            self.assertFalse(read_recorded(self.db, delivered['id']))
-            self.coord('as', 'operator', 'read', report['id'])
             self.assertTrue(read_recorded(self.db, report['id']))
         self.assertEqual(self.coord('inbox', 'operator'), [])
         self.assertTrue(all(read_recorded(self.db, turn['id']) for turn in self.coord('turns', 'root')))

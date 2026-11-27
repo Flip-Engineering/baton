@@ -51,6 +51,9 @@ class AgentActions(unittest.TestCase):
                         str(self.directory / name), 'HEAD')
             self.legacy('connect', name, '', self.endpoint)
 
+    # The shared process table reads the run's process names from the receive fixture.
+    process_names = receive_fixture.Receive.process_names
+
     def shutdown_private_owner(self, database=None):
         database = self.db if database is None else database
         if not database.exists():
@@ -1176,6 +1179,28 @@ class AgentActions(unittest.TestCase):
         self.assertEqual([row['status'] for row in exact], ['admitted', 'admitted'])
         self.assertFalse(self.completion('top-b')['ended'])
         self.assertEqual(self.completion('top-b')['assignmentId'], exact[1]['id'])
+
+    def test_a_repeated_operator_confirmation_names_the_recorded_confirmation(self):
+        # A seat that the operator started with dispatch --new is a parentless
+        # conductor under the registered operator. The first confirmation is admitted;
+        # a repeated one names the confirmation already recorded for that request.
+        self.operator_session()
+        self.legacy('attach', 'seat', 'fixture', '', self.endpoint)
+        self.legacy('role', 'seat', 'principal-conductor')
+        self.legacy('message', 'seat-task', 'operator', 'seat', 'task', 'Do the work.')
+        sent = self.action('seat', 'completion-request', '--text', 'Done.')[0]
+        self.assertEqual((sent['status'], sent['recipient']), ('admitted', 'operator'))
+        first = self.action('operator', 'confirm', 'seat')
+        self.assertEqual(first[0]['status'], 'admitted', first)
+        self.assertTrue(self.completion('seat')['ended'])
+        before = self.stored_messages()
+        again = self.action('operator', 'confirm', 'seat')
+        self.assertEqual(again[0]['status'], 'refused', again)
+        cause = again[0]['admission']['cause']
+        self.assertIn('already confirmed', cause)
+        self.assertIn(sent['id'], cause)
+        self.assertIn(first[0]['id'], cause)
+        self.assertEqual(self.stored_messages(), before)
 
     def test_a_parentless_conductor_assignment_is_open_under_the_operator(self):
         self.operator_session()

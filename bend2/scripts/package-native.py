@@ -216,7 +216,7 @@ def stage_adapters(payload, helper_binaries=None, system=None):
         for suffix in ('conductor', 'root'):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
-    for name in ('codex-root-relay.mjs', 'root-channel-config.mjs'):
+    for name in ('codex-root-relay.mjs', 'root-channel-config.mjs', 'root-notice.mjs', 'seat-events.mjs'):
         shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/scripts/omp-completion.mjs', directory / 'omp-completion.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/no-agent-summary.js', directory / 'no-agent-summary.js')
@@ -226,6 +226,7 @@ def stage_adapters(payload, helper_binaries=None, system=None):
     shutil.copytree(ROOT / 'bend2/harness/git-series-bin', directory / 'git-series-bin')
     shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs', directory / 'native-history.mjs')
     shutil.copyfile(ROOT / 'bend2/harness/project-settings.mjs', directory / 'project-settings.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/seats.mjs', directory / 'seats.mjs')
     helper_binaries = helper_binaries or {}
     native_observe = helper_binaries.get('claude-credit-observe', ROOT / '.scratch/bend2/claude-credit-observe')
     require(native_observe.is_file() and not native_observe.is_symlink() and os.access(native_observe, os.X_OK),

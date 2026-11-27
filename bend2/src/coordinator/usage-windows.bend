@@ -23,6 +23,7 @@ import ../git/process.bend as Process
 import ../host/sqlite.bend as DB
 import ../host/control.bend as Host
 import ../host/session-lock.bend as Lock
+import ../host/text.bend as Text
 import ./store.bend as Store
 import ./usage-reads.bend as UR
 
@@ -253,15 +254,57 @@ def default_credential_ref(+provider: String) -> String:
 def credential_ref_sql(+account: String) -> String:
   "SELECT coalesce((SELECT CASE WHEN funding='api_key' THEN secret_ref WHEN harness='codex' THEN 'codex-home:'||secret_ref WHEN harness='claude-code' THEN 'claude-oauth:'||secret_ref||'/.credentials.json' ELSE '' END FROM accounts WHERE id=" ++ C.q(account) ++ "),'');"
 
-def credential_ref_of(+provider: String, recorded: Result<&1,&1,U32 & String,String>) -> String:
-  match recorded:
-    case Fail{error}: default_credential_ref(provider)
-    case Done{+text}: Bool.pick(String,String.is_empty(Tx.trim_nl(text)),default_credential_ref(provider),Tx.trim_nl(text))
+# A project-settings subscription binds its store through the seat's profile
+# record (db.profile-HEX, written by profile-bind) and records no accounts row.
+# The record's last non-empty line is the profile in force: ' HARNESS LABEL STORE',
+# or the legacy 'LABEL STORE'; the store is the rest of the line. The answer is
+# the store when that line names this account label for the seat's harness.
+def profile_record_path_sql(+db: String, +session: String) -> String:
+  "SELECT " ++ C.q(db ++ ".profile-") ++ " || lower(hex(" ++ C.q(session) ++ "));"
 
-def credential_ref(+db: String, +provider: String, +account: String) -> IO(String):
+def profile_store_sql(+text: String, +harness: String, +label: String) -> String:
+  "WITH RECURSIVE lines(n,line,rest) AS (SELECT 0,'',replace(" ++ C.q(text) ++ ",char(13),'')||char(10) UNION ALL SELECT n+1,substr(rest,1,instr(rest,char(10))-1),substr(rest,instr(rest,char(10))+1) FROM lines WHERE rest<>''),"
+  ++ " current(line) AS (SELECT line FROM lines WHERE trim(line)<>'' ORDER BY n DESC LIMIT 1),"
+  ++ " marked(h,rest) AS (SELECT CASE WHEN substr(line,1,1)=' ' THEN substr(ltrim(line),1,instr(ltrim(line),' ')-1) ELSE '' END,CASE WHEN substr(line,1,1)=' ' THEN substr(ltrim(line),instr(ltrim(line),' ')+1) ELSE line END FROM current),"
+  ++ " fields(h,label,store) AS (SELECT h,substr(rest,1,instr(rest,' ')-1),substr(rest,instr(rest,' ')+1) FROM marked WHERE instr(rest,' ')>0)"
+  ++ " SELECT coalesce((SELECT store FROM fields WHERE label=" ++ C.q(label) ++ " AND label<>'' AND store<>'' AND (h='' OR h=" ++ C.q(harness) ++ ")),'');"
+
+# The provider credential inside a bound store: the Claude Code credentials file
+# under CLAUDE_CONFIG_DIR and the Codex home under CODEX_HOME.
+def store_credential_ref(+provider: String, +store: String) -> String:
+  Bool.pick(String,String.is_empty(store),"",
+    Bool.pick(String,String.eq(provider,"claude"),"claude-oauth:" ++ store ++ "/.credentials.json",
+      Bool.pick(String,String.eq(provider,"codex"),"codex-home:" ++ store,"")))
+
+def profile_text(read: Result<&1,&1,U32 & String,String>) -> String:
+  match read:
+    case Done{+text}: text
+    case Fail{error}: ""
+
+def profile_credential_ref(+db: String, +session: String, +provider: String, +account: String) -> IO(String):
   do IO<String>:
-    recorded : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,credential_ref_sql(account))
-    IO.pure(String,credential_ref_of(provider,recorded))
+    +path : String <- IO.try(String,DB.Sql.read(db,profile_record_path_sql(db,session)))
+    read : Result<&1,&1,U32 & String,String> <- Text.Text.read(Tx.trim_nl(path))
+    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ "),'');"))
+    +store : String <- IO.try(String,DB.Sql.read(":memory:",profile_store_sql(profile_text(read),Tx.trim_nl(harness),account)))
+    IO.pure(String,store_credential_ref(provider,Tx.trim_nl(store)))
+
+def credential_ref_chosen(+fallback: String, recorded: Result<&1,&1,U32 & String,String>) -> String:
+  match recorded:
+    case Fail{error}: fallback
+    case Done{+text}: Bool.pick(String,String.is_empty(Tx.trim_nl(text)),fallback,Tx.trim_nl(text))
+
+def credential_ref_of(+provider: String, +profile: String, recorded: Result<&1,&1,U32 & String,String>) -> String:
+  credential_ref_chosen(Bool.pick(String,String.is_empty(profile),default_credential_ref(provider),profile),recorded)
+
+# The credential reference of the account record, else the seat's bound profile
+# store, else the provider's default reference. db is the database path the
+# profile record was written beside; canonical holds the accounts table.
+def credential_ref(+db: String, +canonical: String, +session: String, +provider: String, +account: String) -> IO(String):
+  do IO<String>:
+    recorded : Result<&1,&1,U32 & String,String> <- DB.Sql.read(canonical,credential_ref_sql(account))
+    +profile : String <- Bool.pick(IO(String),String.is_empty(account),IO.pure(String,""),profile_credential_ref(db,session,provider,account))
+    IO.pure(String,credential_ref_of(provider,profile,recorded))
 
 def drop_last(parts: List<String>) -> List<String>:
   match parts:
@@ -501,7 +544,7 @@ def read_with(+db: String, +session: String, +provider: String, +account: String
   do IO<Unit>:
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,"usage-read:" ++ J.string_literal(provider) ++ ":" ++ J.string_literal(account)))
-    +ref : String <- credential_ref(canonical,provider,account)
+    +ref : String <- credential_ref(db,canonical,session,provider,account)
     +executable : String <- read_executable(canonical,session,provider)
     answer : String & String <- run_read(helper,provider,ref,executable)
     recorded : Unit <- record_document(canonical,session,provider,account,trigger,answer)

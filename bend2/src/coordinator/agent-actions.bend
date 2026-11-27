@@ -320,7 +320,7 @@ def parse_verb_shared(+verb: String, +args: List<&2,String>) -> Action:
 def parse_verb(+verb: String, args: List<String>) -> Action:
   match args:
     case +text <> Nil{}:
-      Bool.pick(Action,Bool.and(Domain.member(verb,["report","ask"]),Bool.not(Tx.starts_with(text,"--"))),
+      Bool.pick(Action,Bool.and(Domain.member(verb,["report","ask","blocked"]),Bool.not(Tx.starts_with(text,"--"))),
         domain_action(Domain.parse([verb,"--text",text])),
         parse_verb_shared(verb,Domain.shared_strings([text])))
     case +player <> +text <> Nil{}:

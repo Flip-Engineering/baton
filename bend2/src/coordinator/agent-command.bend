@@ -10,6 +10,7 @@ import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./message-batch.bend as Batch
 import ./project.bend as Project
+import ./player-rows.bend as PlayerRows
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../context/raw.bend as Raw
@@ -374,12 +375,30 @@ def confirmation_requests_sql(+session: String, +recipient: String) -> String:
   ++ " AND (" ++ C.q(recipient) ++ "='' OR worker.id=" ++ C.q(recipient) ++ ") AND " ++ C.task_request_sql("worker.id") ++ " IS NOT NULL"
   ++ " AND NOT " ++ C.task_confirmed_sql("worker.id") ++ " ORDER BY worker.id;"
 
+# A selected Player whose current request this coordinator, or another one with
+# authority over the Player, has already confirmed: the refusal names the request
+# and the recorded confirmation, so a repeated confirm states the recorded fact.
+def confirmed_request_sql(+session: String, +recipient: String) -> String:
+  "SELECT coalesce((SELECT 'The current completion request ' || r.id || ' of ' || r.sender || ' is already confirmed by ' || c.id || ' from ' || c.sender || '; its assignment has ended.' FROM messages c JOIN messages r ON r.id=c.body WHERE c.recipient=" ++ C.q(recipient) ++ " AND c.kind='completion-confirmed' AND r.sender=" ++ C.q(recipient) ++ " AND r.kind='completion-request' AND " ++ C.task_confirmed_sql(C.q(recipient)) ++ " AND " ++ C.coordinator_authority_sql(C.q(recipient),C.q(session)) ++ " ORDER BY c.seq DESC LIMIT 1),'');"
+
+def confirmation_absent(+session: String, +recipient: String, +id: String, +confirmed: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(confirmed),
+    confirmation_refused(session,recipient,id,"No current completion request is addressed to this coordinator for the selected Player."),
+    confirmation_refused(session,recipient,id,confirmed))
+
+def confirmation_none(+db: String, +session: String, +recipient: String, +id: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(recipient),
+    confirmation_absent(session,recipient,id,""),
+    do IO<String>:
+      row : String <- IO.try(String,DB.Sql.read(db,confirmed_request_sql(session,recipient)))
+      confirmation_absent(session,recipient,id,Tx.trim_nl(row)))
+
 def confirmation_inferred(rows: List<String>, +db: String, +session: String, +recipient: String, +id: String, next: A.Body) -> IO(String):
   match rows:
     case encoded <> Nil{}: do IO<String>:
       request : String <- AgentInput.field(encoded)
       completion_confirmed_exact(db,session,recipient,request,id,next)
-    case Nil{}: confirmation_refused(session,recipient,id,"No current completion request is addressed to this coordinator for the selected Player.")
+    case Nil{}: confirmation_none(db,session,recipient,id)
     case other: confirmation_refused(session,recipient,id,"Multiple Players have current completion requests. Select the Player with --to.")
 
 def completion_confirmed(+db: String, +session: String, +recipient: String, +request: String, +id: String, +next: A.Body) -> IO(String):
@@ -413,8 +432,8 @@ def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
       saved : String <- IO.try(String,Store.read(db,C.PlayerRead{id}))
       inspection_result(saved)
     case A.Players{}: do IO<Unit>:
-      saved : String <- IO.try(String,Store.read(db,C.Players{}))
-      IO.write(saved)
+      saved : String <- PlayerRows.players(db)
+      IO.write(saved ++ "\n")
     case A.Assignment{+id}: do IO<Unit>:
       target : String = Bool.pick(String,String.is_empty(id),session,id)
       saved : String <- IO.try(String,Store.read(db,C.Session{target}))

@@ -229,6 +229,102 @@ class TaskStart(unittest.TestCase):
                 self.assertTrue(self.output_log(session).is_file())
                 self.assertGreater(self.read_count(result['task']), 0)
 
+    def test_an_operator_dispatch_names_the_wait_command_for_the_next_operator_message(self):
+        # The packaged subscriber sits beside task-start.mjs in libexec/baton2.
+        waiter_script = self.prefix / 'libexec/baton2/root-notice.mjs'
+        shutil.copy2(controls.ROOT / 'bend2/scripts/root-notice.mjs', waiter_script)
+        session = 'task-wait'
+        self.route(session)
+        result = self.task_call('--session', session, '--harness', 'codex', '--model', 'gpt-6-astra',
+                                '--effort', 'low', '--command', self.fixture,
+                                '--text', 'Report the result when the work is done.')
+        self.assertEqual((result['status'], result['actor']['id']), ('admitted', 'operator'))
+        wait = result['wait']
+        self.assertEqual(wait[1:], [str(waiter_script), '--database', result['database'],
+                                    '--coordinator', result['inspect']['session'][0],
+                                    '--session', 'operator', '--after-message', result['task']])
+        self.assertIn('wait command', result['next'])
+        stream, native = self.accept(session)
+        self.failed_turn(session, stream, 'Provider refusal text for the operator.')
+        waited = subprocess.run(wait, env=self.environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(waited.returncode, 0, waited.stderr)
+        notice = json.loads(waited.stdout)
+        self.assertEqual(notice['recipient'], 'operator')
+        self.assertTrue(notice['messages'])
+        task_seq, = self.rows('SELECT seq FROM messages WHERE id=?', (result['task'],))
+        for message in notice['messages']:
+            stored, = self.rows('SELECT sender,recipient,kind,body FROM messages WHERE id=?', (message['id'],))
+            self.assertEqual((message['sender'], message['recipient'], message['kind'], message['body']),
+                             (stored['sender'], stored['recipient'], stored['kind'], stored['body']))
+            self.assertEqual(stored['recipient'], 'operator')
+            self.assertGreater(message['seq'], task_seq['seq'])
+            self.assertIn(stored['body'], notice['content'])
+
+    def test_an_operator_dispatch_starts_the_notify_follower_that_runs_the_configured_command(self):
+        import os, signal
+        for name in ('root-notice.mjs', 'seat-events.mjs', 'seats.mjs'):
+            shutil.copy2(controls.ROOT / 'bend2/scripts' / name, self.prefix / 'libexec/baton2' / name)
+        received = self.directory / 'notified.jsonl'
+        hook = self.directory / 'notify-hook.py'
+        hook.write_text(f'import sys\nopen({str(received)!r}, "a").write(sys.stdin.read())\n')
+        self.settings_path.write_text(json.dumps({
+            'schema': 'baton2-project-settings-v1', 'routes': [],
+            'context': {'disabled': [], 'preferred': []}, 'subscriptions': [],
+            'notify': {'argv': [sys.executable, str(hook)]}}))
+        session = 'task-notify'
+        self.route(session)
+        flags = ('--session', session, '--harness', 'codex', '--model', 'gpt-6-astra', '--effort', 'low',
+                 '--command', self.fixture)
+        result = self.task_call(*flags, '--text', 'Report the result when the work is done.')
+        self.assertEqual(result['notify']['status'], 'started', result.get('notify'))
+        pid = result['notify']['pid']
+        self.addCleanup(lambda: os.kill(pid, signal.SIGTERM) if pathlib.Path(f'/proc/{pid}').exists() else None)
+        self.assertEqual(result['notify']['cursor'], result['database'] + '.notify-cursor.json')
+        stream, native = self.accept(session)
+        text = 'Provider refusal text for the notify command.'
+        self.failed_turn(session, stream, text)
+        import time
+        deadline = time.monotonic() + 60
+        while not (received.exists() and text in received.read_text()):
+            if time.monotonic() > deadline:
+                log = pathlib.Path(result['notify']['log'])
+                self.fail('the notify command did not receive the report within 60 s; follower log: '
+                          + (log.read_text()[-2000:] if log.exists() else 'absent'))
+            time.sleep(.1)
+        events = [json.loads(line) for line in received.read_text().splitlines()]
+        reported = [event for event in events if event['event'] == 'message' and text in event['body']]
+        self.assertEqual([(event['seat'], event['database']) for event in reported][:1],
+                         [(session, result['database'])])
+        # A later dispatch by the operator finds the follower running.
+        self.route('task-notify-2')
+        again = self.task_call('--session', 'task-notify-2', *flags[2:], '--text', 'Second task.')
+        self.assertEqual((again['notify']['status'], again['notify']['pid']), ('running', pid))
+        self.finish(self.accept('task-notify-2')[0], 'Second task done.')
+
+    def test_a_dispatch_to_a_working_seat_says_when_the_seat_takes_it(self):
+        session = 'task-working'
+        self.route(session)
+        flags = ('--session', session, '--harness', 'codex', '--model', 'gpt-6-astra', '--effort', 'low',
+                 '--command', self.fixture)
+        first = self.task_call(*flags, '--text', 'Work that keeps its turn open.')
+        self.assertNotIn('taken', first)
+        stream, native = self.accept(session)
+        guided = self.task_call('--to', session, '--text', 'Use the new plan.')
+        self.assertEqual(guided['taken'], 'next-turn-boundary')
+        self.assertIn('it takes this input at its next turn boundary', guided['next'])
+        self.finish(stream, 'First turn done.')
+
+    def test_an_unknown_harness_name_is_refused_with_the_harness_names(self):
+        before = self.rows('SELECT * FROM messages ORDER BY seq')
+        result = self.task_call('--new', '--harness', 'claude', '--model', 'claude-opus-5-5', '--effort', 'high',
+                                '--text', 'A task for a misnamed harness.', ok=False)
+        self.assertEqual(result['error']['reason'], 'taskHarnessUnsupported')
+        detail = result['error']['detail']
+        self.assertIn('The harness "claude" is not a Baton harness name.', detail)
+        self.assertIn('Harness names: codex, omp, muse, claude-code, dsh, antigravity.', detail)
+        self.assertIn('Use --harness claude-code.', detail)
+        self.assertEqual(self.rows('SELECT * FROM messages ORDER BY seq'), before)
+
     def test_muse_file_and_claude_stdin_receive_complete_seeded_initial_input(self):
         for harness in ('muse', 'claude-code'):
             with self.subTest(harness=harness):

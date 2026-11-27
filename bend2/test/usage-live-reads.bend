@@ -171,14 +171,15 @@ def unknown_case(+db: String, +helper: String, +path: String) -> IO(Unit):
 
 # A window named WINDOW:SCOPE holds only seats whose model contains SCOPE: an exhausted
 # Opus weekly window holds the Opus seat and leaves the Sonnet seat on the same account
-# open.
-def model_scope_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+# open. The exhausted window resets at FUTURE, an hour after the run starts, because a
+# held window whose reported reset has passed is elapsed (UW.current_gate).
+def model_scope_case(+db: String, +helper: String, +path: String, +future: String) -> IO(Unit):
   do IO<Unit>:
-    written : Unit <- answer(path,"{\"schema\":\"baton2-usage-read-v1\",\"provider\":\"claude\",\"source\":\"GET https://api.anthropic.com/api/oauth/usage\",\"observedAt\":1,\"state\":\"read\",\"windows\":[{\"window\":\"5-hour\",\"usedPercent\":10,\"resetsAt\":1792820715847,\"exhausted\":false},{\"window\":\"7-day:opus\",\"usedPercent\":100,\"resetsAt\":1793386764984,\"exhausted\":true}]}")
+    written : Unit <- answer(path,"{\"schema\":\"baton2-usage-read-v1\",\"provider\":\"claude\",\"source\":\"GET https://api.anthropic.com/api/oauth/usage\",\"observedAt\":1,\"state\":\"read\",\"windows\":[{\"window\":\"5-hour\",\"usedPercent\":10,\"resetsAt\":1792820715847,\"exhausted\":false},{\"window\":\"7-day:opus\",\"usedPercent\":100,\"resetsAt\":" ++ future ++ ",\"exhausted\":true}]}")
     refused : Unit <- UW.read_refused_with(db,"opus","acct-claude","att-opus",helper)
     +opus : UW.Gate <- state_of(db,"opus","acct-claude")
     held : Unit <- expect("scoped-window-holds-its-model",String.eq(gate_class(opus),"held"))
-    named : Unit <- expect("scoped-hold-names-the-window",Tx.starts_with(gate_detail(opus),"7-day:opus|1793386764984|"))
+    named : Unit <- expect("scoped-hold-names-the-window",Tx.starts_with(gate_detail(opus),"7-day:opus|" ++ future ++ "|"))
     sonnet : UW.Gate <- state_of(db,"sonnet","acct-claude")
     open : Unit <- expect("scoped-window-leaves-other-model-open",String.eq(gate_class(sonnet),"none"))
     expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:hold:sonnet*';","0\n","other-model-not-announced")
@@ -283,6 +284,26 @@ def admission_case(+db: String, +helper: String, +path: String) -> IO(Unit):
     held : Unit <- expect("admission-reads-open-account",String.eq(gate_class(held_gate),"held"))
     expect_read(db,"SELECT count(*) FROM usage_reads WHERE account='acct-zai';","3\n","each-admission-reads-account")
 
+# A seat bound to a project-settings subscription has a profile record and no
+# accounts row. Its usage read names the credentials of the bound store: the
+# Claude Code credentials file under CLAUDE_CONFIG_DIR and the Codex home under
+# CODEX_HOME. A seat without a record keeps the default reference.
+def profile_record(+db: String, +seat: String, +line: String) -> IO(Unit):
+  do IO<Unit>:
+    +path : String <- read(db,"SELECT " ++ C.q(db ++ ".profile-") ++ " || lower(hex(" ++ C.q(seat) ++ "));")
+    answer(Tx.trim_nl(path),line ++ "\n")
+
+def profile_store_case(+db: String, +helper: String) -> IO(Unit):
+  do IO<Unit>:
+    claude : Unit <- profile_record(db,"opus"," claude-code b /stores/claude b")
+    codex : Unit <- profile_record(db,"k"," codex c /stores/codex-c")
+    read_claude : Unit <- UW.read_with(db,"opus","claude","b",helper,"admission")
+    one : Unit <- expect_read(db,"SELECT reason FROM usage_reads WHERE session='opus' ORDER BY id DESC LIMIT 1;","reference claude-oauth:/stores/claude b/.credentials.json\n","claude-profile-store-credentials-read")
+    read_codex : Unit <- UW.read_with(db,"k","codex","c",helper,"admission")
+    two : Unit <- expect_read(db,"SELECT reason FROM usage_reads WHERE session='k' ORDER BY id DESC LIMIT 1;","reference codex-home:/stores/codex-c\n","codex-profile-store-home-read")
+    read_default : Unit <- UW.read_with(db,"sonnet","claude","",helper,"admission")
+    expect_read(db,"SELECT reason FROM usage_reads WHERE session='sonnet' ORDER BY id DESC LIMIT 1;","reference claude-oauth:\n","unbound-claude-seat-default-credentials-read")
+
 def delay_case(+db: String) -> IO(Unit):
   do IO<Unit>:
     absent : Unit <- expect_read(db,UW.schedule_delay_sql(""),"\n","absent-reset-has-no-delay")
@@ -347,6 +368,7 @@ def regression(+name: String, +db: String, +helper: String, +path: String) -> IO
     case "account-switch": account_switch_case(db)
     case "admission": admission_case(db,helper,path)
     case "delay": delay_case(db)
+    case "profile-store": profile_store_case(db,helper)
     case _: IO.die(Unit,2,"unknown usage-read regression")
 # The Codex read passes the codex command recorded in a Codex seat's receiver endpoint;
 # another seat records none.
@@ -360,11 +382,19 @@ def recorded_codex_case(+db: String) -> IO(Unit):
     +zai : String <- UW.read_executable(db,"kx","zai")
     expect("non-codex-read-passes-nothing",String.is_empty(zai))
 
-def codex_snapshot_with_limit(+allowed: String, +used: String, +reached: String) -> String:
-  "{\"ordinaryUsageAllowed\":" ++ allowed ++ ",\"rateLimits\":{\"primary\":{\"usedPercent\":" ++ used ++ ",\"windowDurationMins\":300,\"resetsAt\":1793382116},\"secondary\":null,\"rateLimitReachedType\":" ++ reached ++ "}}"
+# The primary window resets RESETS seconds after the epoch. A held window whose
+# reported reset has passed is elapsed (UW.current_gate), so the cases pass a reset
+# an hour after the read.
+def codex_snapshot_with_limit(+allowed: String, +used: String, +reached: String, +resets: String) -> String:
+  "{\"ordinaryUsageAllowed\":" ++ allowed ++ ",\"rateLimits\":{\"primary\":{\"usedPercent\":" ++ used ++ ",\"windowDurationMins\":300,\"resetsAt\":" ++ resets ++ "},\"secondary\":null,\"rateLimitReachedType\":" ++ reached ++ "}}"
 
-def codex_snapshot(+allowed: String, +used: String) -> String:
-  codex_snapshot_with_limit(allowed,used,"null")
+def codex_snapshot(+allowed: String, +used: String, +resets: String) -> String:
+  codex_snapshot_with_limit(allowed,used,"null",resets)
+
+def codex_future_reset(+db: String) -> IO(String):
+  do IO<String>:
+    +resets : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)+3600;")
+    IO.pure(String,Tx.trim_nl(resets))
 
 # The live helper timestamps each read with its observation clock.
 def codex_answer_raw(+db: String, +path: String, +raw: String) -> IO(Unit):
@@ -376,13 +406,16 @@ def codex_answer_raw(+db: String, +path: String, +raw: String) -> IO(Unit):
     answer(path,Bool.pick(String,String.is_empty(Tx.trim_nl(problem)),Tx.trim_nl(document),UR.unreadable_document("codex",Codex.codex_source(),observed,Tx.trim_nl(problem))))
 
 def codex_answer(+db: String, +path: String, +allowed: String, +used: String) -> IO(Unit):
-  codex_answer_raw(db,path,codex_snapshot(allowed,used))
+  do IO<Unit>:
+    +resets : String <- codex_future_reset(db)
+    codex_answer_raw(db,path,codex_snapshot(allowed,used,resets))
 
 def codex_limit_type_case(+db: String, +helper: String, +path: String) -> IO(Unit):
   do IO<Unit>:
     initial : UW.Gate <- state_of(db,"k","acct-codex")
     unheld : Unit <- expect("codex-reported-limit-starts-unheld",Bool.not(String.eq(gate_class(initial),"held")))
-    limited : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("null","15","\"rate_limit_reached\""))
+    +resets : String <- codex_future_reset(db)
+    limited : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("null","15","\"rate_limit_reached\"",resets))
     refused : Unit <- UW.read_refused_with(db,"k","acct-codex","att-reported-limit",helper)
     held : UW.Gate <- state_of(db,"k","acct-codex")
     exhausted : Unit <- expect("codex-null-permission-reported-limit-holds",String.eq(gate_class(held),"held"))
@@ -392,7 +425,7 @@ def codex_limit_type_case(+db: String, +helper: String, +path: String) -> IO(Uni
     retained : UW.Gate <- state_of(db,"k","acct-codex")
     kept : Unit <- expect("codex-unreported-permission-keeps-reported-limit-hold",String.eq(gate_class(retained),"held"))
     unreadable : Unit <- expect_read(db,"SELECT state FROM usage_reads ORDER BY id DESC LIMIT 1;","unreadable\n","codex-no-limit-permission-recorded-unreadable")
-    allowed : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("true","100","\"rate_limit_reached\""))
+    allowed : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("true","100","\"rate_limit_reached\"",resets))
     permitted : Unit <- UW.read_refused_with(db,"k","acct-codex","att-permitted-with-limit",helper)
     released : UW.Gate <- state_of(db,"k","acct-codex")
     expect("codex-affirmative-permission-releases-with-reported-limit",String.eq(gate_class(released),"none"))
@@ -430,7 +463,7 @@ def run(+db: String, +helper: String) -> IO(Unit):
     six : Unit <- release_case(db,helper,path)
     seven : Unit <- unknown_case(db,helper,path)
     eight : Unit <- malformed_case(db,helper,path)
-    nine : Unit <- model_scope_case(db,helper,path)
+    nine : Unit <- model_scope_case(db,helper,path,Tx.trim_nl(future))
     ten : Unit <- recorded_codex_case(db)
     unknown_permission : Unit <- codex_unknown_permission_case(db,helper,path)
     affirmative_permission : Unit <- codex_affirmative_permission_case(db,helper,path)
