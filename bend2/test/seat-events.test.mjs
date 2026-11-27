@@ -203,3 +203,31 @@ test('a follower with --root reports a seat database made after it started', { t
   assert.deepEqual(found.map((event) => [event.database, event.id, event.body]),
     [[realpathSync(gamma.path), 'first-report', 'Made after the follower started.']]);
 });
+
+test('a follower with --root reports a native that ended before it found the seat database', { timeout: 20000 }, async (t) => {
+  const f = await fixture(t);
+  const root = join(f.dir, 'worktrees');
+  mkdirSync(root);
+  const run = f.start(['--follow', '--root', root, '--untaken-seconds', '4']);
+  await f.ready(2);
+  const checkout = join(root, 'delta');
+  assert.equal(spawnSync('git', ['init', '-q', checkout]).status, 0);
+  mkdirSync(join(checkout, '.git/baton2'));
+  const delta = seatDatabase(t, 'delta', join(checkout, '.git/baton2/orchestra.db'));
+  // The seat's first native ran and ended before the follower read the seat home.
+  delta.db.exec("INSERT INTO executions VALUES('seat-d','attempt-d','retained','','exited','exit 0')");
+  f.status(delta, [seat('seat-d', { state: 'waiting' }), seat('seat-idle', { state: 'waiting' })]);
+  await f.ready(3);
+  const events = () => run.output().split('\n').filter(Boolean).map(JSON.parse);
+  const deadline = Date.now() + 10000;
+  while (!events().some((event) => event.event === 'native-ended') && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  // A later evaluation of the same database reports the ended native no more.
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  run.child.kill();
+  await run.ended;
+  const ended = events().filter((event) => event.event === 'native-ended');
+  assert.deepEqual(ended.map((event) => [event.database, event.seat, event.attempt, event.phase, event.status]),
+    [[realpathSync(delta.path), 'seat-d', 'attempt-d', 'exited', 'exit 0']]);
+});

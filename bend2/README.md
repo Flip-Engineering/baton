@@ -607,7 +607,9 @@ yet delivered. `--notify JSON_ARGV` runs that command once per event with the
 event as JSON on stdin; an event leaves the cursor only when the command exits
 0, so each event is delivered at least once. With `--root`, each interval
 evaluation (at most 60 seconds apart) reads the seat home again; a seat
-database found then is followed from its first message.
+database found then is followed from its first message, and its first
+evaluation reports each `blocked` cause and `native-ended` attempt that the
+database already has.
 
 Project settings may name the notify command:
 `"notify": {"argv": ["/path/to/notifier"], "untakenSeconds": 900}`, with the

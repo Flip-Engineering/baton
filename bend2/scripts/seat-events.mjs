@@ -23,7 +23,9 @@
 //
 // With --root, each interval evaluation reads the seat home again. A database
 // found after the start is subscribed and read from its first message, so a
-// seat made after the watcher started is reported like the others.
+// seat made after the watcher started is reported like the others. Its first
+// evaluation reports a blocked cause the seat already has and a native attempt
+// that already ended.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -87,8 +89,11 @@ export function evaluate({ database, coordinator, session, entry, now, periods }
     const reported = entry.reported ?? (entry.reported = {});
     for (const row of statusRows(coordinator, database)) {
       if (row.role === 'operator') continue;
-      const before = seats[row.id];
       const execution = executions.get(row.id) ?? null;
+      // In the first evaluation of a database found after the start, a seat
+      // counts as unblocked and, when it has an attempt, as running before, so
+      // a cause or an ended native from before the database was found is reported.
+      const before = seats[row.id] ?? (entry.found ? { cause: '', phase: execution ? 'running' : '' } : undefined);
       const cause = ['', 'assignment-ended'].includes(row.blockedCause ?? '') ? '' : row.blockedCause;
       const phase = execution?.phase ?? '';
       if (before && cause && cause !== before.cause) {
@@ -122,6 +127,7 @@ export function evaluate({ database, coordinator, session, entry, now, periods }
           lastOutputAt: new Date(output * 1000).toISOString(), seconds: now - output });
       }
     }
+    delete entry.found;
   } finally { db.close(); }
   for (const item of events) {
     if (!item.event.startsWith('message') && !['blocked', 'native-ended'].includes(item.event)) entry.reported[item.key] = true;
@@ -177,7 +183,7 @@ export async function seatEvents(options, output = process.stdout) {
     for (const database of found) {
       if (databases.includes(database)) continue;
       databases.push(database);
-      cursor.databases[database] ??= { through: 0 };
+      cursor.databases[database] ??= { through: 0, found: true };
       subscribe(database);
     }
   };
