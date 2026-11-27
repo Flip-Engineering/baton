@@ -47,6 +47,7 @@ async function fixture(t) {
   writeFileSync(coordinator, `#!${process.execPath}
 const [database, verb] = process.argv.slice(2);
 if (verb === 'status') {
+  require('node:fs').appendFileSync(database + '.status-calls', 'status\\n');
   const db = new (require('node:sqlite').DatabaseSync)(database, { readOnly: true });
   process.stdout.write(db.prepare('SELECT coalesce((SELECT value FROM fake_status WHERE id=1),?) AS value').get('[]').value);
   db.close();
@@ -235,4 +236,40 @@ test('a follower with --root reports a native that ended before it found the sea
   const ended = events().filter((event) => event.event === 'native-ended');
   assert.deepEqual(ended.map((event) => [event.database, event.seat, event.attempt, event.phase, event.status]),
     [[realpathSync(delta.path), 'seat-d', 'attempt-d', 'exited', 'exit 0']]);
+});
+
+test('an interval evaluation skips a database that did not change and has no timed event due', { timeout: 30000 }, async (t) => {
+  const f = await fixture(t);
+  const [alpha, beta] = f.databases;
+  // alpha has nothing due. beta has operator input that becomes untaken about
+  // three seconds after the start.
+  f.status(alpha, [seat('seat-a', { state: 'waiting' })]);
+  f.status(beta, [seat('seat-b', { state: 'waiting', operatorWaitingSince: ago(1) })]);
+  const calls = (database) => existsSync(database.path + '.status-calls')
+    ? readFileSync(database.path + '.status-calls', 'utf8').split('\n').filter(Boolean).length : 0;
+  const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+  // A four-second untaken period gives a one-second interval.
+  const run = f.start(['--follow', '--untaken-seconds', '4']);
+  await f.ready(2);
+  // The start and each subscription's ready line evaluate both databases.
+  await pause(300);
+  const first = [calls(alpha), calls(beta)];
+  const events = () => run.output().split('\n').filter(Boolean).map(JSON.parse);
+  const deadline = Date.now() + 10000;
+  while (!events().some((event) => event.event === 'operator-input-untaken') && Date.now() < deadline) await pause(100);
+  await pause(2500);
+  assert.deepEqual(events().map((event) => [event.event, event.seat]), [['operator-input-untaken', 'seat-b']]);
+  // About five intervals have passed. They evaluated beta once, when its untaken
+  // input became due, and alpha never.
+  assert.deepEqual([calls(alpha), calls(beta)], [first[0], first[1] + 1]);
+  // A commit with no commit notice changes alpha's WAL file, so the next
+  // interval evaluates alpha again and reports the seat's new blocked cause.
+  f.status(alpha, [seat('seat-a', { state: 'blocked', blockedCause: 'provider-failure' })]);
+  while (!events().some((event) => event.event === 'blocked') && Date.now() < deadline + 5000) await pause(100);
+  await pause(2500);
+  run.child.kill();
+  await run.ended;
+  assert.deepEqual(events().map((event) => [event.event, event.seat]),
+    [['operator-input-untaken', 'seat-b'], ['blocked', 'seat-a']]);
+  assert.deepEqual([calls(alpha), calls(beta)], [first[0] + 1, first[1] + 1]);
 });

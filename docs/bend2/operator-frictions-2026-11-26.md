@@ -117,9 +117,17 @@ the coordinator executable and `HOME=EMPTY` an empty home directory.
 
 10. `status` of the four largest seat databases under the seat home took 5.6,
     2.4, 1.5 and 0.5 s (0.6 to 1.9 GB); all 53 databases took 13.8 s. A seat
-    event follower evaluates every database on its interval.
+    event follower evaluated every database on its interval. Now an interval
+    evaluation skips a database whose file and WAL file keep the inode, size
+    and modification time of its last evaluation while no timed event of it
+    is due (`bend2/scripts/seat-events.mjs`). `status` writes neither file:
+    three `status` runs on a quiet fixture database left both unchanged. Over
+    130 s, two intervals of the operator's follower, none of the 56 databases
+    under the seat home changed its signature. A commit notice still
+    evaluates its database at once. The running follower keeps the old script
+    until it is started again from a release that has this change.
     Command: time `baton DB status` for each database that `baton seats --root
-    ~/worktrees` reads.
+    ~/worktrees` reads; `node --test bend2/test/seat-events.test.mjs`.
 
 11. `bend2/test/task-start.py` against the plain `main.bend` build of
     `ae6338e79`, each test run alone with a 300 s bound: 23 of 35 pass and the

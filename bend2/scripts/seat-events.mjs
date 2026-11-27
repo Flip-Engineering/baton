@@ -27,6 +27,12 @@
 // seat made after the watcher started is reported like the others. Its first
 // evaluation reports a blocked cause the seat already has and a native attempt
 // that already ended.
+//
+// An interval evaluation skips a database whose file and WAL file have the same
+// inode, size and modification time as at its last evaluation, while no timed
+// event of it is due. Every event but silent derives from the database alone; a
+// running attempt with no output yet or an already reported silence is due at
+// every interval, because its stdout file is outside the database.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -65,6 +71,24 @@ function outputSeconds(directory) {
   try { return Math.floor(statSync(join(directory, 'stdout')).mtimeMs / 1000); } catch { return null; }
 }
 
+// The inode, size and modification time of a database file and its WAL file. A
+// commit writes the WAL file and a checkpoint writes the database file.
+export function fileSignature(database) {
+  return ['', '-wal'].map((suffix) => {
+    try {
+      const file = statSync(database + suffix, { bigint: true });
+      return `${file.ino}:${file.size}:${file.mtimeNs}`;
+    } catch { return '-'; }
+  }).join('/');
+}
+
+// True when an interval evaluation of the database can be skipped: its files are
+// unchanged since its last complete evaluation and no timed event is due.
+export function unchanged(database, entry, now) {
+  return typeof entry.file === 'string' && !entry.found && (entry.due === null || now < entry.due)
+    && entry.file === fileSignature(database);
+}
+
 function seconds(instant) {
   const value = Date.parse(instant);
   return Number.isNaN(value) ? null : Math.floor(value / 1000);
@@ -73,8 +97,14 @@ function seconds(instant) {
 // The events one database has now, given its cursor entry. The entry is updated
 // with the facts seen; events go to entry.pending.
 export function evaluate({ database, coordinator, session, entry, now, periods }) {
+  // The signature is read before the database, so a commit made during this
+  // evaluation changes it for the next one. A failed evaluation keeps none.
+  const file = fileSignature(database);
+  delete entry.file;
   const db = new DatabaseSync(database, { readOnly: true });
   const events = [];
+  let due = null;
+  const dueAt = (at) => { due = due === null ? at : Math.min(due, at); };
   try {
     const start = entry.through ?? db.prepare('SELECT coalesce(max(seq),0) AS seq FROM messages').get().seq;
     const committed = (id) => db.prepare("SELECT recorded_at FROM native_changes WHERE entity='message' AND entity_id=? AND operation='insert' ORDER BY change_id LIMIT 1").get(id)?.recorded_at ?? null;
@@ -111,7 +141,7 @@ export function evaluate({ database, coordinator, session, entry, now, periods }
         const key = `operator-input-untaken:${row.id}:${row.operatorWaitingSince}`;
         if (!reported[key]) events.push({ event: 'operator-input-untaken', key, seat: row.id,
           since: row.operatorWaitingSince, seconds: now - waiting });
-      }
+      } else if (waiting !== null) dueAt(waiting + periods.untaken);
       const request = row.taskCompletion?.requestId;
       if (request && row.state === 'asks-to-end') {
         const at = committed(request);
@@ -119,16 +149,20 @@ export function evaluate({ database, coordinator, session, entry, now, periods }
         const key = `completion-unconfirmed:${row.id}:${request}`;
         if (age !== null && age >= periods.unconfirmed && !reported[key]) {
           events.push({ event: 'completion-unconfirmed', key, seat: row.id, request, committedAt: at, seconds: age });
-        }
+        } else if (age !== null && age < periods.unconfirmed) dueAt(now - age + periods.unconfirmed);
       }
       const output = phase === 'running' ? outputSeconds(execution?.directory) : null;
       if (output !== null && now - output >= periods.silent) {
         const key = `silent:${row.id}:${execution.id}:${output}`;
         if (!reported[key]) events.push({ event: 'silent', key, seat: row.id, attempt: execution.id,
           lastOutputAt: new Date(output * 1000).toISOString(), seconds: now - output });
-      }
+        dueAt(now);
+      } else if (output !== null) dueAt(output + periods.silent);
+      else if (phase === 'running') dueAt(now);
     }
     delete entry.found;
+    entry.file = file;
+    entry.due = due;
   } finally { db.close(); }
   for (const item of events) {
     if (!item.event.startsWith('message') && !['blocked', 'native-ended'].includes(item.event)) entry.reported[item.key] = true;
@@ -203,6 +237,7 @@ export async function seatEvents(options, output = process.stdout) {
     const found = [];
     for (const database of scan ? databases : selected) {
       const entry = cursor.databases[database] ?? (cursor.databases[database] = {});
+      if (scan && unchanged(database, entry, now)) continue;
       try {
         found.push(...evaluate({ database, coordinator: options.coordinator, session: options.session, entry, now, periods }));
       } catch (error) {

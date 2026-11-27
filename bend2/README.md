@@ -612,7 +612,11 @@ copy of what the command stored. With `--root`, each interval
 evaluation (at most 60 seconds apart) reads the seat home again; a seat
 database found then is followed from its first message, and its first
 evaluation reports each `blocked` cause and `native-ended` attempt that the
-database already has.
+database already has. A commit notice from a database evaluates that database.
+An interval evaluation runs `status` only on a database whose file or WAL file
+changed since its last evaluation, or whose untaken, unconfirmed or silent
+event is due; a working seat with no output yet or with a reported silence is
+evaluated at every interval.
 
 Project settings may name the notify command:
 `"notify": {"argv": ["/path/to/notifier"], "untakenSeconds": 900}`, with the
