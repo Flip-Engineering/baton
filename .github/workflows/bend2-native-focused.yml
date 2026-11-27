@@ -42,6 +42,10 @@ concurrency:
   group: baton2-native-focused-${{ github.repository }}
   cancel-in-progress: false
 
+env:
+  # Give reviewers two weeks to inspect the focused comparison. Rerun qualification after expiry.
+  BATON2_ARTIFACT_REVIEW_DAYS: ${{ vars.BATON2_FOCUSED_REVIEW_DAYS || 14 }}
+
 jobs:
   observer-recovery:
     if: >-
@@ -146,6 +150,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-focused-observer-recovery-${{ inputs.source_commit }}-${{ github.run_attempt }}
+          retention-days: ${{ env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: ${{ runner.temp }}/baton2-focused-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
           include-hidden-files: true

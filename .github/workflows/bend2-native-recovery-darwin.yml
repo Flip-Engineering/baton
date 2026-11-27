@@ -17,6 +17,8 @@ env:
   BATON2_RECOVERY_PROOF_SHA256: 7c824f00d831fd9a8d0d305b899f6153416973337a1c3248984cd141a1b368a7
   BATON2_RECOVERY_GENERATOR_ROOT: /var/tmp/baton2-compile-queue/toolchains/compiler-main-bounded-indent-20261027/package/bend-2.0.25
   BEND_NO_TELEMETRY: '1'
+  # Give reviewers two weeks to inspect recovery evidence. After expiry, check runner diagnostics or rerun recovery.
+  BATON2_ARTIFACT_REVIEW_DAYS: ${{ vars.BATON2_RECOVERY_REVIEW_DAYS || 14 }}
 
 jobs:
   recovery-darwin-arm64:
@@ -321,6 +323,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-recovery-darwin-arm64-ef0b8a5eb4da5d13f253ebe79b289dc22b2836cb-${{ github.run_attempt }}
+          retention-days: ${{ env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: ${{ runner.temp }}/baton2-recovery-darwin-${{ github.run_id }}-${{ github.run_attempt }}/artifact/
           if-no-files-found: error
           include-hidden-files: true
@@ -351,6 +354,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-recovery-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}-failure-diagnostics
+          retention-days: ${{ env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: ${{ env.BATON2_RECOVERY_DIAGNOSTICS_ROOT }}/${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: warn
           include-hidden-files: true

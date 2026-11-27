@@ -12,6 +12,10 @@ concurrency:
   group: baton-homelab-readonly-health-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # Give the operator a week to review the host snapshot. After expiry, capture a fresh snapshot for current state.
+  BATON2_ARTIFACT_REVIEW_DAYS: ${{ vars.BATON2_HOST_HEALTH_DAYS || 7 }}
+
 jobs:
   host-health:
     timeout-minutes: 15
@@ -139,5 +143,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton-host-health-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: ${{ env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: ${{ env.BATON_HOST_HEALTH_OUTPUT }}/
           if-no-files-found: error

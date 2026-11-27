@@ -113,6 +113,14 @@ concurrency:
 env:
   BATON2_SOURCE_SHA: ${{ inputs.source_commit || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
   BEND_COMPILER_DIAGNOSTICS: ${{ inputs.compiler_diagnostics && '1' || '' }}
+  # Give reviewers two weeks to inspect validation results. Rerun validation after expiry.
+  BATON2_ARTIFACT_REVIEW_DAYS: ${{ vars.BATON2_NATIVE_REVIEW_DAYS || 14 }}
+  # Allow the run day, a day in the install queue and a working day for review. Rerun the build job after expiry.
+  BATON2_ARTIFACT_DEV_PACKAGE_DAYS: ${{ vars.BATON2_DEV_PACKAGE_DAYS || 3 }}
+  # The only observed named reuse used an upload under four hours old. Rerun Linux production after expiry.
+  BATON2_ARTIFACT_GENERATED_C_DAYS: ${{ vars.BATON2_GENERATED_C_DAYS || 7 }}
+  # Allow release publication and legacy target reuse. Requalify the release or rebuild the target after expiry.
+  BATON2_ARTIFACT_RELEASE_AND_TARGET_DAYS: ${{ vars.BATON2_RELEASE_AND_TARGET_DAYS || 90 }}
 
 jobs:
   select-validation:
@@ -166,6 +174,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-validation-route-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          retention-days: ${{ env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: ${{ env.BATON2_VALIDATION_ROUTE }}/
           if-no-files-found: error
 
@@ -410,6 +419,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-linux-producer-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          retention-days: ${{ env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: ${{ env.BATON2_LINUX_RUN }}/evidence/
           if-no-files-found: error
       - name: Retain requested Main compilation origin
@@ -417,6 +427,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-main-c-origin-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          retention-days: ${{ env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: |
             ${{ env.BATON2_LINUX_RUN }}/generated/main-c-reuse.json
             ${{ env.BATON2_LINUX_RUN }}/generated/main-c-origin/
@@ -426,6 +437,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          retention-days: ${{ env.BATON2_ARTIFACT_GENERATED_C_DAYS }}
           path: |
             ${{ env.BATON2_LINUX_RUN }}/generated/
             ${{ env.BATON2_LINUX_RUN }}/evidence/
@@ -592,6 +604,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-linux-candidate-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          retention-days: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version != '' && env.BATON2_ARTIFACT_RELEASE_AND_TARGET_DAYS || env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: ${{ env.BATON2_QUALIFICATION_RUN }}/evidence/
           if-no-files-found: error
       - name: Retain requested Main compilation origin
@@ -599,6 +612,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-main-c-origin-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          retention-days: ${{ env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: |
             ${{ env.BATON2_QUALIFICATION_RUN }}/generated/main-c-reuse.json
             ${{ env.BATON2_QUALIFICATION_RUN }}/generated/main-c-origin/
@@ -756,6 +770,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-linux-target-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          retention-days: ${{ env.BATON2_ARTIFACT_RELEASE_AND_TARGET_DAYS }}
           path: ${{ env.BATON2_TARGET_RUN }}/evidence/
           if-no-files-found: error
 
@@ -1123,6 +1138,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-${{ github.event_name == 'workflow_dispatch' && inputs.release_version || 'development' }}-darwin-arm64-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          retention-days: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version != '' && env.BATON2_ARTIFACT_RELEASE_AND_TARGET_DAYS || env.BATON2_ARTIFACT_DEV_PACKAGE_DAYS }}
           path: |
             ${{ env.BATON2_NATIVE_RUN }}/package/
             ${{ env.BATON2_NATIVE_RUN }}/compiler-selection/
@@ -1201,6 +1217,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-darwin-install-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          retention-days: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version != '' && env.BATON2_ARTIFACT_RELEASE_AND_TARGET_DAYS || env.BATON2_ARTIFACT_REVIEW_DAYS }}
           path: |
             ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/SHA256SUMS
             ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/manifest.json
