@@ -107,6 +107,12 @@ the coordinator executable and `HOME=EMPTY` an empty home directory.
    no later coordinator input, explicit continuation or completion request, a
    turn end queues no continuation, and status gives state `blocked`,
    `blockedCause` `blocked-report` and the report in `blockedReport`.
+   The receive path settles a turn through the same `task_settlement_sql`
+   (`receive.bend` `finish_pending`); a blocked-report test delivers the task
+   through `receive` and fails on a23931cc8a with a queued
+   `receive:seat:1:...:task-continuation`. A live claude-b-sonnet seat
+   dispatched from the a06e4a5d8 release kept state `blocked` with one turn and
+   no continuation for 154 s, and left it on one operator guide message.
    Command: `BATON2_EXE=BATON python3 bend2/test/blocked-report.py`.
 
 10. `status` of the four largest seat databases under the seat home took 5.6,
