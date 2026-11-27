@@ -111,3 +111,26 @@ the coordinator executable and `HOME=EMPTY` an empty home directory.
     event follower evaluates every database on its interval.
     Command: time `baton DB status` for each database that `baton seats --root
     ~/worktrees` reads.
+
+11. `bend2/test/task-start.py` against the plain `main.bend` build of
+    `ae6338e79`, each test run alone with a 300 s bound: 23 of 35 pass and the
+    same 10 fail on `ae6338e79` and with this branch's later commits. Three
+    hang in `Control.eventually` (fault 3): two wait in `close_fixtures` for a
+    fixture instance owner that `--instance-shutdown` reports `absent` and that
+    keeps running, and one waits in `accept` for a native that never connects.
+    `test_primary_dispatch_routes_consume_literal_flag_text_and_select_named_agents`
+    is refused with "root session operator has 4 owed inputs and no attached
+    channel". Three continuation tests do not find the dispatched text in the
+    native's input, `test_stopped_session_and_explicit_new_assignment_leave_owned_state_unchanged`
+    finds an extra `stop-result` message,
+    `test_profile_append_failure_retains_applied_configuration_and_complete_unadmitted_input`
+    reads the route `kimi-code/k3, low` for `gpt-6-astra, high`, and
+    `test_receiver_setup_failure_retains_input_and_native_error_without_admission`
+    gets `taskOperationFailed` for `taskCommandMissing`. Two other tests
+    (`test_an_operator_dispatch_starts_the_notify_follower_that_runs_the_configured_command`
+    and `test_non_git_nested_workspace_uses_native_prefix_membership_and_rejects_adjacent_path`)
+    failed once each and passed in three reruns. The control tests read the
+    coordinator only from `.scratch/bend2/baton2` and copy it alone, so a
+    release `bin/baton` (the receiver router) waits there in `select`.
+    Command: `HOME=EMPTY python3 bend2/test/task-start.py TaskStart.NAME` with
+    `.scratch/bend2/baton2` built by `sh bend2/scripts/build-native.sh`.
